@@ -1,0 +1,39 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# macOS system files
+.DS_Store
+
+# Secrets / configs
+.env
+*.key
+config/*.yaml
+
+# Databases
+*.db
+
+# Generated reports
+reports/*.pdf
+
+# Backup / temp files
+*.backup
+*.bak
+*.old
+*.OLD
+*.broken
+*.yourversion
+*~
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
