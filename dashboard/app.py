@@ -1511,7 +1511,112 @@ elif page == "Credit & Liquidity":
             st.plotly_chart(fig, width='stretch')
         else:
             st.warning("No credit spread history available.")
-        
+
+        # =======================
+        # HYG/LQD CREDIT ETF FLOWS
+        # =======================
+        st.divider()
+        st.subheader("📈 Credit ETF Sentiment (HYG vs LQD)")
+
+        st.markdown("""
+        **HYG** (High Yield) vs **LQD** (Investment Grade) relative performance shows credit risk appetite.
+        When HYG outperforms → Risk-on. When LQD outperforms → Flight to quality.
+        """)
+
+        with st.spinner("Fetching credit ETF data..."):
+            try:
+                credit_flows = components["yahoo"].get_credit_etf_flows()
+
+                if credit_flows:
+                    # Signal banner
+                    signal = credit_flows.get('signal', 'UNKNOWN')
+                    description = credit_flows.get('description', '')
+
+                    if signal == "RISK_ON":
+                        st.success(f"🟢 **{signal}**: {description}")
+                    elif signal == "RISK_OFF":
+                        st.error(f"🔴 **{signal}**: {description}")
+                    else:
+                        st.info(f"⚪ **{signal}**: {description}")
+
+                    # Metrics row
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        hyg_price = credit_flows.get('hyg_price')
+                        hyg_5d = credit_flows.get('hyg_5d_pct')
+                        st.metric(
+                            "HYG (High Yield)",
+                            f"${hyg_price:.2f}" if hyg_price else "N/A",
+                            delta=f"{hyg_5d:+.2f}% (5d)" if hyg_5d else None,
+                            help="iShares High Yield Corporate Bond ETF - junk bonds"
+                        )
+
+                    with col2:
+                        lqd_price = credit_flows.get('lqd_price')
+                        lqd_5d = credit_flows.get('lqd_5d_pct')
+                        st.metric(
+                            "LQD (Inv Grade)",
+                            f"${lqd_price:.2f}" if lqd_price else "N/A",
+                            delta=f"{lqd_5d:+.2f}% (5d)" if lqd_5d else None,
+                            help="iShares Investment Grade Corporate Bond ETF"
+                        )
+
+                    with col3:
+                        ratio = credit_flows.get('hyg_lqd_ratio')
+                        ratio_change = credit_flows.get('ratio_20d_change_pct')
+                        st.metric(
+                            "HYG/LQD Ratio",
+                            f"{ratio:.3f}" if ratio else "N/A",
+                            delta=f"{ratio_change:+.2f}% (20d)" if ratio_change else None,
+                            help="Higher ratio = more risk appetite"
+                        )
+
+                    with col4:
+                        rel_5d = credit_flows.get('relative_5d')
+                        if rel_5d is not None:
+                            if rel_5d > 0:
+                                st.metric("5D Relative", f"HYG +{rel_5d:.2f}%", delta="Risk-On")
+                            else:
+                                st.metric("5D Relative", f"LQD +{abs(rel_5d):.2f}%", delta="Risk-Off", delta_color="inverse")
+                        else:
+                            st.metric("5D Relative", "N/A")
+
+                    # Performance comparison table
+                    with st.expander("📊 Detailed Performance"):
+                        perf_data = {
+                            'Period': ['1 Day', '5 Day', '20 Day'],
+                            'HYG': [
+                                f"{credit_flows.get('hyg_1d_pct', 0):+.2f}%",
+                                f"{credit_flows.get('hyg_5d_pct', 0):+.2f}%",
+                                f"{credit_flows.get('hyg_20d_pct', 0):+.2f}%"
+                            ],
+                            'LQD': [
+                                f"{credit_flows.get('lqd_1d_pct', 0):+.2f}%",
+                                f"{credit_flows.get('lqd_5d_pct', 0):+.2f}%",
+                                f"{credit_flows.get('lqd_20d_pct', 0):+.2f}%"
+                            ],
+                            'HYG-LQD (Relative)': [
+                                f"{credit_flows.get('relative_1d', 0):+.2f}%",
+                                f"{credit_flows.get('relative_5d', 0):+.2f}%",
+                                f"{credit_flows.get('relative_20d', 0):+.2f}%"
+                            ]
+                        }
+                        st.dataframe(pd.DataFrame(perf_data), hide_index=True, use_container_width=True)
+
+                        st.caption("""
+                        **Interpretation:**
+                        - Positive relative = HYG outperforming (risk appetite)
+                        - Negative relative = LQD outperforming (flight to quality)
+                        - Watch for divergence from equity markets as leading indicator
+                        """)
+                else:
+                    st.warning("Credit ETF data unavailable")
+
+            except Exception as e:
+                logger.error(f"Error fetching credit ETF flows: {e}")
+                st.warning(f"Could not fetch credit ETF data: {e}")
+
         # =======================
         # LIQUIDITY ANALYSIS
         # =======================

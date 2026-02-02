@@ -229,6 +229,97 @@ class YahooCollector:
             'timestamp': datetime.now().isoformat()
         }
 
+    @with_retry
+    def get_credit_etf_flows(self) -> Optional[Dict]:
+        """
+        Get HYG/LQD credit ETF data for credit sentiment analysis.
+
+        HYG = iShares High Yield Corporate Bond ETF (junk bonds)
+        LQD = iShares Investment Grade Corporate Bond ETF
+
+        When HYG outperforms LQD = Risk-on (investors prefer junk yield)
+        When LQD outperforms HYG = Risk-off (flight to quality)
+
+        Returns:
+            Dict with prices, ratio, and performance metrics
+        """
+        hyg = yf.Ticker("HYG")
+        lqd = yf.Ticker("LQD")
+
+        # Get 30 days for trend analysis
+        hyg_data = hyg.history(period="1mo")
+        lqd_data = lqd.history(period="1mo")
+
+        if hyg_data.empty or lqd_data.empty:
+            raise ValueError("Credit ETF data is empty")
+
+        # Current prices
+        hyg_price = float(hyg_data['Close'].iloc[-1])
+        lqd_price = float(lqd_data['Close'].iloc[-1])
+
+        # HYG/LQD ratio (higher = more risk appetite)
+        ratio = hyg_price / lqd_price
+
+        # Calculate 1-day, 5-day, and 20-day performance
+        def calc_return(data, days):
+            if len(data) > days:
+                return (data['Close'].iloc[-1] / data['Close'].iloc[-days-1] - 1) * 100
+            return None
+
+        hyg_1d = calc_return(hyg_data, 1)
+        hyg_5d = calc_return(hyg_data, 5)
+        hyg_20d = calc_return(hyg_data, 20)
+
+        lqd_1d = calc_return(lqd_data, 1)
+        lqd_5d = calc_return(lqd_data, 5)
+        lqd_20d = calc_return(lqd_data, 20)
+
+        # Relative performance (HYG - LQD)
+        rel_1d = (hyg_1d - lqd_1d) if hyg_1d and lqd_1d else None
+        rel_5d = (hyg_5d - lqd_5d) if hyg_5d and lqd_5d else None
+        rel_20d = (hyg_20d - lqd_20d) if hyg_20d and lqd_20d else None
+
+        # 20-day ratio trend
+        if len(hyg_data) >= 20 and len(lqd_data) >= 20:
+            ratio_20d_ago = float(hyg_data['Close'].iloc[-20]) / float(lqd_data['Close'].iloc[-20])
+            ratio_change = ((ratio / ratio_20d_ago) - 1) * 100
+        else:
+            ratio_change = None
+
+        # Signal interpretation
+        if rel_5d is not None:
+            if rel_5d > 0.5:
+                signal = "RISK_ON"
+                description = "HYG outperforming - credit risk appetite strong"
+            elif rel_5d < -0.5:
+                signal = "RISK_OFF"
+                description = "LQD outperforming - flight to quality"
+            else:
+                signal = "NEUTRAL"
+                description = "Credit sentiment balanced"
+        else:
+            signal = "UNKNOWN"
+            description = "Insufficient data"
+
+        return {
+            'hyg_price': hyg_price,
+            'lqd_price': lqd_price,
+            'hyg_lqd_ratio': round(ratio, 4),
+            'hyg_1d_pct': round(hyg_1d, 2) if hyg_1d else None,
+            'hyg_5d_pct': round(hyg_5d, 2) if hyg_5d else None,
+            'hyg_20d_pct': round(hyg_20d, 2) if hyg_20d else None,
+            'lqd_1d_pct': round(lqd_1d, 2) if lqd_1d else None,
+            'lqd_5d_pct': round(lqd_5d, 2) if lqd_5d else None,
+            'lqd_20d_pct': round(lqd_20d, 2) if lqd_20d else None,
+            'relative_1d': round(rel_1d, 2) if rel_1d else None,
+            'relative_5d': round(rel_5d, 2) if rel_5d else None,
+            'relative_20d': round(rel_20d, 2) if rel_20d else None,
+            'ratio_20d_change_pct': round(ratio_change, 2) if ratio_change else None,
+            'signal': signal,
+            'description': description,
+            'timestamp': datetime.now().isoformat()
+        }
+
     def get_health_check(self) -> Dict:
         """
         Run a health check on all data sources.
