@@ -439,23 +439,178 @@ class CBOECollector:
     def get_put_call_ratios(self) -> Optional[Dict]:
         """
         Get all put/call ratios
-        
+
         Returns:
             Dict with equity_pc, total_pc, and metadata
         """
         try:
             equity_pc = self.get_equity_put_call_ratio()
             total_pc = self.get_total_put_call_ratio()
-            
-            return {
-                'equity_pc': equity_pc,
-                'total_pc': total_pc,
+
+            # Try to get CBOE official P/C (if available)
+            cboe_pc = self._scrape_cboe_put_call()
+
+            result = {
+                'equity_pc': cboe_pc.get('equity_pc') if cboe_pc else equity_pc,
+                'total_pc': cboe_pc.get('total_pc') if cboe_pc else total_pc,
+                'index_pc': cboe_pc.get('index_pc') if cboe_pc else None,
+                'is_estimated': cboe_pc is None,
                 'timestamp': datetime.now().isoformat()
             }
-            
+
+            # Add sentiment interpretation
+            pc = result['equity_pc'] or result['total_pc']
+            if pc:
+                result['sentiment'] = self._interpret_put_call(pc)
+
+            return result
+
         except Exception as e:
             logger.error(f"Error getting P/C ratios: {e}")
             return None
+
+    def _scrape_cboe_put_call(self) -> Optional[Dict]:
+        """
+        Attempt to scrape CBOE put/call ratio page
+
+        CBOE publishes daily P/C ratios but may block scraping.
+        Falls back gracefully if unavailable.
+
+        Returns:
+            Dict with equity_pc, index_pc, total_pc or None
+        """
+        try:
+            # CBOE P/C data page
+            url = "https://www.cboe.com/us/options/market_statistics/daily/"
+
+            response = self.session.get(url, timeout=10)
+            if response.status_code != 200:
+                logger.debug(f"CBOE P/C page returned {response.status_code}")
+                return None
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Look for P/C ratio data in page
+            # Note: CBOE page structure changes - this may need updates
+            tables = soup.find_all('table')
+
+            for table in tables:
+                text = table.get_text().lower()
+                if 'put/call' in text or 'put call' in text:
+                    # Found P/C table - parse it
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cells = row.find_all(['td', 'th'])
+                        if len(cells) >= 2:
+                            label = cells[0].get_text().strip().lower()
+                            try:
+                                value = float(cells[1].get_text().strip())
+                                if 'equity' in label:
+                                    return {'equity_pc': value, 'source': 'CBOE'}
+                                elif 'total' in label:
+                                    return {'total_pc': value, 'source': 'CBOE'}
+                            except ValueError:
+                                continue
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"CBOE scrape failed (expected): {e}")
+            return None
+
+    def _interpret_put_call(self, pc_ratio: float) -> Dict:
+        """
+        Interpret put/call ratio sentiment
+
+        P/C > 1.0: More puts than calls = bearish sentiment
+        P/C < 1.0: More calls than puts = bullish sentiment
+
+        Contrarian view: Extreme readings often mark reversals
+        """
+        if pc_ratio > 1.3:
+            return {
+                'reading': 'Extreme Fear',
+                'signal': 'CONTRARIAN BUY',
+                'color': '#4CAF50',
+                'description': 'Heavy put buying - potential bottom forming'
+            }
+        elif pc_ratio > 1.1:
+            return {
+                'reading': 'Fearful',
+                'signal': 'BEARISH',
+                'color': '#FF9800',
+                'description': 'Elevated hedging activity'
+            }
+        elif pc_ratio > 0.9:
+            return {
+                'reading': 'Neutral',
+                'signal': 'NEUTRAL',
+                'color': '#9E9E9E',
+                'description': 'Balanced options activity'
+            }
+        elif pc_ratio > 0.7:
+            return {
+                'reading': 'Complacent',
+                'signal': 'BULLISH',
+                'color': '#8BC34A',
+                'description': 'Call buying dominates - bullish sentiment'
+            }
+        else:
+            return {
+                'reading': 'Extreme Greed',
+                'signal': 'CONTRARIAN SELL',
+                'color': '#F44336',
+                'description': 'Heavy call buying - potential top forming'
+            }
+
+    def get_multi_ticker_put_call(self, tickers: list = None) -> Dict:
+        """
+        Get put/call ratios for multiple tickers
+
+        Useful for comparing P/C across QQQ, IWM, SPY
+        to identify sector-specific sentiment
+
+        Args:
+            tickers: List of tickers to analyze (default: major ETFs)
+
+        Returns:
+            Dict with P/C ratios per ticker
+        """
+        if tickers is None:
+            tickers = ['SPY', 'QQQ', 'IWM']
+
+        results = {}
+
+        for ticker in tickers:
+            try:
+                stock = yf.Ticker(ticker)
+                options_dates = stock.options
+
+                if not options_dates:
+                    continue
+
+                # Get front month options
+                front_month = options_dates[0]
+                chain = stock.option_chain(front_month)
+
+                put_oi = chain.puts['openInterest'].sum()
+                call_oi = chain.calls['openInterest'].sum()
+
+                if call_oi > 0:
+                    pc_ratio = put_oi / call_oi
+                    results[ticker] = {
+                        'put_call_ratio': round(pc_ratio, 3),
+                        'put_oi': int(put_oi),
+                        'call_oi': int(call_oi),
+                        'expiry': front_month,
+                        'sentiment': self._interpret_put_call(pc_ratio)
+                    }
+
+            except Exception as e:
+                logger.debug(f"Could not get P/C for {ticker}: {e}")
+                continue
+
+        return results
     
     def get_all_data(self) -> Dict:
         """

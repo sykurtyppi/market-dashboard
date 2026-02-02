@@ -76,6 +76,13 @@ try:
     from data_collectors.repo_collector_enhanced import RepoCollector
     from data_collectors.cot_collector import COTCollector
 
+    # Collectors - Phase 3 (Institutional Data)
+    from data_collectors.treasury_auction_collector import TreasuryAuctionCollector
+    from data_collectors.economic_calendar_collector import EconomicCalendarCollector
+    from data_collectors.dark_pool_collector import DarkPoolCollector
+    from data_collectors.insider_trading_collector import InsiderTradingCollector
+    from data_collectors.sector_collector import SectorCollector
+
     # Processors
     from processors.left_strategy import LEFTStrategy
     from processors.vrp_module import VRPAnalyzer           # VRP analysis
@@ -538,6 +545,8 @@ with st.sidebar:
             "Market Breadth",
             "Treasury Stress (MOVE)",  # Phase 2
             "Repo Market (SOFR)",      # Phase 2
+            "Institutional Flow",      # Phase 3 - Dark Pool, Insider, Auctions
+            "Economic Calendar",       # Phase 3 - Events & Countdown
             "Settings",
         ],
     )
@@ -4175,7 +4184,378 @@ elif page == "CTA Flow Tracker":
         
         st.info(" **Strategy:** Watch price action near flip levels. Breaking above = CTA buying. Breaking below = CTA selling.")
 
-        
+
+# ============================================================
+# INSTITUTIONAL FLOW (Phase 3)
+# ============================================================
+
+elif page == "Institutional Flow":
+    st.markdown("<h1 class='main-header'>Institutional Flow Analysis</h1>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Track where smart money is positioning through dark pools, insider transactions, and Treasury auction demand.
+    """)
+
+    # Initialize collectors
+    @st.cache_resource
+    def get_institutional_collectors():
+        return {
+            'dark_pool': DarkPoolCollector(),
+            'insider': InsiderTradingCollector(),
+            'treasury': TreasuryAuctionCollector(),
+            'sector': SectorCollector(),
+        }
+
+    inst_collectors = get_institutional_collectors()
+
+    # --- SECTOR ROTATION SIGNAL ---
+    st.subheader("Sector Rotation Signal")
+
+    try:
+        rotation = inst_collectors['sector'].get_rotation_signal()
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Rotation Signal",
+                rotation.get('signal', 'Unknown'),
+                delta=f"{rotation.get('weighted_spread', 0):+.1f}% spread"
+            )
+        with col2:
+            leading = rotation.get('leading_sectors', [])
+            st.markdown("**Leading Sectors:**")
+            for s in leading[:3]:
+                st.markdown(f"- {s}")
+        with col3:
+            lagging = rotation.get('lagging_sectors', [])
+            st.markdown("**Lagging Sectors:**")
+            for s in lagging[:3]:
+                st.markdown(f"- {s}")
+
+        with st.expander("Rotation Interpretation"):
+            st.info(rotation.get('interpretation', 'No interpretation available'))
+
+    except Exception as e:
+        st.warning(f"Could not load sector rotation: {e}")
+
+    st.divider()
+
+    # --- DARK POOL ACTIVITY ---
+    st.subheader("Dark Pool Activity")
+
+    try:
+        dp_summary = inst_collectors['dark_pool'].get_dark_pool_summary()
+
+        if dp_summary.get('status') != 'unavailable':
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "Avg Dark Pool %",
+                    f"{dp_summary.get('avg_dark_pool_pct', 0):.1f}%",
+                    help="Percentage of trading through dark pools"
+                )
+            with col2:
+                st.metric(
+                    "Sentiment",
+                    dp_summary.get('sentiment', 'Unknown'),
+                )
+            with col3:
+                status = dp_summary.get('status', 'unknown')
+                if status == 'estimated':
+                    st.info("Data: Estimated (FINRA API requires registration)")
+                else:
+                    st.success("Data: Live from FINRA")
+
+            with st.expander("Dark Pool Interpretation"):
+                st.markdown(f"""
+                **What is Dark Pool Trading?**
+
+                Dark pools are private exchanges where institutional investors trade large blocks
+                without revealing their intentions to public markets.
+
+                **Current Reading:** {dp_summary.get('interpretation', 'N/A')}
+
+                **Key Levels:**
+                - **> 45%**: Unusually high institutional activity
+                - **35-45%**: Normal institutional participation
+                - **< 35%**: Retail-dominated trading
+                """)
+        else:
+            st.warning("Dark pool data not available")
+
+    except Exception as e:
+        st.warning(f"Could not load dark pool data: {e}")
+
+    st.divider()
+
+    # --- INSIDER TRADING ---
+    st.subheader("Insider Trading Activity")
+
+    try:
+        insider_summary = inst_collectors['insider'].get_insider_summary()
+
+        if insider_summary.get('status') != 'unavailable':
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Buy/Sell Ratio", insider_summary.get('buy_sell_ratio', 'N/A'))
+            with col2:
+                st.metric("Buys", insider_summary.get('buy_count', 0))
+            with col3:
+                st.metric("Sells", insider_summary.get('sell_count', 0))
+            with col4:
+                signal = insider_summary.get('signal', 'NEUTRAL')
+                color = insider_summary.get('color', '#9E9E9E')
+                st.markdown(f"<h3 style='color:{color}'>{signal}</h3>", unsafe_allow_html=True)
+
+            # Notable transactions
+            notable = inst_collectors['insider'].get_notable_transactions()
+            if notable:
+                with st.expander("Notable Insider Transactions (>$1M)"):
+                    for t in notable[:5]:
+                        emoji = "" if t.get('transaction_code') == 'P' else ""
+                        st.markdown(f"""
+                        {emoji} **{t.get('ticker', 'N/A')}** - {t.get('insider_name', 'Unknown')} ({t.get('title', 'N/A')})
+                        - {t.get('transaction_type', 'Unknown')}: {t.get('shares', 0):,} shares @ ${t.get('price', 0):.2f}
+                        - Value: ${t.get('value', 0):,.0f}
+                        - Date: {t.get('date', 'N/A')}
+                        """)
+
+            with st.expander("Insider Trading Interpretation"):
+                st.markdown(f"""
+                **Insider Activity Signal:** {insider_summary.get('sentiment', 'N/A')}
+
+                **Why Track Insider Trading?**
+
+                Corporate insiders (CEOs, CFOs, Directors) have deep knowledge of their companies.
+                Their personal trades often signal future prospects.
+
+                **Key Signals:**
+                - **Cluster buying** (multiple insiders buying): Strong bullish signal
+                - **CEO/CFO purchases**: Most significant - they know the business best
+                - **Planned sales (10b5-1)**: Less significant - often pre-scheduled
+
+                Note: Data shown is sample/delayed. Real SEC EDGAR data has 2-day reporting requirement.
+                """)
+        else:
+            st.warning("Insider trading data not available")
+
+    except Exception as e:
+        st.warning(f"Could not load insider data: {e}")
+
+    st.divider()
+
+    # --- TREASURY AUCTIONS ---
+    st.subheader("Treasury Auction Demand")
+
+    try:
+        auction_summary = inst_collectors['treasury'].get_auction_summary()
+
+        if auction_summary:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                btc = auction_summary.get('avg_bid_to_cover', 0)
+                st.metric(
+                    "Avg Bid-to-Cover",
+                    f"{btc:.2f}" if btc else "N/A",
+                    help="Higher = More demand for Treasuries"
+                )
+            with col2:
+                st.metric(
+                    "Auction Health",
+                    auction_summary.get('health', 'Unknown'),
+                )
+            with col3:
+                st.metric(
+                    "Strong/Weak",
+                    f"{auction_summary.get('strong_auctions', 0)} / {auction_summary.get('weak_auctions', 0)}",
+                    help="Strong (BTC>2.5) vs Weak (BTC<2.2) auctions"
+                )
+
+            # Key auction results
+            key_auctions = inst_collectors['treasury'].get_key_auction_results()
+            if key_auctions:
+                with st.expander("Key Auction Results"):
+                    for term, data in key_auctions.items():
+                        if data:
+                            st.markdown(f"""
+                            **{term}** (auctioned {data.get('date', 'N/A').strftime('%Y-%m-%d') if data.get('date') else 'N/A'})
+                            - Yield: {data.get('yield', 'N/A')}%
+                            - Bid-to-Cover: {data.get('bid_to_cover', 'N/A')} ({data.get('demand_rating', 'N/A')})
+                            - Indirect: {data.get('indirect_pct', 'N/A')}% | Direct: {data.get('direct_pct', 'N/A')}%
+                            """)
+
+            with st.expander("Treasury Auction Interpretation"):
+                st.markdown(f"""
+                **Why Track Treasury Auctions?**
+
+                Treasury auctions show real demand for US government debt.
+                Weak auctions can signal:
+                - Rising rates ahead
+                - Foreign buyer concerns
+                - Potential market stress
+
+                **Key Metrics:**
+                - **Bid-to-Cover > 2.5**: Strong demand
+                - **Bid-to-Cover < 2.0**: Weak demand (warning sign)
+                - **Indirect Bidders**: Foreign/institutional demand
+                - **Direct Bidders**: Domestic institutional demand
+                """)
+        else:
+            st.warning("Treasury auction data not available")
+
+    except Exception as e:
+        st.warning(f"Could not load treasury auction data: {e}")
+
+
+# ============================================================
+# ECONOMIC CALENDAR (Phase 3)
+# ============================================================
+
+elif page == "Economic Calendar":
+    st.markdown("<h1 class='main-header'>Economic Calendar & Events</h1>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Track upcoming economic events that can move markets. FOMC, CPI, NFP, and more.
+    """)
+
+    @st.cache_resource
+    def get_calendar_collector():
+        return EconomicCalendarCollector()
+
+    calendar = get_calendar_collector()
+
+    # --- NEXT EVENT COUNTDOWN ---
+    countdown = calendar.get_countdown_to_next_event()
+
+    if countdown:
+        st.subheader("Next Major Event")
+
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.markdown(f"### {countdown['event']}")
+            st.markdown(f"*{countdown['description']}*")
+        with col2:
+            if countdown['is_today']:
+                st.error("TODAY")
+            elif countdown['is_tomorrow']:
+                st.warning("TOMORROW")
+            else:
+                st.info(f"{countdown['days']} days away")
+        with col3:
+            st.markdown(f"**Date:** {countdown['date'].strftime('%b %d, %Y')}")
+            st.markdown(f"**Category:** {countdown['category']}")
+
+    st.divider()
+
+    # --- CALENDAR SUMMARY ---
+    summary = calendar.get_calendar_summary()
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Events This Week", summary.get('this_week', 0))
+    with col2:
+        st.metric("High Impact (30d)", summary.get('high_importance', 0))
+    with col3:
+        next_fomc = summary.get('next_fomc')
+        if next_fomc:
+            days_to_fomc = (next_fomc - datetime.now()).days
+            st.metric("Days to FOMC", days_to_fomc)
+        else:
+            st.metric("Days to FOMC", "N/A")
+    with col4:
+        next_cpi = summary.get('next_cpi')
+        if next_cpi:
+            days_to_cpi = (next_cpi - datetime.now()).days
+            st.metric("Days to CPI", days_to_cpi)
+        else:
+            st.metric("Days to CPI", "N/A")
+
+    st.divider()
+
+    # --- UPCOMING EVENTS ---
+    st.subheader("Upcoming Events (30 Days)")
+
+    events = calendar.get_upcoming_events(days=30)
+
+    if events:
+        # Create DataFrame for display
+        events_data = []
+        for e in events:
+            if e.date > datetime.now():
+                days_away = (e.date - datetime.now()).days
+                events_data.append({
+                    'Date': e.date.strftime('%b %d'),
+                    'Day': e.date.strftime('%a'),
+                    'Event': e.name,
+                    'Category': e.category,
+                    'Importance': e.importance.value.upper(),
+                    'Days Away': days_away,
+                })
+
+        events_df = pd.DataFrame(events_data)
+
+        # Color code by importance
+        def highlight_importance(row):
+            if row['Importance'] == 'HIGH':
+                return ['background-color: #ffebee'] * len(row)
+            elif row['Importance'] == 'MEDIUM':
+                return ['background-color: #fff8e1'] * len(row)
+            return [''] * len(row)
+
+        st.dataframe(
+            events_df.style.apply(highlight_importance, axis=1),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # This week detail
+        this_week = calendar.get_events_this_week()
+        if this_week:
+            with st.expander("This Week's Events"):
+                for e in this_week:
+                    importance_color = '#F44336' if e.importance.value == 'high' else '#FF9800'
+                    st.markdown(f"""
+                    - **{e.date.strftime('%a %b %d')}**: {e.name}
+                      <span style='color:{importance_color}'>({e.importance.value.upper()})</span>
+                      - {e.description}
+                    """, unsafe_allow_html=True)
+    else:
+        st.info("No upcoming events found")
+
+    st.divider()
+
+    # --- EVENT IMPACT GUIDE ---
+    with st.expander("Event Impact Guide"):
+        st.markdown("""
+        ### High Impact Events
+
+        | Event | Typical Impact | What to Watch |
+        |-------|---------------|---------------|
+        | **FOMC** | High volatility | Rate decision, dot plot, Powell comments |
+        | **CPI** | Major moves | Core CPI vs expectations, shelter costs |
+        | **NFP** | Morning volatility | Headline jobs, wage growth, revisions |
+        | **GDP** | Moderate | Growth rate vs estimates, consumer spending |
+
+        ### Trading Around Events
+
+        **Pre-Event:**
+        - VIX9D often spikes (near-term uncertainty)
+        - Options premiums inflate
+        - Consider reducing position size
+
+        **Post-Event:**
+        - Initial reaction often reversed
+        - Wait 30-60 min for dust to settle
+        - Watch for trend continuation or reversal
+
+        ### Key Dates Pattern
+
+        - **FOMC**: 8 meetings/year, decisions at 2:00 PM ET
+        - **CPI**: Monthly, ~10th-14th, 8:30 AM ET
+        - **NFP**: First Friday of month, 8:30 AM ET
+        - **GDP**: Quarterly, end of month following quarter
+        """)
+
 
 # ============================================================
 # SETTINGS
