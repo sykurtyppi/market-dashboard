@@ -1,0 +1,318 @@
+# ============================================================================
+# MARKET DASHBOARD - CENTRALIZED CONFIGURATION
+# ============================================================================
+#
+# All tunable parameters for signal generation, thresholds, and analysis.
+# Modify values here instead of editing code directly.
+#
+# Structure:
+#   - Each section documents WHY the values were chosen
+#   - Sources cited where applicable (academic research, institutional practice)
+#
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# VOLATILITY ANALYSIS
+# ----------------------------------------------------------------------------
+volatility:
+  # VRP (Volatility Risk Premium) Configuration
+  vrp:
+    lookback_days: 21  # ~1 month of trading days for realized vol calculation
+    # Regime thresholds based on VIX levels (Larry McMillan research)
+    regimes:
+      complacent:
+        vix_max: 12
+        expected_6m_return: 15.2  # Historical average when VIX < 12
+        color: "#4CAF50"
+      normal:
+        vix_min: 12
+        vix_max: 16
+        expected_6m_return: 12.8
+        color: "#8BC34A"
+      elevated:
+        vix_min: 16
+        vix_max: 20
+        expected_6m_return: 10.5
+        color: "#FFC107"
+      fearful:
+        vix_min: 20
+        vix_max: 30
+        expected_6m_return: 8.2
+        color: "#FF9800"
+      panic:
+        vix_min: 30
+        vix_max: 40
+        expected_6m_return: 18.5  # Contrarian opportunity
+        color: "#F44336"
+      extreme_panic:
+        vix_min: 40
+        expected_6m_return: 25.0  # Strong contrarian signal
+        color: "#9C27B0"
+
+  # VVIX (VIX of VIX) Configuration
+  # Source: CBOE research, SpotGamma dealer gamma analysis
+  vvix:
+    # Buy signal thresholds - when VVIX hits 120+, dealers scrambling for gamma
+    # creates mean reversion → vanna/charm tailwinds
+    strong_buy_threshold: 120
+    buy_alert_threshold: 110
+    normal_min: 80
+    complacent_max: 80
+    colors:
+      strong_buy: "#4CAF50"
+      buy_alert: "#8BC34A"
+      neutral: "#FFC107"
+      caution: "#FF9800"
+
+  # SKEW Index Configuration
+  # Measures tail risk premium (OTM put demand)
+  skew:
+    extreme_threshold: 160  # Crisis-level hedging
+    elevated_threshold: 145
+    normal_threshold: 130
+    complacent_max: 130
+
+  # VIX Term Structure
+  vix_term:
+    contango_steep_threshold: 0.05  # Slope per day
+    backwardation_threshold: 0.0
+
+  # VIX9D Spread (near-term vs 30-day)
+  vix9d:
+    event_risk_threshold: 10  # Percentage spread indicating event risk
+    calm_threshold: -10       # Percentage spread indicating calm near-term
+
+# ----------------------------------------------------------------------------
+# CREDIT SPREADS & LEFT STRATEGY
+# ----------------------------------------------------------------------------
+credit:
+  # LEFT Strategy Parameters
+  # Source: Larry McMillan's "Buy at Extreme Lows" research
+  left_strategy:
+    ema_period: 330          # ~15 months of trading days
+    entry_threshold: 0.65    # Buy when spread ratio <= 0.65 (35% below EMA)
+    exit_threshold: 1.40     # Sell when spread ratio >= 1.40 (40% above EMA)
+    # Signal strength mapping
+    signal_strength:
+      buy_base: 50
+      sell_base: 50
+      max_strength: 100
+
+  # Credit regime thresholds (HY OAS in basis points)
+  regimes:
+    tight_max_bps: 300      # Risk-on environment
+    neutral_max_bps: 500    # Normal conditions
+    wide_min_bps: 500       # Risk-off / stress
+
+# ----------------------------------------------------------------------------
+# LIQUIDITY ANALYSIS
+# ----------------------------------------------------------------------------
+liquidity:
+  # Net Liquidity Configuration
+  # Formula: Fed BS - TGA - RRP (Crossborder Capital, SpotGamma methodology)
+  net_liquidity:
+    lookback_days: 252      # 1 year for z-score calculation
+    min_data_points: 30     # Minimum days for reliable z-score
+    # Regime classification thresholds (z-score based)
+    supportive_threshold: 0.8
+    draining_threshold: -0.8
+    colors:
+      supportive: "#4CAF50"
+      neutral: "#FFC107"
+      draining: "#F44336"
+      unavailable: "#9E9E9E"
+
+  # QT Analyzer Configuration
+  qt:
+    lookback_days: 252
+    # Z-score regime thresholds
+    expanding_threshold: 0.8
+    contracting_threshold: -0.8
+
+  # RRP Thresholds
+  rrp:
+    critical_billions: 50   # Critical shortage - Fed must pause QT
+    warning_billions: 200   # Getting low
+
+# ----------------------------------------------------------------------------
+# REPO MARKET & FUNDING STRESS
+# ----------------------------------------------------------------------------
+repo:
+  # SOFR Z-Score Stress Levels
+  sofr:
+    lookback_days: 252
+    stress_threshold: 2.0       # Z > 2.0 = STRESS (funding crisis risk)
+    elevated_threshold: 1.0     # Z 1.0-2.0 = ELEVATED
+    supportive_threshold: 0.0   # Z < 0 = SUPPORTIVE (easy money)
+
+  # SOFR-IORB Spread Thresholds (basis points)
+  spread:
+    tight_max_bps: 15
+    normal_max_bps: 30
+
+# ----------------------------------------------------------------------------
+# TREASURY MARKET
+# ----------------------------------------------------------------------------
+treasury:
+  # MOVE Index Stress Levels (Treasury implied vol)
+  move:
+    low_max: 80             # Calm treasury market
+    normal_max: 120         # Healthy functioning
+    elevated_max: 150       # Stress building
+    high_min: 150           # Severe dysfunction
+
+# ----------------------------------------------------------------------------
+# MARKET BREADTH
+# ----------------------------------------------------------------------------
+breadth:
+  # Zweig Thrust Configuration
+  # Source: Martin Zweig's breadth thrust indicator
+  zweig_thrust:
+    ema_span: 10
+    window_days: 10
+    low_threshold: 0.40     # Start of thrust (40% advancing)
+    high_threshold: 0.615   # Thrust confirmation (61.5% advancing)
+    active_days: 30         # Thrust "active" period
+
+  # Divergence Detection
+  divergence:
+    lookback_days: 60
+    # Z-score interpretation for breadth
+    overbought_extreme: 2.0
+    overbought: 1.0
+    oversold: -1.0
+    oversold_extreme: -2.0
+
+  # Breadth Regime Thresholds
+  regimes:
+    strong_threshold: 0.60  # > 60% advancing = strong
+    weak_threshold: 0.40    # < 40% advancing = weak
+
+  # McClellan Summation Index Thresholds
+  # Source: Sherman McClellan - cumulative breadth momentum
+  mcclellan_summation:
+    strong_bull: 1000       # Above = strong bull market
+    moderate_bull: 500      # 500-1000 = moderately bullish
+    neutral_low: -500       # -500 to +500 = neutral/transitional
+    moderate_bear: -1000    # -1000 to -500 = moderately bearish
+                            # Below -1000 = strong bear market
+
+  # Percent Above SMA Thresholds
+  # Institutional measure of market health
+  pct_above_sma:
+    strong_bull: 70         # >70% above 200 SMA = strong bull
+    healthy: 50             # 50-70% = healthy
+    weakening: 30           # 30-50% = weakening
+                            # <30% = bear market conditions
+
+  # New Highs / New Lows Thresholds
+  new_highs_lows:
+    strong_bull_net: 200    # NH-NL > 200 = strong
+    bull_net: 50            # 50-200 = bullish
+    bear_net: -50           # -50 to -200 = bearish
+    strong_bear_net: -200   # < -200 = strongly bearish
+
+  # NYSE TICK Reversal Levels
+  # Source: Institutional intraday trading - key reversal zones
+  # TICK = # NYSE stocks on uptick minus downtick (real-time sentiment)
+  tick:
+    extreme_high: 1200      # Extreme overbought - HIGH probability reversal DOWN
+    strong_high: 800        # Strong buying - watch for exhaustion
+    moderate_high: 600      # Elevated buying - trend continuation likely
+    moderate_low: -600      # Elevated selling - trend continuation likely
+    strong_low: -800        # Strong selling - watch for bounce
+    extreme_low: -1200      # Extreme oversold - HIGH probability reversal UP
+
+# ----------------------------------------------------------------------------
+# CTA / TREND FOLLOWING
+# ----------------------------------------------------------------------------
+cta:
+  # Lookback periods for momentum signals (trading days)
+  # Standard institutional periods: 1M, 3M, 6M, 12M
+  lookbacks:
+    - 21    # 1 month
+    - 63    # 3 months (1 quarter)
+    - 126   # 6 months
+    - 252   # 12 months (1 year)
+
+  # Volatility targeting
+  vol_lookback: 20          # Days for realized vol calculation
+  target_vol: 0.15          # 15% annualized target volatility
+  max_gross_leverage: 2.0   # Maximum total exposure
+
+  # Signal thresholds
+  flat_threshold: 0.03      # Below 3% = FLAT (no position)
+
+# ----------------------------------------------------------------------------
+# DATA COLLECTION
+# ----------------------------------------------------------------------------
+data_collection:
+  # Default lookback periods
+  lookback_days:
+    short: 90
+    medium: 365
+    long: 730             # 2 years
+
+  # API rate limiting
+  rate_limits:
+    fred_delay_seconds: 0.1
+    yahoo_max_backoff: 10.0
+
+  # Retry configuration
+  retry:
+    max_retries: 3
+    initial_delay: 1.0
+    max_delay: 60.0
+    backoff_multiplier: 2.0
+
+# ----------------------------------------------------------------------------
+# DISPLAY & UI
+# ----------------------------------------------------------------------------
+display:
+  # Color scheme (Material Design inspired)
+  colors:
+    positive: "#4CAF50"     # Green
+    positive_light: "#8BC34A"
+    neutral: "#FFC107"      # Amber
+    warning: "#FF9800"      # Orange
+    negative: "#F44336"     # Red
+    extreme: "#9C27B0"      # Purple
+    info: "#2196F3"         # Blue
+    muted: "#9E9E9E"        # Grey
+
+  # Chart defaults
+  charts:
+    default_height: 400
+    default_lookback_days: 90
+
+# ----------------------------------------------------------------------------
+# TECHNICAL INDICATORS
+# ----------------------------------------------------------------------------
+indicators:
+  # RSI
+  rsi:
+    period: 14
+    overbought: 70
+    oversold: 30
+
+  # Bollinger Bands
+  bollinger:
+    period: 20
+    num_std: 2.0
+
+  # MACD
+  macd:
+    fast: 12
+    slow: 26
+    signal: 9
+
+  # Moving Averages
+  moving_averages:
+    short: 20
+    medium: 50
+    long: 200
+
+  # Volatility
+  volatility:
+    period: 21
+    annualization_factor: 252  # Trading days per year
