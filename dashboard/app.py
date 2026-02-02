@@ -234,13 +234,18 @@ st.markdown(
 @st.cache_resource
 def init_components():
     try:
-        # FRED is optional
+        # FRED-dependent collectors are optional (require FRED_API_KEY)
+        fred_collector = None
+        liquidity_collector = None
+        fed_bs_collector = None
+
         try:
             fred_collector = FREDCollector()
+            liquidity_collector = LiquidityCollector()
+            fed_bs_collector = FedBalanceSheetCollector()
         except Exception as fred_error:
             st.warning(f"FRED API not configured: {fred_error}")
-            st.info("You can add your FRED API key in Settings page")
-            fred_collector = None
+            st.info("You can add your FRED API key in Settings → Secrets to enable liquidity data")
 
         components = {
             # Core DB / health
@@ -256,17 +261,17 @@ def init_components():
             "left_strategy": LEFTStrategy(),
             "vrp": VRPAnalyzer(lookback_days=21),
 
-            # Liquidity collectors & analyzers
-            "liquidity": LiquidityCollector(),
-            "liquidity_analyzer": LiquidityAnalyzer(),  # Now uses correct formula: Fed BS - TGA - RRP
+            # Liquidity collectors & analyzers (FRED-dependent)
+            "liquidity": liquidity_collector,
+            "liquidity_analyzer": LiquidityAnalyzer() if liquidity_collector else None,
 
             # Phase 2 collectors & processors
             "market": MarketDataCollector(),
-            "fed_bs": FedBalanceSheetCollector(),
+            "fed_bs": fed_bs_collector,
             "move": MOVECollector(),
             "repo": RepoCollector(),
-            "qt_analyzer": QTAnalyzer(),
-            "treasury_analyzer": TreasuryLiquidityAnalyzer(),
+            "qt_analyzer": QTAnalyzer() if fed_bs_collector else None,
+            "treasury_analyzer": TreasuryLiquidityAnalyzer() if fed_bs_collector else None,
             "repo_analyzer": RepoAnalyzer(),
         }
 
