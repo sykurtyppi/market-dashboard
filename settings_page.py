@@ -80,6 +80,24 @@ class SettingsManager:
             logging.warning(f"Polygon API test failed: {e}")
             return False
 
+    def test_nasdaq_api(self, api_key: str) -> bool:
+        """Test Nasdaq Data Link (Quandl) API key"""
+        try:
+            # Test with a simple COT dataset
+            url = "https://data.nasdaq.com/api/v3/datasets/CFTC/13874A_F_L_ALL.json"
+            params = {
+                'api_key': api_key,
+                'rows': 1
+            }
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                return 'dataset' in data
+            return False
+        except (requests.RequestException, ValueError, ConnectionError) as e:
+            logging.warning(f"Nasdaq Data Link API test failed: {e}")
+            return False
+
 
 def render_settings_page():
     """Render the settings page in Streamlit"""
@@ -129,9 +147,54 @@ def render_settings_page():
                 st.success("✅ FRED API key saved!")
         else:
             st.warning("Please enter an API key")
-    
+
     st.markdown("---")
-    
+
+    # Nasdaq Data Link Section (for COT data)
+    st.header("📊 Nasdaq Data Link (COT Positioning)")
+    st.markdown("""
+    **Get your free API key:** [https://data.nasdaq.com](https://data.nasdaq.com) → Sign up → Account Settings
+
+    **Used for:**
+    - CFTC Commitments of Traders (COT) data
+    - Institutional futures positioning (S&P 500, Treasuries, Gold, Oil, Dollar)
+    - Weekly hedge fund/speculator positioning
+
+    **Why you need this:** Without this key, COT data downloads from CFTC (slow, unreliable).
+    With this key, data loads instantly.
+    """)
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        nasdaq_key = st.text_input(
+            "Nasdaq Data Link API Key",
+            value=settings.get_api_key('NASDAQ_DATA_LINK_KEY'),
+            type="password",
+            key="nasdaq_input"
+        )
+    with col2:
+        st.write("")
+        st.write("")
+        if st.button("Test", key="test_nasdaq"):
+            if nasdaq_key:
+                with st.spinner("Testing..."):
+                    if settings.test_nasdaq_api(nasdaq_key):
+                        st.success("✅ Valid!")
+                    else:
+                        st.error("❌ Invalid")
+            else:
+                st.warning("Enter key first")
+
+    if st.button("Save Nasdaq Key", key="save_nasdaq"):
+        if nasdaq_key:
+            if settings.save_api_key('NASDAQ_DATA_LINK_KEY', nasdaq_key):
+                st.success("✅ Nasdaq Data Link API key saved!")
+                st.info("🔄 COT Positioning page will now load faster")
+        else:
+            st.warning("Please enter an API key")
+
+    st.markdown("---")
+
     # Alpha Vantage Section
     st.header(" Alpha Vantage API")
     st.markdown("""

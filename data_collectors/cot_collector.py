@@ -13,15 +13,27 @@ Key Markets Tracked:
 - US Dollar Index (DX) - Currency positioning
 - VIX Futures - Volatility positioning
 
-Data Source: CFTC Weekly Report (released every Friday at 3:30pm ET)
+Data Sources (in priority order):
+1. Nasdaq Data Link (Quandl) - Fast, reliable, requires free API key
+2. CFTC ZIP files - Free but slow and can fail
+
+Setup for best experience:
+1. Sign up at https://data.nasdaq.com (free)
+2. Get API key from account settings
+3. Add to .env: NASDAQ_DATA_LINK_KEY=your_key_here
 """
 
 import logging
+import os
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 from io import StringIO
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +108,21 @@ class COTCollector:
 
         Args:
             quandl_api_key: Optional Nasdaq Data Link API key for direct access.
-                           If not provided, will use free CSV downloads.
+                           If not provided, will check NASDAQ_DATA_LINK_KEY env var,
+                           then fall back to CFTC CSV downloads.
         """
-        self.api_key = quandl_api_key
+        # Priority: explicit arg > env var > None
+        self.api_key = quandl_api_key or os.getenv('NASDAQ_DATA_LINK_KEY') or os.getenv('QUANDL_API_KEY')
+
+        if self.api_key:
+            logger.info("COT Collector initialized with Nasdaq Data Link API key")
+        else:
+            logger.warning(
+                "No Nasdaq Data Link API key found. COT data will use slow CFTC downloads. "
+                "For faster data, sign up at https://data.nasdaq.com (free) and add "
+                "NASDAQ_DATA_LINK_KEY to your .env file."
+            )
+
         self.logger = logging.getLogger(__name__)
         self._cache = {}
         self._cache_time = None
