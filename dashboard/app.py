@@ -2997,43 +2997,69 @@ elif page == "Market Breadth":
                 with tab3:
                     st.subheader("McClellan Oscillator")
                     st.caption("Breadth momentum indicator - positive = improving, negative = weakening")
-                    
+
+                    # Get current values for dynamic scaling
+                    mc_data = breadth_history['mcclellan']
+                    mc_max_val = mc_data.max()
+                    mc_min_val = mc_data.min()
+                    mc_range = max(abs(mc_max_val), abs(mc_min_val), 50)  # At least show -50 to +50
+
                     fig = go.Figure()
-                    
+
                     fig.add_trace(go.Scatter(
                         x=breadth_history['date'],
-                        y=breadth_history['mcclellan'],
+                        y=mc_data,
                         name='McClellan',
                         line=dict(color='#4ECDC4', width=3),
                         fill='tozeroy',
                         fillcolor='rgba(78, 205, 196, 0.2)',
                         hovertemplate='McClellan: %{y:.1f}<extra></extra>'
                     ))
-                    
-                    fig.add_hline(y=0, line_dash="solid", line_color="gray", opacity=0.5)
-                    fig.add_hline(y=50, line_dash="dash", line_color="green", opacity=0.3)
-                    fig.add_hline(y=-50, line_dash="dash", line_color="red", opacity=0.3)
-                    
+
+                    # Reference lines
+                    fig.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.5)
+                    fig.add_hline(y=50, line_dash="dash", line_color="#4CAF50", opacity=0.5,
+                                 annotation_text="Overbought (+50)", annotation_position="right")
+                    fig.add_hline(y=-50, line_dash="dash", line_color="#F44336", opacity=0.5,
+                                 annotation_text="Oversold (-50)", annotation_position="right")
+
                     fig.update_layout(
-                        title="",
+                        title="McClellan Oscillator (90 Days)",
                         xaxis_title="Date",
                         yaxis_title="Oscillator Value",
                         height=500,
-                        hovermode='x unified'
+                        hovermode='x unified',
+                        yaxis=dict(
+                            range=[-mc_range * 1.2, mc_range * 1.2],  # Dynamic range
+                            zeroline=True,
+                            zerolinecolor='gray',
+                        )
                     )
-                    
-                    st.plotly_chart(fig, width='stretch')
-                    
-                    col1, col2, col3 = st.columns(3)
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        current_mc = breadth_history['mcclellan'].iloc[-1]
+                        current_mc = mc_data.iloc[-1]
                         st.metric("Current Value", f"{current_mc:+.1f}")
                     with col2:
-                        mc_max = breadth_history['mcclellan'].max()
-                        st.metric("90-Day High", f"{mc_max:+.1f}")
+                        st.metric("90-Day High", f"{mc_max_val:+.1f}")
                     with col3:
-                        mc_min = breadth_history['mcclellan'].min()
-                        st.metric("90-Day Low", f"{mc_min:+.1f}")
+                        st.metric("90-Day Low", f"{mc_min_val:+.1f}")
+                    with col4:
+                        # Trend direction
+                        mc_5d_ago = mc_data.iloc[-5] if len(mc_data) >= 5 else mc_data.iloc[0]
+                        mc_trend = "Improving" if current_mc > mc_5d_ago else "Weakening"
+                        st.metric("5-Day Trend", mc_trend)
+
+                    st.info("""
+                    **McClellan Oscillator Interpretation:**
+                    - **> +50**: Overbought - potential pullback ahead
+                    - **0 to +50**: Positive momentum - bulls in control
+                    - **-50 to 0**: Negative momentum - bears in control
+                    - **< -50**: Oversold - potential bounce ahead
+                    - **Note**: Values depend on breadth mode (S&P 100 fast mode vs S&P 500 full mode)
+                    """)
 
             st.divider()
 
@@ -3082,6 +3108,48 @@ elif page == "Market Breadth":
 
                         *Zero line crossings often signal trend changes.*
                         """)
+
+                    # Add Summation Index Chart
+                    if summation.get('history'):
+                        st.markdown("##### Summation Index History")
+                        sum_history = pd.DataFrame(summation['history'])
+
+                        fig_sum = go.Figure()
+
+                        # Summation line
+                        fig_sum.add_trace(go.Scatter(
+                            x=sum_history['date'],
+                            y=sum_history['summation'],
+                            name='Summation Index',
+                            line=dict(color='#2196F3', width=2),
+                            fill='tozeroy',
+                            fillcolor='rgba(33, 150, 243, 0.15)',
+                            hovertemplate='Summation: %{y:+,.0f}<extra></extra>'
+                        ))
+
+                        # Key levels
+                        fig_sum.add_hline(y=0, line_dash="solid", line_color="white", opacity=0.5)
+                        fig_sum.add_hline(y=1000, line_dash="dash", line_color="#4CAF50", opacity=0.5,
+                                         annotation_text="Strong Bull (+1000)", annotation_position="right")
+                        fig_sum.add_hline(y=500, line_dash="dot", line_color="#8BC34A", opacity=0.3)
+                        fig_sum.add_hline(y=-500, line_dash="dot", line_color="#FF9800", opacity=0.3)
+                        fig_sum.add_hline(y=-1000, line_dash="dash", line_color="#F44336", opacity=0.5,
+                                         annotation_text="Strong Bear (-1000)", annotation_position="right")
+
+                        fig_sum.update_layout(
+                            title="McClellan Summation Index (90 Days)",
+                            xaxis_title="Date",
+                            yaxis_title="Summation Index",
+                            height=400,
+                            hovermode='x unified',
+                            yaxis=dict(
+                                zeroline=True,
+                                zerolinecolor='gray',
+                                zerolinewidth=1,
+                            )
+                        )
+
+                        st.plotly_chart(fig_sum, use_container_width=True)
                 else:
                     st.warning("Insufficient data for Summation Index")
 
@@ -4494,18 +4562,27 @@ elif page == "Economic Calendar":
 
         events_df = pd.DataFrame(events_data)
 
-        # Color code by importance
+        # Color code by importance with dark-mode friendly colors
         def highlight_importance(row):
             if row['Importance'] == 'HIGH':
-                return ['background-color: #ffebee'] * len(row)
+                # Red tint with dark text
+                return ['background-color: #5c2a2a; color: #ff8a80'] * len(row)
             elif row['Importance'] == 'MEDIUM':
-                return ['background-color: #fff8e1'] * len(row)
-            return [''] * len(row)
+                # Orange/amber tint with dark text
+                return ['background-color: #4a3c1a; color: #ffd54f'] * len(row)
+            # Low importance - subtle gray
+            return ['background-color: #2d2d2d; color: #b0b0b0'] * len(row)
+
+        styled_df = events_df.style.apply(highlight_importance, axis=1).set_properties(**{
+            'font-size': '14px',
+            'padding': '8px',
+        })
 
         st.dataframe(
-            events_df.style.apply(highlight_importance, axis=1),
+            styled_df,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            height=400
         )
 
         # This week detail
