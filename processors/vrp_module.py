@@ -22,6 +22,16 @@ logger = logging.getLogger(__name__)
 class VRPAnalyzer:
     """Analyzes Volatility Risk Premium and classifies volatility regimes"""
 
+    # Default regimes fallback for Streamlit Cloud compatibility
+    DEFAULT_REGIMES = {
+        'complacent': {'vix_max': 12, 'expected_6m_return': 15.2, 'color': '#4CAF50'},
+        'normal': {'vix_min': 12, 'vix_max': 16, 'expected_6m_return': 12.8, 'color': '#8BC34A'},
+        'elevated': {'vix_min': 16, 'vix_max': 20, 'expected_6m_return': 10.5, 'color': '#FFC107'},
+        'fearful': {'vix_min': 20, 'vix_max': 30, 'expected_6m_return': 8.2, 'color': '#FF9800'},
+        'panic': {'vix_min': 30, 'vix_max': 40, 'expected_6m_return': 18.5, 'color': '#F44336'},
+        'extreme_panic': {'vix_min': 40, 'expected_6m_return': 25.0, 'color': '#9C27B0'},
+    }
+
     def __init__(self, lookback_days: Optional[int] = None):
         """
         Initialize VRP Analyzer
@@ -29,10 +39,16 @@ class VRPAnalyzer:
         Args:
             lookback_days: Number of days for realized volatility calculation (default from config)
         """
-        # Load from config
-        vrp_cfg = cfg.volatility.vrp
-        self.lookback_days = lookback_days or vrp_cfg.lookback_days
-        self._regimes = vrp_cfg.regimes
+        # Load from config with fallbacks
+        try:
+            vrp_cfg = cfg.volatility.vrp
+            self.lookback_days = lookback_days or vrp_cfg.lookback_days
+            self._regimes = vrp_cfg.regimes if hasattr(vrp_cfg, 'regimes') else self.DEFAULT_REGIMES
+        except AttributeError:
+            # Fallback if config not fully loaded
+            self.lookback_days = lookback_days or 21
+            self._regimes = self.DEFAULT_REGIMES
+            logger.info("Using default VRP regimes")
     
     def calculate_realized_volatility(self, ticker: str = "SPY") -> Optional[float]:
         """
