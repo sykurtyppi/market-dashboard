@@ -32,6 +32,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # -------------------------------------------------------------------
+# STREAMLIT CLOUD SECRETS SUPPORT
+# Sync st.secrets to os.environ so collectors can use os.getenv()
+# -------------------------------------------------------------------
+def load_streamlit_secrets():
+    """Load Streamlit Cloud secrets into environment variables"""
+    try:
+        if hasattr(st, 'secrets') and len(st.secrets) > 0:
+            for key in st.secrets:
+                if isinstance(st.secrets[key], str):
+                    os.environ[key] = st.secrets[key]
+    except Exception:
+        pass  # Secrets not available (local dev without secrets.toml)
+
+load_streamlit_secrets()
+
+# -------------------------------------------------------------------
 # IMPORT PROJECT MODULES
 # -------------------------------------------------------------------
 try:
@@ -91,6 +107,13 @@ try:
         format_percentile_badge,
         get_tooltip,
         METRIC_TOOLTIPS,
+        # Quick Wins - New Features
+        check_snapshot_freshness,
+        get_all_alerts,
+        prepare_snapshot_for_export,
+        calculate_composite_risk_score,
+        compare_to_historical,
+        HISTORICAL_PERIODS,
     )
 
 except ImportError as e:
@@ -143,6 +166,63 @@ st.markdown(
     .status-good { color: #4CAF50; font-weight: bold; }
     .status-warning { color: #FF9800; font-weight: bold; }
     .status-bad { color: #F44336; font-weight: bold; }
+
+    /* Mobile Responsive Styles */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        /* Stack columns on mobile */
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+        }
+        /* Smaller metrics on mobile */
+        [data-testid="stMetricValue"] {
+            font-size: 1.5rem !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.85rem !important;
+        }
+        /* Tighter padding */
+        .block-container {
+            padding: 1rem !important;
+        }
+        /* Smaller expander headers */
+        .streamlit-expanderHeader {
+            font-size: 0.9rem !important;
+        }
+    }
+
+    /* Tablet responsiveness */
+    @media (max-width: 1024px) and (min-width: 769px) {
+        .main-header {
+            font-size: 2rem;
+        }
+        /* 2 columns on tablet */
+        [data-testid="column"] {
+            min-width: 45% !important;
+        }
+    }
+
+    /* Risk Score styling */
+    .risk-score-gauge {
+        text-align: center;
+        padding: 15px;
+        border-radius: 10px;
+        background: linear-gradient(145deg, #f5f5f5, #e0e0e0);
+        margin-bottom: 10px;
+    }
+
+    /* Alert styling */
+    .alert-badge {
+        padding: 5px 10px;
+        border-radius: 5px;
+        margin: 3px 0;
+        font-size: 0.85rem;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -779,6 +859,110 @@ if page == "Overview":
     
     st.divider()
     # ========== END REGIME BANNER ==========
+
+    # ========== COMPOSITE RISK SCORE & ALERTS ==========
+    risk_col, alert_col, status_col = st.columns([1, 1, 1])
+
+    with risk_col:
+        # Composite Risk Score
+        risk_score = calculate_composite_risk_score(snapshot, vrp_data)
+        if risk_score.get('score') is not None:
+            st.markdown("#### 📊 Risk Score")
+            score = risk_score['score']
+            interpretation = risk_score['interpretation']
+            color = risk_score['color']
+
+            # Create a visual gauge
+            st.markdown(
+                f"""
+                <div style="text-align: center; padding: 10px;">
+                    <div style="font-size: 48px; font-weight: bold; color: {color};">{score:.0f}</div>
+                    <div style="font-size: 14px; color: {color}; font-weight: bold;">{interpretation}</div>
+                    <div style="font-size: 12px; color: #888; margin-top: 5px;">{risk_score['description']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            # Expandable details
+            with st.expander("Score Components"):
+                for comp, val in risk_score['components'].items():
+                    weight = risk_score['weights'].get(comp, 0) * 100
+                    st.caption(f"• {comp.title()}: {val:.1f} ({weight:.0f}% weight)")
+
+    with alert_col:
+        # Active Alerts
+        st.markdown("#### ⚠️ Active Alerts")
+        alerts = get_all_alerts(snapshot, vrp_data)
+
+        if alerts:
+            for alert in alerts[:4]:  # Show max 4 alerts
+                severity = alert['severity']
+                if severity == 'critical':
+                    st.error(alert['message'])
+                elif severity == 'warning':
+                    st.warning(alert['message'])
+                else:
+                    st.info(alert['message'])
+        else:
+            st.success("✅ No alerts - all indicators normal")
+
+    with status_col:
+        # Data Freshness Status
+        st.markdown("#### 🔄 Data Status")
+        freshness = check_snapshot_freshness(snapshot)
+
+        if freshness['status'] == 'ok':
+            st.success(f"✅ {freshness['message']}")
+        elif freshness['status'] == 'stale':
+            st.warning(f"⚠️ {freshness['message']}")
+        else:
+            st.error(f"❌ {freshness['message']}")
+
+        # Export button
+        st.markdown("---")
+        export_df = prepare_snapshot_for_export(snapshot)
+        if not export_df.empty:
+            csv_data = export_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Export to CSV",
+                data=csv_data,
+                file_name=f"market_data_{snapshot.get('date', 'latest')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+    st.divider()
+
+    # ========== HISTORICAL COMPARISON (Collapsible) ==========
+    with st.expander("📈 Historical Comparison", expanded=False):
+        comparison = compare_to_historical(snapshot)
+
+        if comparison.get('closest_match'):
+            closest = comparison['closest_match']
+            st.info(f"**Most similar to:** {closest['name']} - {closest['description']}")
+
+        # Show comparison table
+        comp_data = []
+        for period in comparison.get('comparisons', [])[:4]:
+            row = {'Period': period['name']}
+
+            if 'vix' in period['differences']:
+                diff = period['differences']['vix']
+                row['VIX'] = f"{diff['current']:.1f} vs {diff['historical']:.1f} ({diff['pct']:+.0f}%)"
+
+            if 'fear_greed' in period['differences']:
+                diff = period['differences']['fear_greed']
+                row['F&G'] = f"{diff['current']:.0f} vs {diff['historical']:.0f} ({diff['diff']:+.0f})"
+
+            if 'hy_spread' in period['differences']:
+                diff = period['differences']['hy_spread']
+                row['HY Spread'] = f"{diff['current']:.0f} vs {diff['historical']:.0f} ({diff['pct']:+.0f}%)"
+
+            comp_data.append(row)
+
+        if comp_data:
+            st.table(pd.DataFrame(comp_data))
 
     st.subheader("Key Market Indicators")
     col1, col2, col3, col4 = st.columns(4)
@@ -4060,7 +4244,52 @@ elif page == "Settings":
                 st.success("✓ Polygon API key saved! Restart dashboard to apply.")
             else:
                 st.error("Please enter an API key")
-    
+
+    # Nasdaq Data Link API Key (for COT data)
+    with st.expander("Nasdaq Data Link API Key (Recommended)", expanded=False):
+        st.markdown("Get your **free** API key at: [data.nasdaq.com](https://data.nasdaq.com)")
+        st.info("🎯 **Used for:** CFTC Commitments of Traders (COT) positioning data. Without this key, COT data uses slow CFTC file downloads.")
+
+        current_nasdaq_key = os.getenv('NASDAQ_DATA_LINK_KEY', '')
+        nasdaq_key = st.text_input(
+            "Nasdaq Data Link API Key",
+            value=current_nasdaq_key,
+            type="password",
+            key="nasdaq_api_key",
+            help="Sign up at data.nasdaq.com (free), then go to Account Settings to get your API key"
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Save Nasdaq API Key"):
+                if nasdaq_key:
+                    save_to_env('NASDAQ_DATA_LINK_KEY', nasdaq_key)
+                    st.success("✓ Nasdaq Data Link API key saved! Restart dashboard to apply.")
+                else:
+                    st.error("Please enter an API key")
+
+        with col2:
+            if st.button("Test Nasdaq API Key"):
+                if nasdaq_key:
+                    with st.spinner("Testing API key..."):
+                        try:
+                            import requests
+                            # Test with a simple dataset request
+                            url = f"https://data.nasdaq.com/api/v3/datasets/CFTC/13874A_F_L_ALL.json?api_key={nasdaq_key}&rows=1"
+                            response = requests.get(url, timeout=10)
+                            if response.status_code == 200:
+                                st.success("✅ API key is valid! COT data will use fast Nasdaq API.")
+                            elif response.status_code == 400:
+                                st.error("❌ Invalid API key. Please check your key.")
+                            elif response.status_code == 429:
+                                st.warning("⚠️ Rate limited. Key is valid but too many requests.")
+                            else:
+                                st.warning(f"⚠️ Unexpected response: {response.status_code}")
+                        except Exception as e:
+                            st.error(f"❌ Test failed: {str(e)}")
+                else:
+                    st.warning("Enter an API key first")
+
     st.divider()
     
     # Manual Overrides Section

@@ -14,13 +14,11 @@ Key Markets Tracked:
 - VIX Futures - Volatility positioning
 
 Data Sources (in priority order):
-1. Nasdaq Data Link (Quandl) - Fast, reliable, requires free API key
-2. CFTC ZIP files - Free but slow and can fail
+1. cot_reports library - Reliable, handles CFTC format changes
+2. Nasdaq Data Link (Quandl) - Fast, requires free API key
+3. Direct CFTC downloads - Fallback
 
-Setup for best experience:
-1. Sign up at https://data.nasdaq.com (free)
-2. Get API key from account settings
-3. Add to .env: NASDAQ_DATA_LINK_KEY=your_key_here
+Install: pip install cot_reports
 """
 
 import logging
@@ -31,6 +29,13 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 from io import StringIO
 from dotenv import load_dotenv
+
+# Try to import cot_reports library
+try:
+    import cot_reports as cot
+    COT_LIBRARY_AVAILABLE = True
+except ImportError:
+    COT_LIBRARY_AVAILABLE = False
 
 # Load environment variables
 load_dotenv()
@@ -146,19 +151,158 @@ class COTCollector:
         contract = self.CONTRACTS[symbol]
 
         try:
-            # Try Quandl/Nasdaq Data Link first if API key provided
+            # Method 1: Try cot_reports library first (most reliable)
+            if COT_LIBRARY_AVAILABLE:
+                df = self._fetch_from_cot_library(contract, weeks_back)
+                if df is not None and not df.empty:
+                    return df
+
+            # Method 2: Try Quandl/Nasdaq Data Link if API key provided
             if self.api_key:
                 df = self._fetch_from_quandl(contract['quandl_code'], weeks_back)
                 if df is not None and not df.empty:
                     return df
 
-            # Fallback to CFTC direct (CSV)
+            # Method 3: Fallback to CFTC direct (CSV)
             df = self._fetch_from_cftc_csv(contract['cftc_code'], weeks_back)
             return df
 
         except Exception as e:
             self.logger.error(f"Error fetching COT data for {symbol}: {e}")
             return None
+
+    def _fetch_from_cot_library(self, contract: Dict, weeks_back: int) -> Optional[pd.DataFrame]:
+        """
+        Fetch using cot_reports library - most reliable method.
+        Handles CFTC format changes automatically.
+        """
+        import sys
+        from io import StringIO
+
+        try:
+            # Get contract name for searching
+            contract_name = contract['name']
+            cftc_code = contract['cftc_code']
+
+            # Fetch legacy futures-only report (most commonly used)
+            # cot.cot_year fetches data for a specific year
+            current_year = datetime.now().year
+
+            all_data = []
+            for year in [current_year, current_year - 1]:
+                try:
+                    # Suppress cot_reports verbose stdout output
+                    old_stdout = sys.stdout
+                    sys.stdout = StringIO()
+                    try:
+                        df = cot.cot_year(year=year, cot_report_type='legacy_fut')
+                    finally:
+                        sys.stdout = old_stdout
+
+                    if df is not None and not df.empty:
+                        # Filter for our contract by CFTC code or name
+                        if 'CFTC Contract Market Code' in df.columns:
+                            filtered = df[df['CFTC Contract Market Code'].astype(str).str.contains(cftc_code, na=False)]
+                        elif 'Contract Market Name' in df.columns:
+                            # Fallback to name matching
+                            filtered = df[df['Contract Market Name'].str.contains(contract_name.split()[0], case=False, na=False)]
+                        else:
+                            continue
+
+                        if not filtered.empty:
+                            all_data.append(filtered)
+                except Exception as e:
+                    self.logger.debug(f"cot_reports year {year} failed: {e}")
+                    continue
+
+            if not all_data:
+                return None
+
+            combined = pd.concat(all_data, ignore_index=True)
+            return self._process_cot_library_data(combined, weeks_back)
+
+        except Exception as e:
+            self.logger.warning(f"cot_reports library fetch failed: {e}")
+            return None
+        finally:
+            # Clean up temp file created by cot_reports library
+            try:
+                if os.path.exists('annual.txt'):
+                    os.remove('annual.txt')
+            except:
+                pass
+
+    def _process_cot_library_data(self, df: pd.DataFrame, weeks_back: int) -> pd.DataFrame:
+        """Process data from cot_reports library into standardized format."""
+        try:
+            processed = pd.DataFrame()
+
+            # Date column - try multiple formats
+            date_cols = ['As of Date in Form YYYY-MM-DD', 'Report_Date_as_YYYY-MM-DD', 'As_of_Date_In_Form_YYMMDD']
+            for col in date_cols:
+                if col in df.columns:
+                    if 'YYMMDD' in col:
+                        processed['date'] = pd.to_datetime(df[col], format='%y%m%d')
+                    else:
+                        processed['date'] = pd.to_datetime(df[col])
+                    break
+
+            if 'date' not in processed.columns:
+                self.logger.warning("No date column found in COT data")
+                return pd.DataFrame()
+
+            # Non-commercial positions (speculators)
+            noncomm_long_cols = ['Noncommercial Positions-Long (All)', 'NonComm_Positions_Long_All']
+            noncomm_short_cols = ['Noncommercial Positions-Short (All)', 'NonComm_Positions_Short_All']
+
+            for col in noncomm_long_cols:
+                if col in df.columns:
+                    processed['spec_long'] = pd.to_numeric(df[col], errors='coerce')
+                    break
+
+            for col in noncomm_short_cols:
+                if col in df.columns:
+                    processed['spec_short'] = pd.to_numeric(df[col], errors='coerce')
+                    break
+
+            # Commercial positions (hedgers)
+            comm_long_cols = ['Commercial Positions-Long (All)', 'Comm_Positions_Long_All']
+            comm_short_cols = ['Commercial Positions-Short (All)', 'Comm_Positions_Short_All']
+
+            for col in comm_long_cols:
+                if col in df.columns:
+                    processed['comm_long'] = pd.to_numeric(df[col], errors='coerce')
+                    break
+
+            for col in comm_short_cols:
+                if col in df.columns:
+                    processed['comm_short'] = pd.to_numeric(df[col], errors='coerce')
+                    break
+
+            # Open interest
+            oi_cols = ['Open Interest (All)', 'Open_Interest_All']
+            for col in oi_cols:
+                if col in df.columns:
+                    processed['open_interest'] = pd.to_numeric(df[col], errors='coerce')
+                    break
+
+            # Calculate net positions
+            if 'spec_long' in processed.columns and 'spec_short' in processed.columns:
+                processed['spec_net'] = processed['spec_long'] - processed['spec_short']
+
+            if 'comm_long' in processed.columns and 'comm_short' in processed.columns:
+                processed['comm_net'] = processed['comm_long'] - processed['comm_short']
+
+            # Sort and limit
+            processed = processed.dropna(subset=['date'])
+            processed = processed.sort_values('date', ascending=False).head(weeks_back)
+            processed = processed.sort_values('date')
+
+            return processed
+
+        except Exception as e:
+            self.logger.error(f"Error processing cot_reports data: {e}")
+            return pd.DataFrame()
 
     def _fetch_from_quandl(self, quandl_code: str, weeks_back: int) -> Optional[pd.DataFrame]:
         """Fetch from Nasdaq Data Link (formerly Quandl)."""

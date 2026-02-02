@@ -16,6 +16,7 @@ env/
 .env
 *.key
 config/*.yaml
+.streamlit/secrets.toml
 
 # Databases
 *.db
