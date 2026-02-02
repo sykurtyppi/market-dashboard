@@ -83,6 +83,12 @@ try:
     from data_collectors.insider_trading_collector import InsiderTradingCollector
     from data_collectors.sector_collector import SectorCollector
 
+    # Collectors - Phase 4 (Advanced Features)
+    from data_collectors.market_status_collector import MarketStatusCollector
+    from data_collectors.cross_asset_collector import CrossAssetCollector
+    from data_collectors.fed_watch_collector import FedWatchCollector
+    from data_collectors.options_flow_collector import OptionsFlowCollector
+
     # Processors
     from processors.left_strategy import LEFTStrategy
     from processors.vrp_module import VRPAnalyzer           # VRP analysis
@@ -547,9 +553,46 @@ with st.sidebar:
             "Repo Market (SOFR)",      # Phase 2
             "Institutional Flow",      # Phase 3 - Dark Pool, Insider, Auctions
             "Economic Calendar",       # Phase 3 - Events & Countdown
+            "Fed Watch",               # Phase 4 - Rate probabilities
+            "Cross-Asset",             # Phase 4 - Correlations & Regime
+            "Options Flow",            # Phase 4 - Unusual activity scanner
             "Settings",
         ],
     )
+
+    st.divider()
+
+    # --- MARKET STATUS INDICATOR (Phase 4) ---
+    try:
+        market_status_collector = MarketStatusCollector()
+        market_status = market_status_collector.get_market_status()
+
+        status_text = market_status.get('status', 'UNKNOWN')
+        status_color = market_status.get('status_color', '#9E9E9E')
+        status_emoji = market_status.get('emoji', '')
+        current_time = market_status.get('current_time_et', '')
+
+        st.markdown(
+            f"<div style='padding: 8px; background-color: {status_color}20; border-left: 4px solid {status_color}; border-radius: 4px; margin-bottom: 10px;'>"
+            f"<strong>{status_emoji} {status_text}</strong><br/>"
+            f"<small style='color: #888;'>{current_time}</small>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        # Show time until next session
+        if status_text == 'OPEN':
+            time_left = market_status.get('time_until_close', '')
+            st.caption(f"Closes in: {time_left}")
+        elif status_text == 'PRE-MARKET':
+            time_left = market_status.get('time_until_open', '')
+            st.caption(f"Market opens in: {time_left}")
+        elif status_text in ['CLOSED', 'AFTER-HOURS']:
+            time_left = market_status.get('time_until_open') or market_status.get('time_until_end', '')
+            if time_left:
+                st.caption(f"Next session: {time_left}")
+    except Exception as e:
+        logger.debug(f"Market status error: {e}")
 
     st.divider()
 
@@ -4632,6 +4675,630 @@ elif page == "Economic Calendar":
         - **NFP**: First Friday of month, 8:30 AM ET
         - **GDP**: Quarterly, end of month following quarter
         """)
+
+
+# ============================================================
+# FED WATCH (Phase 4)
+# ============================================================
+
+elif page == "Fed Watch":
+    st.markdown("<h1 class='main-header'>Fed Watch - Rate Probabilities</h1>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Market-implied probabilities for Fed rate decisions, similar to CME FedWatch Tool.
+    Uses Treasury yields and market data to estimate rate expectations.
+    """)
+
+    @st.cache_resource
+    def get_fed_watch_collector():
+        return FedWatchCollector()
+
+    fed_watch = get_fed_watch_collector()
+
+    try:
+        # Get Fed Watch summary
+        summary = fed_watch.get_fed_watch_summary()
+
+        if summary.get('status') == 'unavailable':
+            st.warning("Fed Watch data temporarily unavailable")
+        else:
+            # --- NEXT FOMC MEETING ---
+            st.subheader("Next FOMC Meeting")
+
+            next_meeting = summary.get('next_meeting', {})
+            col1, col2, col3, col4 = st.columns(4)
+
+            with col1:
+                st.metric("Meeting Date", next_meeting.get('date_str', 'N/A'))
+            with col2:
+                st.metric("Days Until", next_meeting.get('days_until', 'N/A'))
+            with col3:
+                st.metric("Current Rate", summary.get('current_rate', 'N/A'))
+            with col4:
+                bias = summary.get('market_bias', 'Neutral')
+                bias_color = summary.get('bias_color', '#9E9E9E')
+                st.markdown(
+                    f"<div style='text-align:center; padding:10px; background-color:{bias_color}30; border-radius:8px;'>"
+                    f"<small>Market Bias</small><br/><strong style='font-size:1.2em;'>{bias}</strong>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            st.divider()
+
+            # --- RATE PROBABILITIES ---
+            st.subheader("Rate Decision Probabilities")
+
+            probs = summary.get('probabilities', {})
+
+            col1, col2, col3, col4, col5 = st.columns(5)
+            prob_cols = [col1, col2, col3, col4, col5]
+            prob_items = list(probs.items())
+
+            for i, (decision, prob) in enumerate(prob_items):
+                with prob_cols[i]:
+                    # Color based on decision type
+                    if 'Cut' in decision:
+                        color = '#4CAF50'
+                    elif 'Hike' in decision:
+                        color = '#F44336'
+                    else:
+                        color = '#9E9E9E'
+
+                    st.markdown(
+                        f"<div style='text-align:center; padding:15px; background-color:{color}20; border-radius:8px; border: 2px solid {color}40;'>"
+                        f"<small>{decision}</small><br/>"
+                        f"<strong style='font-size:1.5em; color:{color};'>{prob:.0f}%</strong>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+            st.divider()
+
+            # --- PROBABILITY SUMMARY ---
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                cut_prob = summary.get('cut_probability', 0)
+                st.markdown(
+                    f"<div style='text-align:center; padding:20px; background-color:#4CAF5030; border-radius:10px;'>"
+                    f"<h3 style='margin:0; color:#4CAF50;'>{cut_prob:.1f}%</h3>"
+                    f"<p style='margin:5px 0 0 0;'>Total Cut Probability</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            with col2:
+                hold_prob = summary.get('hold_probability', 0)
+                st.markdown(
+                    f"<div style='text-align:center; padding:20px; background-color:#9E9E9E30; border-radius:10px;'>"
+                    f"<h3 style='margin:0; color:#9E9E9E;'>{hold_prob:.1f}%</h3>"
+                    f"<p style='margin:5px 0 0 0;'>Hold Probability</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            with col3:
+                hike_prob = summary.get('hike_probability', 0)
+                st.markdown(
+                    f"<div style='text-align:center; padding:20px; background-color:#F4433630; border-radius:10px;'>"
+                    f"<h3 style='margin:0; color:#F44336;'>{hike_prob:.1f}%</h3>"
+                    f"<p style='margin:5px 0 0 0;'>Total Hike Probability</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            st.divider()
+
+            # --- RATE PATH EXPECTATIONS ---
+            st.subheader("Expected Rate Path")
+
+            rate_path = summary.get('rate_path', [])
+            if rate_path:
+                path_data = []
+                for p in rate_path:
+                    change = p.get('change_from_current', 0)
+                    if change < 0:
+                        change_str = f"{change:.2f}% (cuts)"
+                    elif change > 0:
+                        change_str = f"+{change:.2f}% (hikes)"
+                    else:
+                        change_str = "No change"
+
+                    path_data.append({
+                        'Meeting': p.get('meeting', ''),
+                        'Days Away': p.get('days_until', 0),
+                        'Expected Rate': f"{p.get('expected_rate', 0):.2f}%",
+                        'Change from Current': change_str,
+                    })
+
+                path_df = pd.DataFrame(path_data)
+                st.dataframe(path_df, use_container_width=True, hide_index=True)
+
+                # Create rate path chart
+                fig = go.Figure()
+
+                dates = [p['Meeting'] for p in path_data]
+                rates = [float(p['Expected Rate'].replace('%', '')) for p in path_data]
+
+                fig.add_trace(go.Scatter(
+                    x=dates,
+                    y=rates,
+                    mode='lines+markers',
+                    name='Expected Rate',
+                    line=dict(color='#2196F3', width=3),
+                    marker=dict(size=10)
+                ))
+
+                # Add current rate line
+                current_rate_val = float(summary.get('current_rate', '5.25% - 5.50%').split(' - ')[0].replace('%', ''))
+                fig.add_hline(
+                    y=current_rate_val,
+                    line_dash="dash",
+                    line_color="#FF9800",
+                    annotation_text=f"Current: {current_rate_val}%",
+                    annotation_position="right"
+                )
+
+                fig.update_layout(
+                    title="Expected Fed Funds Rate Path",
+                    yaxis_title="Rate (%)",
+                    height=350,
+                    template="plotly_dark"
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
+
+            # --- INTERPRETATION GUIDE ---
+            with st.expander("Understanding Fed Watch Probabilities"):
+                st.markdown("""
+                ### How It Works
+
+                Fed Watch probabilities are derived from:
+                - **Fed Funds Futures**: CME Group futures pricing
+                - **Treasury Yields**: 3-month T-bill as Fed Funds proxy
+                - **Market Expectations**: Implied from current vs. expected rates
+
+                ### Interpreting Probabilities
+
+                | Probability | Interpretation |
+                |-------------|----------------|
+                | >80% | Nearly certain, priced in |
+                | 60-80% | Strong expectation |
+                | 40-60% | Uncertain, coin flip |
+                | 20-40% | Unlikely but possible |
+                | <20% | Surprise would move markets |
+
+                ### Market Bias Guide
+
+                - **Strongly Dovish**: >60% chance of cuts
+                - **Dovish**: Cuts more likely than hikes
+                - **Neutral**: Hold expected, balanced outlook
+                - **Hawkish**: Hikes more likely than cuts
+                - **Strongly Hawkish**: >60% chance of hikes
+
+                ### Trading Implications
+
+                - **High cut probability + VIX low**: Potential for volatility if hawkish surprise
+                - **Rate expectations shifting**: Watch bond yields and dollar index
+                - **Near-certain outcomes**: Already priced in, focus on guidance
+                """)
+
+            # Data source note
+            st.caption(f"Data source: {summary.get('data_source', 'estimated')} | Updates every 5 minutes")
+
+    except Exception as e:
+        st.error(f"Error loading Fed Watch data: {e}")
+        logger.error(f"Fed Watch error: {e}")
+
+
+# ============================================================
+# CROSS-ASSET CORRELATIONS (Phase 4)
+# ============================================================
+
+elif page == "Cross-Asset":
+    st.markdown("<h1 class='main-header'>Cross-Asset Analysis</h1>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Track correlations between major asset classes to identify regime changes.
+    Key relationships reveal risk-on/risk-off dynamics and market stress.
+    """)
+
+    @st.cache_resource
+    def get_cross_asset_collector():
+        return CrossAssetCollector()
+
+    cross_asset = get_cross_asset_collector()
+
+    try:
+        # --- REGIME SIGNAL ---
+        st.subheader("Current Market Regime")
+
+        regime = cross_asset.get_regime_signal(period='1mo')
+
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            regime_name = regime.get('regime', 'UNKNOWN')
+            regime_color = regime.get('color', '#9E9E9E')
+            regime_emoji = regime.get('emoji', '')
+            confidence = regime.get('confidence', 0)
+
+            st.markdown(
+                f"<div style='text-align:center; padding:30px; background-color:{regime_color}30; border-radius:15px; border: 3px solid {regime_color};'>"
+                f"<h1 style='margin:0; font-size:3em;'>{regime_emoji}</h1>"
+                f"<h2 style='margin:10px 0; color:{regime_color};'>{regime_name}</h2>"
+                f"<p style='margin:0;'>Confidence: {confidence}%</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+        with col2:
+            st.markdown(f"**{regime.get('description', '')}**")
+
+            # Show asset returns driving the regime
+            returns = regime.get('returns', {})
+            if returns:
+                st.markdown("**30-Day Asset Performance:**")
+
+                ret_cols = st.columns(5)
+                assets = ['SPY', 'TLT', 'GLD', 'UUP', 'VIX']
+                asset_names = ['S&P 500', 'Bonds', 'Gold', 'Dollar', 'VIX']
+
+                for i, (asset, name) in enumerate(zip(assets, asset_names)):
+                    if asset in returns:
+                        ret = returns[asset]
+                        color = '#4CAF50' if ret > 0 else '#F44336'
+                        with ret_cols[i]:
+                            st.markdown(
+                                f"<div style='text-align:center; padding:10px; background-color:#1e1e1e; border-radius:8px;'>"
+                                f"<small>{name}</small><br/>"
+                                f"<strong style='color:{color};'>{ret:+.1f}%</strong>"
+                                f"</div>",
+                                unsafe_allow_html=True
+                            )
+
+        st.divider()
+
+        # --- KEY CORRELATIONS ---
+        st.subheader("Key Asset Correlations (3-Month)")
+
+        correlations = cross_asset.get_key_correlations(period='3mo')
+
+        if correlations:
+            for corr in correlations:
+                col1, col2, col3 = st.columns([1, 1, 3])
+
+                with col1:
+                    st.markdown(f"**{corr['pair']}**")
+                    st.caption(f"{corr['ticker1']} vs {corr['ticker2']}")
+
+                with col2:
+                    corr_val = corr['correlation']
+                    corr_color = corr['color']
+                    st.markdown(
+                        f"<div style='text-align:center; padding:10px; background-color:{corr_color}30; border-radius:8px;'>"
+                        f"<strong style='font-size:1.3em; color:{corr_color};'>{corr_val:.2f}</strong><br/>"
+                        f"<small>{corr['strength']}</small>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                with col3:
+                    st.markdown(f"*{corr['interpretation']}*")
+
+                st.markdown("---")
+
+        st.divider()
+
+        # --- CORRELATION MATRIX ---
+        st.subheader("Full Correlation Matrix")
+
+        period_select = st.selectbox(
+            "Lookback Period",
+            ['1mo', '3mo', '6mo'],
+            index=1,
+            key='corr_period'
+        )
+
+        corr_matrix = cross_asset.get_correlation_matrix(period=period_select)
+
+        if corr_matrix is not None and not corr_matrix.empty:
+            # Create heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=corr_matrix.values,
+                x=corr_matrix.columns,
+                y=corr_matrix.index,
+                colorscale='RdBu_r',
+                zmid=0,
+                text=np.round(corr_matrix.values, 2),
+                texttemplate='%{text}',
+                textfont={"size": 10},
+                hovertemplate='%{x} vs %{y}: %{z:.2f}<extra></extra>'
+            ))
+
+            fig.update_layout(
+                title=f"Asset Correlation Matrix ({period_select})",
+                height=500,
+                template="plotly_dark"
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Could not load correlation matrix")
+
+        st.divider()
+
+        # --- ASSET PERFORMANCE ---
+        st.subheader("Cross-Asset Performance Summary")
+
+        perf = cross_asset.get_asset_performance_summary(period='1mo')
+
+        if perf:
+            perf_data = []
+            for ticker, data in perf.items():
+                perf_data.append({
+                    'Asset': data.get('name', ticker),
+                    'Ticker': ticker,
+                    'Price': f"${data.get('price', 0):.2f}",
+                    'Change': f"{data.get('change_pct', 0):+.2f}%",
+                })
+
+            perf_df = pd.DataFrame(perf_data)
+
+            def color_change(val):
+                if '+' in str(val):
+                    return 'color: #4CAF50'
+                elif '-' in str(val):
+                    return 'color: #F44336'
+                return ''
+
+            styled_perf = perf_df.style.applymap(
+                color_change,
+                subset=['Change']
+            )
+
+            st.dataframe(styled_perf, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # --- REGIME GUIDE ---
+        with st.expander("Understanding Market Regimes"):
+            st.markdown("""
+            ### Regime Types
+
+            | Regime | Description | Favored Assets |
+            |--------|-------------|----------------|
+            | **RISK_ON** | Equities rallying, bonds selling, weak dollar | Stocks, High Yield, EM |
+            | **RISK_OFF** | Flight to safety, VIX spiking | Bonds, Gold, Dollar |
+            | **INFLATION** | Both stocks & bonds down, commodities up | Commodities, TIPS, Gold |
+            | **DEFLATION** | Everything down, dollar strong | Cash, Short-term Bonds |
+            | **GOLDILOCKS** | Steady growth, low volatility | Balanced, Quality Growth |
+
+            ### Key Correlation Signals
+
+            **Stock-Bond (SPY-TLT):**
+            - Negative = Normal (diversification works)
+            - Positive = Stress (2022-style correlation breakdown)
+
+            **Stock-Gold (SPY-GLD):**
+            - Negative = Gold as hedge working
+            - Positive = Both inflation hedges
+
+            **Stock-Dollar (SPY-UUP):**
+            - Negative = Risk-on environment
+            - Positive = Unusual, watch closely
+
+            **Credit-Stock (HYG-SPY):**
+            - Positive = Normal (credit follows stocks)
+            - Divergence = Credit stress warning
+            """)
+
+    except Exception as e:
+        st.error(f"Error loading cross-asset data: {e}")
+        logger.error(f"Cross-asset error: {e}")
+
+
+# ============================================================
+# OPTIONS FLOW SCANNER (Phase 4)
+# ============================================================
+
+elif page == "Options Flow":
+    st.markdown("<h1 class='main-header'>Options Flow Scanner</h1>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Scan for unusual options activity that may signal institutional positioning.
+    Tracks volume/OI ratios, put/call extremes, and near-term high activity.
+    """)
+
+    st.info("""
+    **Note:** This scanner uses free Yahoo Finance data (delayed).
+    For real-time institutional flow with sweep/block detection, consider paid services like Unusual Whales, FlowAlgo, or Tradytics.
+    """)
+
+    @st.cache_resource
+    def get_options_flow_collector():
+        return OptionsFlowCollector()
+
+    options_flow = get_options_flow_collector()
+
+    try:
+        with st.spinner("Scanning options chains for unusual activity..."):
+            flow_summary = options_flow.get_options_flow_summary()
+
+        # --- OVERALL SIGNAL ---
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            signal = flow_summary.get('overall_signal', 'MIXED FLOW')
+            signal_color = flow_summary.get('signal_color', '#FF9800')
+            st.markdown(
+                f"<div style='text-align:center; padding:15px; background-color:{signal_color}30; border-radius:10px; border: 2px solid {signal_color};'>"
+                f"<strong style='font-size:1.3em; color:{signal_color};'>{signal}</strong>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+        with col2:
+            bullish = flow_summary.get('bullish_signals', 0)
+            st.metric("Bullish Signals", bullish, delta=None)
+
+        with col3:
+            bearish = flow_summary.get('bearish_signals', 0)
+            st.metric("Bearish Signals", bearish, delta=None)
+
+        with col4:
+            total = flow_summary.get('total_unusual_count', 0)
+            st.metric("Total Unusual", total, delta=None)
+
+        st.divider()
+
+        # --- SPY & QQQ SUMMARY ---
+        st.subheader("Index Options Sentiment")
+
+        col1, col2 = st.columns(2)
+
+        spy_summary = flow_summary.get('spy_summary', {})
+        qqq_summary = flow_summary.get('qqq_summary', {})
+
+        with col1:
+            if spy_summary and spy_summary.get('status') != 'error':
+                pc_ratio = spy_summary.get('put_call_ratio', 0)
+                sentiment = spy_summary.get('sentiment', 'NEUTRAL')
+                sentiment_color = spy_summary.get('color', '#9E9E9E')
+
+                st.markdown(
+                    f"<div style='padding:15px; background-color:#1e1e1e; border-radius:10px;'>"
+                    f"<h3 style='margin:0;'>SPY Options</h3>"
+                    f"<p style='margin:5px 0;'>Put/Call Ratio: <strong>{pc_ratio:.2f}</strong></p>"
+                    f"<p style='margin:5px 0;'>Sentiment: <span style='color:{sentiment_color}; font-weight:bold;'>{sentiment}</span></p>"
+                    f"<small>Call Vol: {spy_summary.get('total_call_volume', 0):,} | Put Vol: {spy_summary.get('total_put_volume', 0):,}</small>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.warning("SPY options data unavailable")
+
+        with col2:
+            if qqq_summary and qqq_summary.get('status') != 'error':
+                pc_ratio = qqq_summary.get('put_call_ratio', 0)
+                sentiment = qqq_summary.get('sentiment', 'NEUTRAL')
+                sentiment_color = qqq_summary.get('color', '#9E9E9E')
+
+                st.markdown(
+                    f"<div style='padding:15px; background-color:#1e1e1e; border-radius:10px;'>"
+                    f"<h3 style='margin:0;'>QQQ Options</h3>"
+                    f"<p style='margin:5px 0;'>Put/Call Ratio: <strong>{pc_ratio:.2f}</strong></p>"
+                    f"<p style='margin:5px 0;'>Sentiment: <span style='color:{sentiment_color}; font-weight:bold;'>{sentiment}</span></p>"
+                    f"<small>Call Vol: {qqq_summary.get('total_call_volume', 0):,} | Put Vol: {qqq_summary.get('total_put_volume', 0):,}</small>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.warning("QQQ options data unavailable")
+
+        st.divider()
+
+        # --- UNUSUAL ACTIVITY TABLE ---
+        st.subheader("Top Unusual Options Activity")
+
+        unusual = flow_summary.get('unusual_activity', [])
+
+        if unusual:
+            for activity in unusual[:10]:
+                ticker = activity.get('ticker', '')
+                opt_type = activity.get('type', '')
+                strike = activity.get('strike', 0)
+                expiry = activity.get('expiry', '')
+                volume = activity.get('volume', 0)
+                oi = activity.get('open_interest', 0)
+                signal = activity.get('signal', '')
+                sentiment = activity.get('sentiment', '')
+                emoji = activity.get('emoji', '')
+                score = activity.get('score', 0)
+
+                sentiment_color = '#4CAF50' if sentiment == 'BULLISH' else '#F44336'
+
+                col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
+
+                with col1:
+                    st.markdown(
+                        f"<div style='text-align:center; padding:10px; background-color:{sentiment_color}30; border-radius:8px;'>"
+                        f"<strong style='font-size:1.2em;'>{ticker}</strong><br/>"
+                        f"<span style='color:{sentiment_color};'>{emoji} {opt_type}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                with col2:
+                    st.markdown(f"**Strike:** ${strike:.2f}")
+                    st.markdown(f"**Expiry:** {expiry}")
+
+                with col3:
+                    st.markdown(f"**Volume:** {volume:,}")
+                    st.markdown(f"**Open Interest:** {oi:,}")
+                    if activity.get('vol_oi_ratio'):
+                        st.caption(f"Vol/OI: {activity['vol_oi_ratio']:.1f}x")
+
+                with col4:
+                    st.markdown(f"*{signal}*")
+                    st.progress(min(score / 100, 1.0))
+                    st.caption(f"Score: {score:.0f}")
+
+                st.markdown("---")
+        else:
+            st.info("No unusual options activity detected in current scan")
+
+        st.divider()
+
+        # --- INTERPRETATION GUIDE ---
+        with st.expander("Understanding Options Flow"):
+            st.markdown("""
+            ### What We Track
+
+            **Volume/Open Interest Ratio:**
+            - >3x = Unusual (new positions being opened)
+            - Very high ratio on near-term expiry = Directional bet
+
+            **Put/Call Ratio:**
+            - <0.5 = Heavy call buying (bullish)
+            - >1.5 = Heavy put buying (bearish)
+            - Extreme readings often contrarian signals
+
+            ### Signal Interpretation
+
+            | Signal | Meaning |
+            |--------|---------|
+            | **High Vol/OI Calls** | Bullish bets, potential upside expected |
+            | **High Vol/OI Puts** | Bearish bets or hedging activity |
+            | **Near ATM Activity** | Higher conviction, directional plays |
+            | **Far OTM Activity** | Lottery tickets or tail hedges |
+
+            ### Important Caveats
+
+            1. **Delayed Data**: Yahoo Finance data is not real-time
+            2. **No Sweep Detection**: Can't distinguish sweeps vs. block trades
+            3. **No Direction**: Can't tell if buying or selling
+            4. **Context Matters**: High put buying could be hedging, not bearish
+
+            ### Professional Flow Services
+
+            For real institutional-grade options flow with:
+            - Real-time data
+            - Sweep vs. block detection
+            - Buy/sell direction
+            - Dark pool prints
+
+            Consider: Unusual Whales, FlowAlgo, Tradytics, Cboe LiveVol
+            """)
+
+        st.caption(f"Last scan: {flow_summary.get('timestamp', 'N/A')} | {flow_summary.get('data_note', '')}")
+
+    except Exception as e:
+        st.error(f"Error scanning options flow: {e}")
+        logger.error(f"Options flow error: {e}")
 
 
 # ============================================================
