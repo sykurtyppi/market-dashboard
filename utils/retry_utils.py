@@ -13,8 +13,18 @@ from config import cfg
 
 logger = logging.getLogger(__name__)
 
-# Load defaults from config
-_retry_cfg = cfg.data_collection.retry
+# Load defaults from config with fallbacks for Streamlit Cloud compatibility
+try:
+    _retry_cfg = cfg.data_collection.retry
+except AttributeError:
+    # Fallback defaults if config doesn't have retry section
+    class _RetryDefaults:
+        max_retries = 3
+        initial_delay = 1.0
+        max_delay = 60.0
+        backoff_multiplier = 2.0
+    _retry_cfg = _RetryDefaults()
+    logger.info("Using fallback retry defaults")
 
 
 def exponential_backoff_retry(

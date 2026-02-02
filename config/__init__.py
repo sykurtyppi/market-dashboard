@@ -140,6 +140,12 @@ class Config:
                     'short': 90,
                     'medium': 365,
                     'long': 730,
+                },
+                'retry': {
+                    'max_retries': 3,
+                    'initial_delay': 1.0,
+                    'max_delay': 60.0,
+                    'backoff_multiplier': 2.0,
                 }
             },
         }
