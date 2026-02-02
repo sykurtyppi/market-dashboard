@@ -1,6 +1,8 @@
 """
 Advanced Breadth Signals Module
 Implements: Zweig Thrust, A/D Ratio, Divergence Detection, Z-Scores
+
+Parameters loaded from config/parameters.yaml
 """
 
 import pandas as pd
@@ -8,6 +10,8 @@ import numpy as np
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
+
+from config import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +45,29 @@ def compute_daily_breadth(df: pd.DataFrame) -> pd.DataFrame:
 def calculate_ad_ratio(advancing: int, declining: int) -> Dict[str, Any]:
     """
     Calculate Advance/Decline Ratio and interpret it
-    
+
     Returns:
         dict with ratio, z_score, and interpretation
     """
+    # Validate inputs
+    if advancing < 0 or declining < 0:
+        logger.warning(f"Invalid breadth data: advancing={advancing}, declining={declining}")
+        return {
+            "ratio": None,
+            "interpretation": "Invalid Data",
+            "color": "#9E9E9E",
+            "advancing": advancing,
+            "declining": declining,
+            "error": "Negative values not allowed"
+        }
+
     if declining == 0:
-        ratio = float('inf') if advancing > 0 else 1.0
+        # Handle division by zero gracefully
+        if advancing == 0:
+            ratio = 1.0  # No activity = neutral
+        else:
+            ratio = 10.0  # Cap at 10 instead of infinity for display purposes
+            logger.info(f"No declining issues, capping ratio at 10.0 (actual advancing={advancing})")
     else:
         ratio = advancing / declining
     
@@ -78,33 +99,35 @@ def calculate_ad_ratio(advancing: int, declining: int) -> Dict[str, Any]:
 
 def detect_zweig_breadth_thrust(
     breadth_df: pd.DataFrame,
-    ema_span: int = 10,
-    window_days: int = 10,
-    low_thresh: float = 0.40,
-    high_thresh: float = 0.615,
+    ema_span: Optional[int] = None,
+    window_days: Optional[int] = None,
+    low_thresh: Optional[float] = None,
+    high_thresh: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Detect Zweig Breadth Thrust signal.
-    
+
     A Zweig Thrust occurs when:
     - 10-day EMA of breadth ratio goes from <0.40 to >0.615
     - Within 10 trading days or less
-    
+
     This is a rare, powerful bullish signal (happens few times per decade)
-    
+
+    Parameters loaded from config/parameters.yaml
+
     Parameters
     ----------
     breadth_df : DataFrame
         Must contain 'date' and either 'breadth_pct' or 'advancing'+'declining'
-    ema_span : int
-        EMA length for Zweig (default 10 days)
-    window_days : int
-        Max number of days allowed for thrust (default 10)
-    low_thresh : float
-        Oversold boundary for EMA (default 0.40)
-    high_thresh : float
-        Overbought boundary for EMA (default 0.615)
-    
+    ema_span : int, optional
+        EMA length for Zweig (default from config)
+    window_days : int, optional
+        Max number of days allowed for thrust (default from config)
+    low_thresh : float, optional
+        Oversold boundary for EMA (default from config)
+    high_thresh : float, optional
+        Overbought boundary for EMA (default from config)
+
     Returns
     -------
     dict with keys:
@@ -116,6 +139,13 @@ def detect_zweig_breadth_thrust(
         to_level: float
         description: str
     """
+    # Load defaults from config
+    zweig_cfg = cfg.breadth.zweig_thrust
+    ema_span = ema_span or zweig_cfg.ema_span
+    window_days = window_days or zweig_cfg.window_days
+    low_thresh = low_thresh or zweig_cfg.low_threshold
+    high_thresh = high_thresh or zweig_cfg.high_threshold
+    active_days = zweig_cfg.active_days
     df = compute_daily_breadth(breadth_df)
     
     if len(df) < ema_span + window_days + 2:
@@ -153,8 +183,8 @@ def detect_zweig_breadth_thrust(
     
     if signal_date is not None:
         days_since = int((df["date"].iloc[-1] - signal_date).days)
-        active = days_since <= 30  # Thrust "active" for ~1 month
-        
+        active = days_since <= active_days  # Thrust "active" period from config
+
         description = f"Zweig Thrust triggered on {signal_date.date()} ({days_since} days ago)"
     else:
         days_since = None
@@ -176,7 +206,7 @@ def detect_zweig_breadth_thrust(
 def detect_breadth_divergence(
     price_series: pd.Series,
     ad_line_series: pd.Series,
-    lookback: int = 60
+    lookback: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Detect bullish/bearish divergences between price and A/D Line
@@ -190,9 +220,9 @@ def detect_breadth_divergence(
         Price data (e.g., SPY close) indexed by date
     ad_line_series : pd.Series
         A/D Line indexed by date
-    lookback : int
-        Days to look back for divergences (default 60)
-    
+    lookback : int, optional
+        Days to look back for divergences (default from config)
+
     Returns
     -------
     dict with:
@@ -201,6 +231,9 @@ def detect_breadth_divergence(
         days_ago: int
         color: str
     """
+    # Load from config if not provided
+    lookback = lookback or cfg.breadth.divergence.lookback_days
+
     if len(price_series) < lookback or len(ad_line_series) < lookback:
         return {
             'type': 'none',

@@ -271,9 +271,4 @@ def create_sample_report():
         filename="sample_report.pdf"
     )
     
-    print(f"Sample report created: {output}")
     return output
-
-
-if __name__ == "__main__":
-    create_sample_report()

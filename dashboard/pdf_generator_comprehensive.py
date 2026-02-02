@@ -373,31 +373,3 @@ def generate_comprehensive_pdf(snapshot: dict, charts: dict, filename: str = "ma
     """
     generator = ComprehensivePDFReport()
     return generator.generate(snapshot, charts, filename)
-
-
-if __name__ == "__main__":
-    # Test with dummy data
-    test_snapshot = {
-        'updated_at': '2025-11-27',
-        'credit_regime': 'Supportive',
-        'vol_regime': 'Elevated',
-        'vrp_regime': 'Positive',
-        'sentiment_regime': 'Extreme Fear',
-        'vix': 17.21,
-        'vix_contango': 16.33,
-        'vix3m': 20.02,
-        'credit_spread_hy': 310,
-        'credit_spread_ig': 475,
-        'market_breadth': 0.69,
-        'fear_greed': 18,
-        'treasury_10y': 4.25,
-        'advancing_stocks': 69,
-        'declining_stocks': 31,
-        'zweig_thrust_active': False,
-        'divergence_type': 'none',
-        'move_index': 95.3,
-        'sofr_rate': 4.55,
-    }
-    
-    pdf_path = generate_comprehensive_pdf(test_snapshot, {}, "test_comprehensive_report.pdf")
-    print(f"✅ Test PDF generated: {pdf_path}")

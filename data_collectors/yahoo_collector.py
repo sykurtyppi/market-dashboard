@@ -276,16 +276,3 @@ class YahooCollector:
             health['put_call'] = 'failed'
         
         return health
-
-
-# Test function
-if __name__ == "__main__":
-    print("Testing Yahoo Finance Collector with Retry Logic...")
-    collector = YahooCollector()
-    
-    data = collector.get_all_data()
-    
-    print(f"\nVIX: {data['vix']}")
-    print(f"VIX Contango Proxy: {data['vix_contango_proxy']}")
-    print(f"Market Breadth Proxy: {data['market_breadth_proxy']}")
-    print(f"Put/Call Proxy: {data['put_call_proxy']}")

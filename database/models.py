@@ -207,47 +207,7 @@ class DatabaseManager:
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-# Test function
-if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("DATABASE MANAGER TEST")
-    print("="*80)
-    
-    db = DatabaseManager("data/test_market_data.db")
-    
-    # Test 1: Save indicator
-    print("\n Test 1: Save indicator")
-    db.save_indicator('test_indicator', datetime.now(), 3.09, 'TEST_SERIES')
-    print("✓ Indicator saved")
-    
-    # Test 2: Save signal
-    print("\n Test 2: Save signal")
-    db.save_signal('LEFT', 'BUY', 75.0, {'reason': 'Credit spreads below threshold'})
-    print("✓ Signal saved")
-    
-    # Test 3: Save daily snapshot
-    print("\n Test 3: Save daily snapshot")
-    snapshot = {
-        'date': datetime.now().strftime('%Y-%m-%d'),
-        'credit_spread_hy': 3.09,
-        'treasury_10y': 4.45,
-        'fear_greed_score': 21.0,
-        'left_signal': 'NEUTRAL'
-    }
-    db.save_daily_snapshot(snapshot)
-    print("✓ Snapshot saved")
-    
-    # Test 4: Retrieve data
-    print("\n Test 4: Retrieve latest snapshot")
-    latest = db.get_latest_snapshot()
-    if latest:
-        print(f"✓ Retrieved snapshot from {latest['date']}")
-        print(f"  HYG OAS: {latest['credit_spread_hy']}")
-        print(f"  LEFT Signal: {latest['left_signal']}")
-    
-    print("\n" + "="*80)
-    print("✓ ALL DATABASE TESTS PASSED")
-    print("="*80 + "\n")
+
 # Breadth Snapshot Table
 class BreadthSnapshot(Base):
     __tablename__ = "breadth_snapshots"

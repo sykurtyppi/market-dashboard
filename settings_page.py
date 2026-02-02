@@ -5,10 +5,11 @@ Allows users to configure API keys through Streamlit GUI
 
 import streamlit as st
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv, set_key, find_dotenv
 import requests
-from datetime import datetime  # ADD THIS IMPORT
+from datetime import datetime
 
 
 class SettingsManager:
@@ -47,9 +48,10 @@ class SettingsManager:
             }
             response = requests.get(url, params=params, timeout=5)
             return response.status_code == 200
-        except:
+        except (requests.RequestException, ValueError, ConnectionError) as e:
+            logging.warning(f"FRED API test failed: {e}")
             return False
-    
+
     def test_alpha_vantage_api(self, api_key: str) -> bool:
         """Test Alpha Vantage API key"""
         try:
@@ -63,9 +65,10 @@ class SettingsManager:
             response = requests.get(url, params=params, timeout=5)
             data = response.json()
             return 'Time Series (5min)' in data or 'Meta Data' in data
-        except:
+        except (requests.RequestException, ValueError, ConnectionError) as e:
+            logging.warning(f"Alpha Vantage API test failed: {e}")
             return False
-    
+
     def test_polygon_api(self, api_key: str) -> bool:
         """Test Polygon.io API key"""
         try:
@@ -73,7 +76,8 @@ class SettingsManager:
             params = {'apiKey': api_key}
             response = requests.get(url, params=params, timeout=5)
             return response.status_code == 200
-        except:
+        except (requests.RequestException, ValueError, ConnectionError) as e:
+            logging.warning(f"Polygon API test failed: {e}")
             return False
 
 
@@ -276,7 +280,60 @@ def render_settings_page():
         st.caption("No manual override set - using estimated P/C from VIX/VXV")
     
     st.markdown("---")
-    
+
+    # Market Breadth Settings
+    st.header("📊 Market Breadth Settings")
+    st.markdown("""
+    **Stock Sample Size for Breadth Calculation**
+
+    Choose between speed and precision for market breadth analysis:
+    """)
+
+    # Get current setting
+    current_mode = settings.get_api_key('BREADTH_MODE') or 'fast'
+
+    breadth_mode = st.radio(
+        "Breadth Calculation Mode",
+        options=['fast', 'full'],
+        index=0 if current_mode == 'fast' else 1,
+        format_func=lambda x: {
+            'fast': '⚡ Fast Mode (100 stocks) - Recommended',
+            'full': '🎯 Full Mode (500 stocks) - More precise'
+        }[x],
+        key="breadth_mode_radio",
+        help="Fast mode uses 100 representative stocks and completes in 30-60 seconds. Full mode uses all 500 S&P stocks but takes 3-5 minutes."
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        **⚡ Fast Mode (100 stocks)**
+        - ~30-60 seconds refresh time
+        - Representative sample across all sectors
+        - McClellan values scaled to match NYSE standard
+        - Lower risk of API rate limits
+        """)
+    with col2:
+        st.markdown("""
+        **🎯 Full Mode (500 stocks)**
+        - ~3-5 minutes refresh time
+        - True S&P 500 breadth calculation
+        - No scaling needed
+        - Higher precision during unusual markets
+        """)
+
+    if st.button("Save Breadth Settings", key="save_breadth_mode"):
+        if settings.save_api_key('BREADTH_MODE', breadth_mode):
+            st.success(f"✅ Breadth mode saved: {breadth_mode.upper()}")
+            st.info("🔄 Click 'Refresh Breadth Data' on the Market Breadth page to apply.")
+
+    # Show current status
+    if current_mode:
+        mode_display = "⚡ Fast (100 stocks)" if current_mode == 'fast' else "🎯 Full (500 stocks)"
+        st.caption(f"Current mode: {mode_display}")
+
+    st.markdown("---")
+
     # Current Status
     st.header("🔌 API Status")
     

@@ -307,9 +307,4 @@ def create_enhanced_sample():
         filename="enhanced_sample.pdf"
     )
     
-    print(f"Enhanced report: {output}")
     return output
-
-
-if __name__ == "__main__":
-    create_enhanced_sample()

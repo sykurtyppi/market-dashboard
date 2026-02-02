@@ -1,17 +1,28 @@
 """
 FRED Data Collector - UPDATED with correct API structure
 Fetches credit spreads, interest rates, and macro data from Federal Reserve
+
+Parameters loaded from config/parameters.yaml
 """
+
+import logging
+import os
+import sys
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
 
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
-from typing import Dict, Optional, List
-import os
 from dotenv import load_dotenv
-import time
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.retry_utils import exponential_backoff_retry
+from config import cfg
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class FREDCollector:
     """Collects data from FRED API"""
@@ -25,6 +36,7 @@ class FREDCollector:
                 "FRED API key not found. Get one at https://fred.stlouisfed.org/docs/api/api_key.html"
             )
     
+    @exponential_backoff_retry(max_retries=3, base_delay=2.0, max_delay=30.0)
     def get_series(
         self, 
         series_id: str, 
@@ -60,7 +72,7 @@ class FREDCollector:
             data = response.json()
             
             if 'observations' not in data:
-                print(f"Warning: No observations found for {series_id}")
+                logger.warning(f"No observations found for {series_id}")
                 return pd.DataFrame()
             
             # Parse observations
@@ -70,7 +82,7 @@ class FREDCollector:
             df = pd.DataFrame(observations)
             
             if df.empty:
-                print(f"Warning: Empty data for {series_id}")
+                logger.warning(f"Empty data for {series_id}")
                 return pd.DataFrame()
             
             # Clean and process data
@@ -86,14 +98,14 @@ class FREDCollector:
             # Rename value column to series_id for clarity
             df = df[['date', 'value']].rename(columns={'value': series_id})
             
-            print(f"✓ Fetched {len(df)} observations for {series_id}")
+            logger.info(f"Fetched {len(df)} observations for {series_id}")
             return df
             
         except requests.exceptions.RequestException as e:
-            print(f"✗ Error fetching FRED data for {series_id}: {e}")
+            logger.error(f"Error fetching FRED data for {series_id}: {e}")
             return pd.DataFrame()
         except Exception as e:
-            print(f"✗ Unexpected error for {series_id}: {e}")
+            logger.error(f"Unexpected error for {series_id}: {e}")
             return pd.DataFrame()
     
     def get_all_indicators(self, lookback_days: int = 730) -> Dict[str, pd.DataFrame]:
@@ -121,24 +133,22 @@ class FREDCollector:
         }
         
         results = {}
-        
-        print(f"\n{'='*60}")
-        print(f"Fetching FRED data (last {lookback_days} days)")
-        print(f"{'='*60}")
-        
+
+        logger.info(f"Fetching FRED data (last {lookback_days} days)")
+
         for name, series_id in indicators.items():
-            print(f"Fetching {name} ({series_id})...", end=' ')
+            logger.debug(f"Fetching {name} ({series_id})...")
             df = self.get_series(series_id, start_date=start_date)
-            
+
             if not df.empty:
                 results[name] = df
-                # Add a small delay to be nice to FRED's servers
-                time.sleep(0.1)
+                # Add a small delay to be nice to FRED's servers (from config)
+                time.sleep(cfg.data_collection.rate_limits.fred_delay_seconds)
             else:
-                print(f"  ⚠ No data returned")
-        
-        print(f"{'='*60}\n")
-        
+                logger.warning(f"No data returned for {name}")
+
+        logger.info(f"Fetched {len(results)} FRED indicators")
+
         return results
     
     def get_latest_values(self) -> Dict[str, Dict]:
@@ -213,56 +223,79 @@ class FREDCollector:
         
         if baa.empty or aaa.empty:
             return None
-        
+
         baa_latest = baa['DBAA'].iloc[-1]
         aaa_latest = aaa['DAAA'].iloc[-1]
-        
+
         return float(baa_latest - aaa_latest)
 
+    def get_data_with_status(self) -> Dict:
+        """
+        Get all FRED data with detailed status tracking.
 
-# Test function
-if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("FRED DATA COLLECTOR TEST")
-    print("="*80)
-    
-    try:
-        collector = FREDCollector()
-        
-        # Test 1: Get latest values
-        print("\n📊 TEST 1: Latest Indicator Values")
-        print("-" * 80)
-        latest = collector.get_latest_values()
-        
-        for key, data in latest.items():
-            print(f"{key:20s} | {data['value']:8.4f} | Date: {data['date']}")
-        
-        # Test 2: Calculate LEFT strategy signals
-        print("\n📈 TEST 2: LEFT Strategy Signals")
-        print("-" * 80)
-        signals = collector.calculate_credit_spread_signals()
-        
-        if 'error' not in signals:
-            print(f"Current HYG OAS:     {signals['current_spread']:.4f}%")
-            print(f"330-Day EMA:         {signals['ema_330']:.4f}%")
-            print(f"Distance from EMA:   {signals['pct_from_ema']:+.2f}%")
-            print(f"Signal:              {signals['signal']}")
-            print(f"As of:               {signals['date']}")
+        Returns:
+            Dict with:
+                - data: The actual indicator data
+                - status: "ok", "partial", "error", "unavailable"
+                - fetched_count: Number of indicators successfully fetched
+                - failed_count: Number of indicators that failed
+                - failed_indicators: List of failed indicator names
+                - timestamp: When this fetch occurred
+                - errors: List of error messages
+        """
+        from utils.data_status import DataStatus, DataResult
+
+        start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+
+        indicators = {
+            'credit_spread_hy': 'BAMLH0A0HYM2',
+            'credit_spread_ig': 'BAMLC0A0CMEY',
+            'treasury_10y': 'DGS10',
+            'treasury_2y': 'DGS2',
+            'fed_funds': 'DFF',
+        }
+
+        results = {}
+        failed = []
+        errors = []
+
+        for name, series_id in indicators.items():
+            try:
+                df = self.get_series(series_id, start_date=start_date)
+                if not df.empty:
+                    results[name] = {
+                        'value': float(df.iloc[-1][series_id]),
+                        'date': df.iloc[-1]['date'].strftime('%Y-%m-%d'),
+                        'series_id': series_id
+                    }
+                else:
+                    failed.append(name)
+                    errors.append(f"{name}: Empty response from FRED API")
+                time.sleep(cfg.data_collection.rate_limits.fred_delay_seconds)
+            except Exception as e:
+                failed.append(name)
+                errors.append(f"{name}: {str(e)}")
+                logger.error(f"Failed to fetch {name}: {e}")
+
+        # Determine overall status
+        total = len(indicators)
+        fetched = len(results)
+
+        if fetched == 0:
+            status = DataStatus.UNAVAILABLE
+        elif fetched < total:
+            status = DataStatus.PARTIAL
         else:
-            print(f"Error: {signals['error']}")
-        
-        # Test 3: Traditional Baa-Aaa spread
-        print("\n📉 TEST 3: Traditional Credit Spread")
-        print("-" * 80)
-        baa_aaa = collector.get_baa_aaa_spread()
-        if baa_aaa:
-            print(f"Baa-Aaa Spread:      {baa_aaa:.4f}%")
-        else:
-            print("Could not calculate Baa-Aaa spread")
-        
-        print("\n" + "="*80)
-        print("✓ ALL TESTS COMPLETED")
-        print("="*80 + "\n")
-        
-    except Exception as e:
-        print(f"\n✗ TEST FAILED: {e}\n")
+            status = DataStatus.OK
+
+        return {
+            'data': results,
+            'status': status.value,
+            'fetched_count': fetched,
+            'failed_count': len(failed),
+            'total_count': total,
+            'failed_indicators': failed,
+            'timestamp': datetime.now().isoformat(),
+            'errors': errors,
+            'is_complete': fetched == total
+        }

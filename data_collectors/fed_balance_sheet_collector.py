@@ -24,6 +24,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.retry_utils import exponential_backoff_retry
 class FedBalanceSheetCollector:
     """
     Collects Federal Reserve balance sheet data from FRED.
@@ -53,6 +56,7 @@ class FedBalanceSheetCollector:
                 "FRED_API_KEY not found. Set it in .env or pass explicitly."
             )
 
+    @exponential_backoff_retry(max_retries=3, base_delay=2.0)
     def _fetch_series(
         self,
         series_id: str,

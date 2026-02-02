@@ -26,6 +26,9 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.retry_utils import exponential_backoff_retry
 class LiquidityCollector:
     """
     Collects macro liquidity data from FRED.

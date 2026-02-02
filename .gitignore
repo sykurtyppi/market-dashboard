@@ -25,12 +25,21 @@ reports/*.pdf
 
 # Backup / temp files
 *.backup
+*.backup_*
+*.backup[0-9]*
 *.bak
 *.old
 *.OLD
 *.broken
 *.yourversion
 *~
+
+# Test files in wrong locations
+test_*.py
+!tests/test_*.py
+
+# Typo folders
+sceduler/
 
 # VS Code
 .vscode/

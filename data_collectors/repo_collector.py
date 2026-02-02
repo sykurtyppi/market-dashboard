@@ -26,6 +26,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.retry_utils import exponential_backoff_retry
 class RepoCollector:
     """
     Collects repo market data from FRED.

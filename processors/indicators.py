@@ -283,39 +283,3 @@ def calculate_volatility(series: pd.Series, window: int = 21, annualize: bool = 
     return volatility * 100  # Convert to percentage
 
 
-if __name__ == "__main__":
-    # Test the indicators
-    import yfinance as yf
-    
-    print("Testing Technical Indicators Module")
-    print("=" * 60)
-    
-    # Fetch test data
-    spy = yf.Ticker("SPY")
-    data = spy.history(period="1y")
-    prices = data['Close']
-    
-    print(f"\nTest data: {len(prices)} days of SPY prices")
-    print(f"Latest price: ${prices.iloc[-1]:.2f}")
-    
-    # Test SMA
-    sma_20 = calculate_sma(prices, 20)
-    print(f"\nSMA(20): ${sma_20.iloc[-1]:.2f}")
-    
-    # Test EMA
-    ema_20 = calculate_ema(prices, 20)
-    print(f"EMA(20): ${ema_20.iloc[-1]:.2f}")
-    
-    # Test RSI
-    rsi = calculate_rsi(prices, 14)
-    print(f"RSI(14): {rsi.iloc[-1]:.2f}")
-    
-    # Test Z-Score
-    z_score = calculate_z_score(prices, 20)
-    print(f"Z-Score(20): {z_score.iloc[-1]:.2f}")
-    
-    # Test Volatility
-    vol = calculate_volatility(prices, 21)
-    print(f"Volatility(21d): {vol.iloc[-1]:.2f}%")
-    
-    print("\n✅ All indicators working!")

@@ -1,6 +1,8 @@
 """
 CBOE (Chicago Board Options Exchange) Data Collector
 Fetches VIX, VIX3M, put/call ratios, and volatility data from official sources
+
+Parameters loaded from config/parameters.yaml
 """
 
 import yfinance as yf
@@ -12,6 +14,8 @@ from utils.validators import validate_vix, validate_ratio
 import pandas as pd
 from datetime import datetime
 
+from config import cfg
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,14 +26,27 @@ class CBOECollector:
     - VIX3M (3-month VIX for real term structure)
     - Equity put/call ratios
     - Volatility metrics
+
+    Tracks which values are estimated vs real data.
+    Access via self.estimated_fields after calling get_all_data()
     """
-    
+
     def __init__(self):
         """Initialize CBOE collector"""
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
         })
+        # Track which fields contain estimated (not real) data
+        self.estimated_fields = []
+
+    def _mark_estimated(self, field_name: str, reason: str):
+        """Mark a field as containing estimated data"""
+        self.estimated_fields.append({
+            'field': field_name,
+            'reason': reason
+        })
+        logger.warning(f"ESTIMATED DATA: {field_name} - {reason}")
     
     def get_vix(self) -> Optional[float]:
         """
@@ -54,22 +71,25 @@ class CBOECollector:
             logger.error(f"Error fetching VIX: {e}")
             return None
     
-    def get_vix3m(self) -> Optional[float]:
+    def get_vix3m(self, track_estimation: bool = True) -> Optional[float]:
         """
         Get VIX3M (3-month VIX) for real term structure
-        
+
+        Args:
+            track_estimation: Whether to track if this value is estimated
+
         Returns:
             VIX3M value or None
         """
         try:
             # Try multiple possible tickers for VIX3M
             tickers_to_try = ["^VIX3M"]  # VXV delisted
-            
+
             for ticker_symbol in tickers_to_try:
                 try:
                     vix3m = yf.Ticker(ticker_symbol)
                     data = vix3m.history(period="5d")  # Try 5 days to get recent data
-                    
+
                     if not data.empty:
                         vix3m_value = float(data['Close'].iloc[-1])
                         logger.info(f"VIX3M (using {ticker_symbol}): {vix3m_value:.2f}")
@@ -77,17 +97,19 @@ class CBOECollector:
                 except Exception as e:
                     logger.debug(f"Ticker {ticker_symbol} failed: {e}")
                     continue
-            
+
             # If all tickers fail, estimate from VIX (typically VIX3M ~= VIX * 0.7-0.9)
             vix = self.get_vix()
             if vix:
                 estimated_vix3m = vix * 0.85  # Conservative estimate
+                if track_estimation:
+                    self._mark_estimated('vix3m', 'Calculated as VIX × 0.85 (real VIX3M unavailable)')
                 logger.warning(f"VIX3M unavailable, using estimate: {estimated_vix3m:.2f}")
                 return estimated_vix3m
-            
+
             logger.warning("No VIX3M data available from any source")
             return None
-            
+
         except Exception as e:
             logger.error(f"Error fetching VIX3M: {e}")
             return None
@@ -127,6 +149,132 @@ class CBOECollector:
             logger.error(f"Error fetching SKEW: {e}")
             return None
     
+
+    def get_vvix(self) -> Optional[float]:
+        """
+        Get VVIX (VIX of VIX) - volatility of volatility index.
+
+        VVIX measures expected volatility OF the VIX itself.
+
+        Key levels:
+        - < 80: Low vol-of-vol, complacent
+        - 80-100: Normal range
+        - 100-120: Elevated uncertainty
+        - > 120: EXTREME - often marks capitulation/turning points
+                 Strong buy signal for equities (mean reversion incoming)
+
+        When VVIX spikes > 120, dealers are scrambling for gamma protection.
+        The subsequent mean reversion creates powerful vanna/charm tailwinds.
+        """
+        try:
+            vvix = yf.Ticker('^VVIX')
+            data = vvix.history(period='5d')
+
+            if not data.empty:
+                value = float(data['Close'].iloc[-1])
+                logger.info(f"VVIX: {value:.2f}")
+                return value
+            else:
+                logger.warning("VVIX data unavailable")
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching VVIX: {e}")
+            return None
+
+    def get_vvix_history(self, days: int = 90) -> pd.DataFrame:
+        """Get historical VVIX data"""
+        try:
+            vvix_ticker = yf.Ticker('^VVIX')
+            data = vvix_ticker.history(period=f'{days}d')
+
+            if not data.empty:
+                df = pd.DataFrame({
+                    'date': data.index,
+                    'vvix': data['Close']
+                })
+                df['date'] = pd.to_datetime(df['date']).dt.date
+                logger.info(f"Fetched {len(df)} days of VVIX history")
+                return df
+            else:
+                logger.warning("No VVIX history available")
+                return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error fetching VVIX history: {e}")
+            return pd.DataFrame()
+
+    def get_vvix_signal(self) -> dict:
+        """
+        Generate VVIX-based buy signal.
+
+        Returns:
+            dict with signal, level, description, and strength
+
+        Signal Logic (from config/parameters.yaml):
+        - VVIX >= 120: STRONG BUY - Historic turning point, mean reversion imminent
+        - VVIX >= 110: BUY ALERT - Elevated, watching for spike
+        - VVIX 80-110: NEUTRAL - Normal range
+        - VVIX < 80: CAUTION - Complacency, potential for vol expansion
+        """
+        vvix = self.get_vvix()
+
+        # Load thresholds from config
+        vvix_cfg = cfg.volatility.vvix
+        strong_buy_threshold = vvix_cfg.strong_buy_threshold
+        buy_alert_threshold = vvix_cfg.buy_alert_threshold
+        normal_min = vvix_cfg.normal_min
+        colors = vvix_cfg.colors
+
+        if vvix is None:
+            return {
+                'signal': 'UNAVAILABLE',
+                'level': None,
+                'strength': 0,
+                'color': '#9E9E9E',
+                'description': 'VVIX data unavailable'
+            }
+
+        if vvix >= strong_buy_threshold:
+            return {
+                'signal': 'STRONG BUY',
+                'level': vvix,
+                'strength': min(100, 70 + (vvix - strong_buy_threshold) * 2),
+                'color': colors.strong_buy,
+                'description': (
+                    f'VVIX at {vvix:.1f} - EXTREME vol-of-vol! '
+                    'Historic turning point. Dealers scrambling for gamma. '
+                    'Mean reversion → vanna/charm tailwinds incoming.'
+                )
+            }
+        elif vvix >= buy_alert_threshold:
+            return {
+                'signal': 'BUY ALERT',
+                'level': vvix,
+                'strength': 50 + (vvix - buy_alert_threshold) * 2,
+                'color': colors.buy_alert,
+                'description': (
+                    f'VVIX at {vvix:.1f} - Elevated vol-of-vol. '
+                    f'Watch for spike to {strong_buy_threshold}+ for strong buy signal.'
+                )
+            }
+        elif vvix >= normal_min:
+            return {
+                'signal': 'NEUTRAL',
+                'level': vvix,
+                'strength': 30,
+                'color': colors.neutral,
+                'description': f'VVIX at {vvix:.1f} - Normal range. No signal.'
+            }
+        else:
+            return {
+                'signal': 'CAUTION',
+                'level': vvix,
+                'strength': 40,
+                'color': colors.caution,
+                'description': (
+                    f'VVIX at {vvix:.1f} - Low vol-of-vol, complacency. '
+                    'Potential for vol expansion.'
+                )
+            }
 
     def get_skew_history(self, days: int = 90) -> pd.DataFrame:
         """Get historical SKEW data"""
@@ -173,16 +321,17 @@ class CBOECollector:
     def get_real_contango(self) -> Optional[float]:
         """
         Calculate REAL VIX contango using VIX/VIX3M ratio
-        
+
         Real contango should be single-digit percentages, not 65%!
-        
+
         Returns:
             Contango percentage or None
         """
         try:
             vix = self.get_vix()
-            vix3m = self.get_vix3m()
-            
+            # Don't double-track estimation - vix3m already tracks it
+            vix3m = self.get_vix3m(track_estimation=False)
+
             if vix and vix3m:
                 # Real contango: (VIX3M - VIX) / VIX * 100
                 contango = ((vix3m - vix) / vix) * 100
@@ -197,12 +346,13 @@ class CBOECollector:
                     estimated_contango = 0.0  # Flat
                 else:
                     estimated_contango = 3.0  # Contango when calm
-                
+
+                self._mark_estimated('vix_contango', f'VIX-based estimate (VIX={vix:.1f})')
                 logger.warning(f"VIX3M unavailable, estimated contango: {estimated_contango:+.2f}%")
                 return estimated_contango
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error calculating contango: {e}")
             return None
@@ -210,10 +360,10 @@ class CBOECollector:
     def get_equity_put_call_ratio(self) -> Optional[float]:
         """
         Get equity-only put/call ratio
-        
+
         Note: Real CBOE data requires scraping or paid API.
         This uses a proxy calculation from options activity.
-        
+
         Returns:
             Equity P/C ratio or None
         """
@@ -221,7 +371,7 @@ class CBOECollector:
             # Try to get from CBOE website (may require parsing)
             # For now, use SPY options as equity proxy
             spy = yf.Ticker("SPY")
-            
+
             # Get options chain
             try:
                 options_dates = spy.options
@@ -229,32 +379,33 @@ class CBOECollector:
                     # Get front month
                     front_month = options_dates[0]
                     opt_chain = spy.option_chain(front_month)
-                    
+
                     # Calculate put/call ratio from open interest
                     put_oi = opt_chain.puts['openInterest'].sum()
                     call_oi = opt_chain.calls['openInterest'].sum()
-                    
+
                     if call_oi > 0:
                         pc_ratio = put_oi / call_oi
                         logger.info(f"Equity P/C (SPY proxy): {pc_ratio:.3f}")
                         return pc_ratio
             except Exception as e:
                 logger.debug(f"Options chain method failed: {e}")
-            
+
             # Fallback: Use VIX/VIX3M as fear proxy
             vix = self.get_vix()
-            vix3m = self.get_vix3m()
-            
+            vix3m = self.get_vix3m(track_estimation=False)
+
             if vix and vix3m:
                 # When VIX > VIX3M, fear is high (P/C should be high)
                 ratio = vix / vix3m
                 # Map to typical P/C range (0.7-1.5)
                 estimated_pc = 0.5 + (ratio * 0.7)
+                self._mark_estimated('equity_put_call', 'Derived from VIX/VIX3M ratio (real P/C unavailable)')
                 logger.info(f"Equity P/C (VIX/VIX3M proxy): {estimated_pc:.3f}")
                 return estimated_pc
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting equity P/C: {e}")
             return None
@@ -309,63 +460,41 @@ class CBOECollector:
     def get_all_data(self) -> Dict:
         """
         Get all CBOE data in one call
-        
+
         Returns:
-            Dict with all available CBOE data
+            Dict with all available CBOE data, including metadata about estimated values
         """
         logger.info("Fetching CBOE data...")
-        
+
+        # Reset estimated fields tracking for this fetch
+        self.estimated_fields = []
+
         vix_spot = self.get_vix()
         vix9d = self.get_vix9d()
         vix3m = self.get_vix3m()
+        vvix = self.get_vvix()
         skew = self.get_skew()
         vix_contango = self.get_real_contango()
         put_call_ratios = self.get_put_call_ratios()
-        
+        vvix_signal = self.get_vvix_signal()
+
         result = {
             'vix_spot': vix_spot,
             'vix9d': vix9d,
             'vix3m': vix3m,
+            'vvix': vvix,
+            'vvix_signal': vvix_signal,
             'skew': skew,
             'vix_contango': vix_contango,
             'put_call_ratios': put_call_ratios or {},
-            'timestamp': pd.Timestamp.now().isoformat()
+            'timestamp': pd.Timestamp.now().isoformat(),
+            # Include metadata about which fields are estimated (not real data)
+            'estimated_fields': self.estimated_fields.copy(),
+            'has_estimated_data': len(self.estimated_fields) > 0
         }
-        
+
+        if self.estimated_fields:
+            logger.warning(f"CBOE data contains {len(self.estimated_fields)} estimated field(s): "
+                          f"{[e['field'] for e in self.estimated_fields]}")
+
         return result
-
-
-if __name__ == "__main__":
-    # Test the CBOE collector
-    print("Testing CBOE Collector")
-    print("=" * 60)
-    
-    collector = CBOECollector()
-    
-    print("\nFetching all CBOE data...")
-    data = collector.get_all_data()
-    
-    print(f"\n📊 CBOE Data:")
-    
-    if data.get('vix_spot'):
-        print(f"  VIX Spot: {data['vix_spot']:.2f}")
-    
-    if data.get('vix3m'):
-        print(f"  VIX3M: {data['vix3m']:.2f}")
-    
-    if data.get('vix_contango') is not None:
-        contango = data['vix_contango']
-        status = "Contango" if contango > 0 else "Backwardation"
-        print(f"  Real VIX Contango: {contango:+.2f}% ({status})")
-        print(f"    ✅ This is realistic (single-digit %)")
-    
-    if data.get('put_call_ratios'):
-        pc_ratios = data['put_call_ratios']
-        if pc_ratios.get('equity_pc'):
-            print(f"  Equity Put/Call: {pc_ratios['equity_pc']:.3f}")
-        if pc_ratios.get('total_pc'):
-            print(f"  Total Put/Call: {pc_ratios['total_pc']:.3f}")
-    
-    print("\n✅ CBOE Collector working with REAL data!")
-    print("\nNote: Contango now uses VIX/VIX3M (realistic values)")
-    print("      Put/Call uses SPY options + VIX/VIX3M proxy")

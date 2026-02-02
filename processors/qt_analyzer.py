@@ -8,6 +8,8 @@ Combines Fed Balance Sheet, TGA, and RRP to calculate PROPER net liquidity:
 This is the formula used by major macro funds (Crossborder Capital, Brent Donnelly, SpotGamma).
 
 Also provides QT regime classification and liquidity stress signals.
+
+Parameters loaded from config/parameters.yaml
 """
 
 import logging
@@ -16,6 +18,8 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+from config import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -40,21 +44,27 @@ class NetLiquiditySignal:
 class QTAnalyzer:
     """
     Analyze Quantitative Tightening and calculate proper net liquidity.
-    
+
     Combines:
     - Fed Balance Sheet (from FedBalanceSheetCollector)
     - TGA (Treasury General Account)
     - RRP (Overnight Reverse Repo)
-    
+
     To produce: Net Liquidity = Fed BS - TGA - RRP
+
+    Parameters loaded from config/parameters.yaml
     """
 
-    def __init__(self, lookback_days: int = 252):
+    def __init__(self, lookback_days: Optional[int] = None):
         """
         Args:
-            lookback_days: Days to use for z-score calculation
+            lookback_days: Days to use for z-score calculation (default from config)
         """
-        self.lookback_days = lookback_days
+        # Load from config
+        qt_cfg = cfg.liquidity.qt
+        self.lookback_days = lookback_days or qt_cfg.lookback_days
+        self.expanding_threshold = qt_cfg.expanding_threshold
+        self.contracting_threshold = qt_cfg.contracting_threshold
 
     def _z_score(self, series: pd.Series) -> Optional[float]:
         """Calculate z-score for latest value vs historical mean."""
@@ -186,18 +196,18 @@ class QTAnalyzer:
         z = self._z_score(df_recent["net_liquidity"])
         z_score = z if z is not None else 0.0
 
-        # Regime classification
+        # Regime classification using config thresholds
         # Higher net liquidity = MORE supportive for risk assets
-        if z_score > 0.8:
+        if z_score > self.expanding_threshold:
             signal = "SUPPORTIVE"
             color = "#4CAF50"  # Green
             description = "Net liquidity is expanding. Fed balance sheet growth outpacing TGA/RRP drains. Supportive for risk assets."
-            strength = min(100.0, 60 + (z_score - 0.8) * 20)
-        elif z_score < -0.8:
+            strength = min(100.0, 60 + (z_score - self.expanding_threshold) * 20)
+        elif z_score < self.contracting_threshold:
             signal = "DRAINING"
             color = "#F44336"  # Red
             description = "Net liquidity is contracting. QT + elevated TGA/RRP draining liquidity from markets. Headwind for risk assets."
-            strength = min(100.0, 60 + (-z_score - 0.8) * 20)
+            strength = min(100.0, 60 + (-z_score - abs(self.contracting_threshold)) * 20)
         else:
             signal = "NEUTRAL"
             color = "#FFC107"  # Yellow

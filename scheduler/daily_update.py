@@ -8,6 +8,9 @@ Run from project root with:
 or
 
     python scheduler/daily_update.py
+
+Phase 1: FRED, Fear/Greed, CBOE, Breadth, Yahoo, VRP
+Phase 2: Fed Balance Sheet, MOVE Index, Repo/SOFR rates
 """
 
 from datetime import datetime
@@ -22,7 +25,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 # --------------------------------------------------------------------------------------
-# Imports
+# Imports - Phase 1
 # --------------------------------------------------------------------------------------
 from data_collectors.fred_collector import FREDCollector
 from data_collectors.fear_greed_collector import FearGreedCollector
@@ -31,24 +34,30 @@ from data_collectors.breadth_collector import SP500ADLineCalculator
 from data_collectors.yahoo_collector import YahooCollector
 from database.db_manager import DatabaseManager
 from processors.left_strategy import LEFTStrategy
+from processors.vrp_module import VRPAnalyzer
 
-# VRP lives in the dashboard package (dashboard/vrp_module.py)
-from dashboard.vrp_module import VRPAnalyzer
-
-
-
-from data_collectors.sp500_adline_calculator import SP500ADLineCalculator
+# --------------------------------------------------------------------------------------
+# Imports - Phase 2 (Fed Balance Sheet, Treasury Stress, Repo Markets)
+# --------------------------------------------------------------------------------------
+from data_collectors.fed_balance_sheet_collector import FedBalanceSheetCollector
+from data_collectors.move_collector import MOVECollector
+from data_collectors.repo_collector_enhanced import RepoCollector
 
 class MarketDataUpdater:
     """Main class for daily market data updates."""
 
     def __init__(self):
-        # Core collectors
+        # Phase 1 collectors
         self.fred = FREDCollector()
         self.fear_greed = FearGreedCollector()
         self.cboe = CBOECollector()
         self.breadth = SP500ADLineCalculator()
         self.yahoo = YahooCollector()
+
+        # Phase 2 collectors
+        self.fed_bs = FedBalanceSheetCollector()
+        self.move = MOVECollector()
+        self.repo = RepoCollector()
 
         # DB & processors
         self.db = DatabaseManager()
@@ -246,7 +255,87 @@ class MarketDataUpdater:
                         print(f"⚠ save_vrp_data() failed: {e}")
 
         # ------------------------------------------------------------------
-        # 8. Build and save daily dashboard snapshot
+        # 8. PHASE 2: Fed Balance Sheet (for Net Liquidity)
+        # ------------------------------------------------------------------
+        print("\n🏦 Fetching Fed Balance Sheet data (Phase 2)...")
+        fed_bs_data = None
+        try:
+            fed_bs_data = self.fed_bs.get_balance_sheet_df()
+            if fed_bs_data is not None and not fed_bs_data.empty:
+                latest_assets = fed_bs_data['total_assets'].iloc[-1] / 1e6  # Convert to trillions
+                print(f"✓ Fed Total Assets: ${latest_assets:.2f}T")
+                print(f"✓ Fetched {len(fed_bs_data)} observations")
+
+                # Save to database if method exists
+                if hasattr(self.db, "save_fed_balance_sheet"):
+                    self.db.save_fed_balance_sheet(fed_bs_data)
+                    print("✓ Fed Balance Sheet saved to database")
+            else:
+                print("⚠ No Fed Balance Sheet data available")
+        except Exception as e:
+            print(f"✗ Fed Balance Sheet fetch failed: {e}")
+
+        # ------------------------------------------------------------------
+        # 9. PHASE 2: MOVE Index (Treasury Volatility)
+        # ------------------------------------------------------------------
+        print("\n📈 Fetching MOVE Index data (Phase 2)...")
+        move_data = None
+        move_value = None
+        try:
+            move_snapshot = self.move.get_full_snapshot()
+            if move_snapshot:
+                move_value = move_snapshot.get('move')
+                stress_level = move_snapshot.get('stress_level', 'UNKNOWN')
+                percentile = move_snapshot.get('percentile', 0)
+
+                print(f"✓ MOVE Index: {move_value:.1f}")
+                print(f"  Stress Level: {stress_level} ({percentile:.0f}th percentile)")
+
+                # Save to database if method exists
+                if hasattr(self.db, "save_move_data"):
+                    self.db.save_move_data(move_snapshot)
+                    print("✓ MOVE data saved to database")
+            else:
+                print("⚠ No MOVE data available")
+        except Exception as e:
+            print(f"✗ MOVE Index fetch failed: {e}")
+
+        # ------------------------------------------------------------------
+        # 10. PHASE 2: Repo Market Data (SOFR, IORB, RRP)
+        # ------------------------------------------------------------------
+        print("\n💵 Fetching Repo Market data (Phase 2)...")
+        repo_data = None
+        sofr_value = None
+        rrp_value = None
+        try:
+            repo_df = self.repo.get_repo_history(days_back=90)
+            if repo_df is not None and not repo_df.empty:
+                latest = repo_df.iloc[-1]
+                sofr_value = latest.get('sofr')
+                iorb_value = latest.get('iorb')
+                rrp_value = latest.get('rrp_on')
+                spread = latest.get('sofr_iorb_spread')
+
+                if sofr_value is not None:
+                    print(f"✓ SOFR: {sofr_value:.2f}%")
+                if iorb_value is not None:
+                    print(f"  IORB: {iorb_value:.2f}%")
+                if spread is not None:
+                    print(f"  SOFR-IORB Spread: {spread:+.2f} bps")
+                if rrp_value is not None:
+                    print(f"  RRP Volume: ${rrp_value:.0f}B")
+
+                # Save to database if method exists
+                if hasattr(self.db, "save_repo_data"):
+                    self.db.save_repo_data(repo_df)
+                    print("✓ Repo data saved to database")
+            else:
+                print("⚠ No Repo market data available")
+        except Exception as e:
+            print(f"✗ Repo data fetch failed: {e}")
+
+        # ------------------------------------------------------------------
+        # 11. Build and save daily dashboard snapshot
         # ------------------------------------------------------------------
         print("\n💾 Saving daily snapshot for dashboard...")
 
@@ -266,24 +355,45 @@ class MarketDataUpdater:
             else yahoo_data.get("market_breadth_proxy")
         )
 
-        # Fetch VIX9D and SKEW
+        # Fetch VIX9D, VVIX, and SKEW
         vix9d = cboe_data.get('vix9d')
+        vvix = cboe_data.get('vvix')
+        vvix_signal_data = cboe_data.get('vvix_signal', {})
+        vvix_signal = vvix_signal_data.get('signal') if vvix_signal_data else None
         skew = cboe_data.get('skew')
-        
+
+        # Log VVIX buy signal if active
+        if vvix_signal == 'STRONG BUY':
+            print(f"🟢 VVIX BUY SIGNAL ACTIVE! VVIX at {vvix:.1f} - Historic turning point")
+        elif vvix_signal == 'BUY ALERT':
+            print(f"🟡 VVIX elevated at {vvix:.1f} - Watch for 120+ spike")
+
         snapshot = {
+            # Core identifiers
             "date": datetime.now().strftime("%Y-%m-%d"),
+            # Phase 1: Credit & Rates
             "credit_spread_hy": self._safe_get_latest_fred(fred_data, "credit_spread_hy"),
             "credit_spread_ig": self._safe_get_latest_fred(fred_data, "credit_spread_ig"),
             "treasury_10y": self._safe_get_latest_fred(fred_data, "treasury_10y"),
             "fed_funds": self._safe_get_latest_fred(fred_data, "fed_funds"),
+            # Phase 1: Volatility
             "vix_spot": vix_spot,
             "vix_contango": vix_contango,
             "vix9d": vix9d,
+            "vvix": vvix,
+            "vvix_signal": vvix_signal,
             "skew": skew,
+            "vrp": vrp_analysis.get("vrp") if vrp_analysis else None,
+            # Phase 1: Sentiment & Breadth
             "put_call_ratio": put_call_ratio,
             "fear_greed_score": fear_greed_data.get("score"),
             "market_breadth": market_breadth,
             "left_signal": left_signal_data.get("signal"),
+            # Phase 2: Treasury Stress
+            "move_index": move_value,
+            # Phase 2: Repo Market
+            "sofr": sofr_value,
+            "rrp_volume": rrp_value,
         }
 
         self.db.save_daily_snapshot(snapshot)

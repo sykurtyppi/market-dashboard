@@ -1,15 +1,19 @@
 """
 SQLite database manager for storing historical market data
 INTEGRATED VERSION - Phase 1 + Phase 2 Complete
+
+Now includes data validation layer to catch malformed data before database saves.
 """
 
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import json
 from pathlib import Path
 import logging
+
+from utils.data_validator import DataValidator, ValidationResult, validate_before_save
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +68,11 @@ class DatabaseManager:
                     treasury_10y REAL,
                     fed_funds REAL,
                     vix_spot REAL,
+                    vix9d REAL,
+                    vvix REAL,
+                    vvix_signal TEXT,
+                    skew REAL,
+                    vrp REAL,
                     vix_contango REAL,
                     put_call_ratio REAL,
                     fear_greed_score REAL,
@@ -125,7 +134,25 @@ class DatabaseManager:
                     updated_at TEXT
                 )
             """)
-            
+
+            # Breadth History table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS breadth_history (
+                    date TEXT PRIMARY KEY,
+                    advancing INTEGER NOT NULL,
+                    declining INTEGER NOT NULL,
+                    unchanged INTEGER DEFAULT 0,
+                    total INTEGER NOT NULL,
+                    breadth_pct REAL NOT NULL,
+                    ad_line REAL,
+                    ad_diff INTEGER,
+                    mcclellan REAL,
+                    ema19 REAL,
+                    ema39 REAL,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_date ON indicators(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_name ON indicators(indicator_name)")
@@ -134,8 +161,40 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_fed_bs_date ON fed_balance_sheet(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_move_date ON move_index(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_repo_date ON repo_market(date)")
-            
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_breadth_date ON breadth_history(date)")
+
             conn.commit()
+
+            # Run migrations for existing databases
+            self._run_migrations(conn)
+
+    def _run_migrations(self, conn):
+        """Add missing columns to existing tables (safe migrations)"""
+        cursor = conn.cursor()
+
+        # Get existing columns in daily_snapshots
+        cursor.execute("PRAGMA table_info(daily_snapshots)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+
+        # Columns that should exist (with their types)
+        required_columns = {
+            'vix9d': 'REAL',
+            'vvix': 'REAL',
+            'vvix_signal': 'TEXT',
+            'skew': 'REAL',
+        }
+
+        # Add missing columns
+        for col_name, col_type in required_columns.items():
+            if col_name not in existing_columns:
+                try:
+                    cursor.execute(f"ALTER TABLE daily_snapshots ADD COLUMN {col_name} {col_type}")
+                    logger.info(f"Added missing column '{col_name}' to daily_snapshots")
+                except sqlite3.OperationalError as e:
+                    # Column might already exist or other error
+                    logger.debug(f"Migration note for {col_name}: {e}")
+
+        conn.commit()
     
     # ========================================
     # EXISTING METHODS (Phase 1)
@@ -185,32 +244,64 @@ class DatabaseManager:
             
             conn.commit()
     
-    def save_daily_snapshot(self, snapshot: Dict):
-        """Save complete daily market snapshot"""
+    def save_daily_snapshot(self, snapshot: Dict) -> Tuple[bool, ValidationResult]:
+        """
+        Save complete daily market snapshot with validation.
+
+        Args:
+            snapshot: Dictionary with market data
+
+        Returns:
+            Tuple of (success: bool, validation_result: ValidationResult)
+        """
+        # Validate data before saving
+        result = validate_before_save(snapshot, 'daily_snapshot')
+
+        if not result.is_valid:
+            logger.error(f"Daily snapshot validation failed: {result.errors}")
+            return False, result
+
+        if result.warnings:
+            for warning in result.warnings:
+                logger.warning(f"Daily snapshot warning: {warning}")
+
+        if result.estimated_fields:
+            logger.info(f"Estimated fields in snapshot: {result.estimated_fields}")
+
+        # Save validated data
+        validated = result.data
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            
+
             cursor.execute("""
-                INSERT OR REPLACE INTO daily_snapshots 
+                INSERT OR REPLACE INTO daily_snapshots
                 (date, credit_spread_hy, credit_spread_ig, treasury_10y, fed_funds,
-                 vix_spot, vix_contango, put_call_ratio, fear_greed_score, 
-                 market_breadth, left_signal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 vix_spot, vix9d, vvix, vvix_signal, skew, vrp, vix_contango, put_call_ratio,
+                 fear_greed_score, market_breadth, left_signal)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                snapshot.get('date'),
-                snapshot.get('credit_spread_hy'),
-                snapshot.get('credit_spread_ig'),
-                snapshot.get('treasury_10y'),
-                snapshot.get('fed_funds'),
-                snapshot.get('vix_spot'),
-                snapshot.get('vix_contango'),
-                snapshot.get('put_call_ratio'),
-                snapshot.get('fear_greed_score'),
-                snapshot.get('market_breadth'),
-                snapshot.get('left_signal')
+                validated.get('date'),
+                validated.get('credit_spread_hy'),
+                validated.get('credit_spread_ig'),
+                validated.get('treasury_10y'),
+                validated.get('fed_funds'),
+                validated.get('vix_spot'),
+                validated.get('vix9d'),
+                validated.get('vvix'),
+                validated.get('vvix_signal'),
+                validated.get('skew'),
+                validated.get('vrp'),
+                validated.get('vix_contango'),
+                validated.get('put_call_ratio'),
+                validated.get('fear_greed_score'),
+                validated.get('market_breadth'),
+                validated.get('left_signal')
             ))
-            
+
             conn.commit()
+
+        logger.info(f"Saved daily snapshot for {validated.get('date')}")
+        return True, result
     
     def get_indicator_history(self, indicator_name: str, days: int = 365) -> pd.DataFrame:
         """Get historical data for an indicator"""
@@ -228,24 +319,81 @@ class DatabaseManager:
                 df['date'] = pd.to_datetime(df['date'])
             return df
     
-    def get_latest_snapshot(self) -> Optional[Dict]:
-        """Get most recent daily snapshot"""
+    def get_latest_snapshot(self, include_age: bool = False) -> Optional[Dict]:
+        """
+        Get most recent daily snapshot with optional age tracking.
+
+        Args:
+            include_age: If True, adds '_age_hours' and '_status' fields
+
+        Returns:
+            Dict with snapshot data, or None if no data exists.
+            If include_age=True, also includes:
+                - _age_hours: float (hours since data was recorded)
+                - _age_string: str (human-readable age like "2h ago")
+                - _status: str ("fresh", "stale", "very_stale")
+                - _is_fresh: bool (True if < 4 hours old)
+        """
         query = """
             SELECT * FROM daily_snapshots
             ORDER BY date DESC
             LIMIT 1
         """
-        
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(query)
-            
+
             row = cursor.fetchone()
             if not row:
                 return None
-            
+
             columns = [description[0] for description in cursor.description]
-            return dict(zip(columns, row))
+            result = dict(zip(columns, row))
+
+            if include_age:
+                # Calculate data age
+                try:
+                    data_date = datetime.strptime(result.get('date', ''), '%Y-%m-%d')
+                    # Check for updated_at timestamp if available
+                    if 'updated_at' in result and result['updated_at']:
+                        try:
+                            data_date = datetime.fromisoformat(result['updated_at'].replace('Z', '+00:00'))
+                            data_date = data_date.replace(tzinfo=None)  # Make naive for comparison
+                        except (ValueError, AttributeError):
+                            pass  # Use date field instead
+
+                    now = datetime.now()
+                    age_delta = now - data_date
+                    age_hours = age_delta.total_seconds() / 3600
+
+                    # Determine status
+                    if age_hours < 4:
+                        status = "fresh"
+                        age_string = f"{int(age_hours * 60)}m ago" if age_hours < 1 else f"{int(age_hours)}h ago"
+                    elif age_hours < 24:
+                        status = "stale"
+                        age_string = f"{int(age_hours)}h ago"
+                    elif age_hours < 168:  # 1 week
+                        status = "very_stale"
+                        age_string = f"{int(age_hours / 24)}d ago"
+                    else:
+                        status = "very_stale"
+                        age_string = f"{int(age_hours / 168)}w ago"
+
+                    result['_age_hours'] = round(age_hours, 2)
+                    result['_age_string'] = age_string
+                    result['_status'] = status
+                    result['_is_fresh'] = age_hours < 4
+
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Could not calculate data age: {e}")
+                    result['_age_hours'] = None
+                    result['_age_string'] = "unknown"
+                    result['_status'] = "unknown"
+                    result['_is_fresh'] = False
+
+            return result
     
     def get_recent_signals(self, signal_type: Optional[str] = None, limit: int = 10) -> List[Dict]:
         """Get recent signals"""
@@ -272,27 +420,52 @@ class DatabaseManager:
             columns = [description[0] for description in cursor.description]
             return [dict(zip(columns, row)) for row in cursor.fetchall()]
     
-    def save_vrp_data(self, vrp_analysis: Dict):
-        """Save VRP analysis to database"""
+    def save_vrp_data(self, vrp_analysis: Dict) -> Tuple[bool, ValidationResult]:
+        """
+        Save VRP analysis to database with validation.
+
+        Args:
+            vrp_analysis: Dictionary with VRP data
+
+        Returns:
+            Tuple of (success: bool, validation_result: ValidationResult)
+        """
+        # Add date if not present
+        if 'date' not in vrp_analysis:
+            vrp_analysis['date'] = datetime.now().strftime('%Y-%m-%d')
+
+        # Validate
+        result = validate_before_save(vrp_analysis, 'vrp')
+
+        if not result.is_valid:
+            logger.error(f"VRP validation failed: {result.errors}")
+            return False, result
+
+        if result.warnings:
+            for warning in result.warnings:
+                logger.warning(f"VRP warning: {warning}")
+
+        validated = result.data
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            
-            date = datetime.now().strftime('%Y-%m-%d')
-            
+
             cursor.execute("""
-                INSERT OR REPLACE INTO vrp_data 
+                INSERT OR REPLACE INTO vrp_data
                 (date, vix, realized_vol, vrp, regime, expected_6m_return)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (
-                date,
-                vrp_analysis.get('vix'),
-                vrp_analysis.get('realized_vol'),
-                vrp_analysis.get('vrp'),
-                vrp_analysis.get('regime'),
-                vrp_analysis.get('expected_6m_return')
+                validated.get('date'),
+                validated.get('vix'),
+                validated.get('realized_vol'),
+                validated.get('vrp'),
+                validated.get('regime'),
+                validated.get('expected_6m_return')
             ))
-            
+
             conn.commit()
+
+        logger.info(f"Saved VRP data for {validated.get('date')}")
+        return True, result
     
     def get_vrp_history(self, days: int = 365) -> pd.DataFrame:
         """Get historical VRP data"""
@@ -334,7 +507,7 @@ class DatabaseManager:
     
     def save_liquidity_history(self, df: pd.DataFrame):
         """
-        Save liquidity history (RRP, TGA, SOFR) to indicators table.
+        Save liquidity history to liquidity_history table.
         
         Args:
             df: DataFrame with columns: date, rrp_on, tga, sofr
@@ -344,35 +517,46 @@ class DatabaseManager:
             return
         
         try:
-            # Save RRP
-            if 'rrp_on' in df.columns:
-                rrp_df = df[['date', 'rrp_on']].dropna()
-                for _, row in rrp_df.iterrows():
-                    self.save_indicator('liquidity_rrp', row['date'], float(row['rrp_on']))
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                for _, row in df.iterrows():
+                    # Calculate net liquidity using CORRECT formula: Fed BS - TGA - RRP
+                    # Note: If fed_bs is not in this row, we can't compute proper net liquidity
+                    # The old formula -(RRP + TGA) was WRONG - it inverted the relationship
+                    net_liq = None
+                    fed_bs = row.get('fed_bs') or row.get('fed_balance_sheet')
+                    rrp = row.get('rrp_on') or row.get('rrp')
+                    tga = row.get('tga')
+
+                    if pd.notna(fed_bs) and pd.notna(rrp) and pd.notna(tga):
+                        # Correct institutional formula: Net Liquidity = Fed BS - TGA - RRP
+                        net_liq = float(fed_bs) - float(tga) - float(rrp)
+                    elif pd.notna(rrp) and pd.notna(tga):
+                        # Fallback: store negative drain components (less accurate)
+                        # This at least shows the drain direction correctly
+                        net_liq = -(float(rrp) + float(tga))
+                    
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO liquidity_history
+                        (date, rrp_on, tga, sofr, net_liquidity)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (
+                        row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
+                        float(row['rrp_on']) if pd.notna(row.get('rrp_on')) else None,
+                        float(row['tga']) if pd.notna(row.get('tga')) else None,
+                        float(row['sofr']) if pd.notna(row.get('sofr')) else None,
+                        net_liq
+                    ))
+                
+                conn.commit()
             
-            # Save TGA
-            if 'tga' in df.columns:
-                tga_df = df[['date', 'tga']].dropna()
-                for _, row in tga_df.iterrows():
-                    self.save_indicator('liquidity_tga', row['date'], float(row['tga']))
-            
-            # Save SOFR
-            if 'sofr' in df.columns:
-                sofr_df = df[['date', 'sofr']].dropna()
-                for _, row in sofr_df.iterrows():
-                    self.save_indicator('liquidity_sofr', row['date'], float(row['sofr']))
-            
-            # Calculate and save net liquidity
-            if 'rrp_on' in df.columns and 'tga' in df.columns:
-                net_liq_df = df[['date', 'rrp_on', 'tga']].dropna()
-                for _, row in net_liq_df.iterrows():
-                    net_liq = -(row['rrp_on'] + row['tga'])
-                    self.save_indicator('liquidity_net', row['date'], float(net_liq))
-            
-            logger.info(f"Saved {len(df)} rows of liquidity data")
+            logger.info(f"Saved {len(df)} rows of liquidity data to liquidity_history table")
             
         except Exception as e:
             logger.error(f"Error saving liquidity history: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     def get_liquidity_history(self, days: int = 365) -> pd.DataFrame:
         """
@@ -811,36 +995,66 @@ class DatabaseManager:
         
         return health
 
-    def save_breadth_data(self, breadth_df):
-        """Save breadth history data"""
+    def save_breadth_data(self, breadth_df) -> Tuple[int, List[str]]:
+        """
+        Save breadth history data with validation.
+
+        Args:
+            breadth_df: DataFrame with breadth data
+
+        Returns:
+            Tuple of (rows_saved: int, errors: List[str])
+        """
         if breadth_df.empty:
-            return
-        
+            return 0, []
+
+        validator = DataValidator()
+        errors = []
+        rows_saved = 0
+
         try:
             breadth_df = breadth_df.copy()
-            breadth_df['date'] = breadth_df['date'].dt.strftime('%Y-%m-%d')
-            
+            # Handle date conversion
+            if hasattr(breadth_df['date'].iloc[0], 'strftime'):
+                breadth_df['date'] = breadth_df['date'].dt.strftime('%Y-%m-%d')
+
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                for _, row in breadth_df.iterrows():
+                for idx, row in breadth_df.iterrows():
+                    # Validate each row
+                    result = validator.validate_breadth_data(row.to_dict())
+
+                    if not result.is_valid:
+                        errors.extend([f"Row {idx}: {e}" for e in result.errors])
+                        continue
+
+                    validated = result.data
                     cursor.execute("""
-                        INSERT OR REPLACE INTO breadth_history 
+                        INSERT OR REPLACE INTO breadth_history
                         (date, advancing, declining, unchanged, total, breadth_pct, ad_line, ad_diff, mcclellan)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        row['date'],
-                        int(row['advancing']),
-                        int(row['declining']),
-                        int(row['unchanged']),
-                        int(row['total']),
-                        float(row['breadth_pct']),
-                        float(row['ad_line']),
-                        int(row['ad_diff']),
-                        float(row.get('mcclellan', 0))
+                        validated.get('date'),
+                        validated.get('advancing', 0),
+                        validated.get('declining', 0),
+                        validated.get('unchanged', 0),
+                        validated.get('total', 0),
+                        validated.get('breadth_pct'),
+                        validated.get('ad_line', 0),
+                        validated.get('ad_diff', 0),
+                        validated.get('mcclellan', 0)
                     ))
+                    rows_saved += 1
+
                 conn.commit()
+
+            logger.info(f"Saved {rows_saved} breadth records ({len(errors)} validation errors)")
+
         except Exception as e:
             logger.error(f"Error saving breadth data: {e}")
+            errors.append(str(e))
+
+        return rows_saved, errors
     
     def get_breadth_history(self, days=90):
         """Get breadth history"""

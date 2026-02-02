@@ -77,22 +77,39 @@ class HealthCheckSystem:
                 message=f"Database connection failed: {str(e)}"
             )
     
+    # Allowed columns for SQL queries (prevent SQL injection)
+    ALLOWED_COLUMNS = {
+        'credit_spread_hy', 'credit_spread_ig', 'treasury_10y', 'fed_funds',
+        'vix_spot', 'vix9d', 'vvix', 'vvix_signal', 'skew', 'vrp',
+        'vix_contango', 'put_call_ratio', 'fear_greed_score', 'market_breadth',
+        'left_signal', 'move', 'sofr', 'rrp', 'tga', 'net_liquidity'
+    }
+
     def check_data_source(self, source_name: str, column_name: str) -> DataSourceHealth:
         """
         Check health of a specific data source
-        
+
         Args:
             source_name: Display name for the source
             column_name: Database column name to check
-        
+
         Returns:
             DataSourceHealth object
         """
+        # SECURITY: Validate column name to prevent SQL injection
+        if column_name not in self.ALLOWED_COLUMNS:
+            return DataSourceHealth(
+                name=source_name,
+                status=HealthStatus.UNKNOWN,
+                last_update=None,
+                message=f"Invalid column name: {column_name}"
+            )
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                
-                # Get most recent non-null value
+
+                # Get most recent non-null value (column_name is now validated)
                 query = f"""
                     SELECT date, {column_name}
                     FROM daily_snapshots
@@ -100,7 +117,7 @@ class HealthCheckSystem:
                     ORDER BY date DESC
                     LIMIT 1
                 """
-                
+
                 cursor.execute(query)
                 result = cursor.fetchone()
                 
@@ -326,31 +343,3 @@ class HealthCheckSystem:
             HealthStatus.UNKNOWN: "#9E9E9E"     # Grey
         }
         return color_map.get(status, "#9E9E9E")
-
-
-# Test function
-if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("DATA HEALTH CHECK SYSTEM - TEST")
-    print("="*80)
-    
-    health_checker = HealthCheckSystem()
-    
-    print("\n Running comprehensive health check...")
-    summary = health_checker.get_health_summary()
-    
-    print(f"\n OVERALL STATUS: {summary['overall_status'].upper()}")
-    print(f"   Checked: {summary['total_sources']} sources")
-    
-    print(f"\n STATUS BREAKDOWN:")
-    for status, count in summary['summary'].items():
-        if count > 0:
-            print(f"   {status.title()}: {count}")
-    
-    print(f"\n INDIVIDUAL SOURCES:")
-    for name, check_data in summary['sources'].items():
-        emoji = health_checker.get_status_emoji(HealthStatus(check_data['status']))
-        print(f"   {emoji} {check_data['name']}: {check_data['message']}")
-    
-    print("\n" + "="*80)
-    print("✓ HEALTH CHECK COMPLETE")

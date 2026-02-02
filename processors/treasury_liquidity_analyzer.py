@@ -181,8 +181,8 @@ class TreasuryLiquidityAnalyzer:
         if vix_series is not None and not vix_series.empty:
             try:
                 vix_value = float(vix_series.iloc[-1])
-            except:
-                pass
+            except (ValueError, TypeError, IndexError) as e:
+                logger.warning(f"Could not extract VIX value: {e}")
 
         # Classify stress
         stress_level, color, strength, description = self.classify_stress(

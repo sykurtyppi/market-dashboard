@@ -734,6 +734,73 @@ def create_sector_rotation_chart(sector_performance: dict, period: str = '3M') -
     return fig
 
 
+def create_vvix_history_chart(vvix_df):
+    """
+    Create VVIX history chart with buy signal zones.
+
+    VVIX >= 120 is highlighted as a STRONG BUY zone (historic turning points).
+    """
+    if vvix_df.empty:
+        return None
+
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+
+    # Main VVIX line
+    fig.add_trace(go.Scatter(
+        x=vvix_df['date'],
+        y=vvix_df['vvix'],
+        name='VVIX',
+        line=dict(color='#E91E63', width=2.5),
+        hovertemplate='VVIX: %{y:.1f}<extra></extra>'
+    ))
+
+    # Regime bands with buy signal zones
+    fig.add_hrect(y0=0, y1=80, fillcolor='rgba(255, 152, 0, 0.1)',
+                  line_width=0, annotation_text="Complacent", annotation_position="left")
+    fig.add_hrect(y0=80, y1=100, fillcolor='rgba(255, 193, 7, 0.1)',
+                  line_width=0, annotation_text="Normal", annotation_position="left")
+    fig.add_hrect(y0=100, y1=120, fillcolor='rgba(255, 152, 0, 0.15)',
+                  line_width=0, annotation_text="Elevated", annotation_position="left")
+    # STRONG BUY ZONE
+    fig.add_hrect(y0=120, y1=200, fillcolor='rgba(76, 175, 80, 0.25)',
+                  line_width=0, annotation_text="🟢 BUY ZONE", annotation_position="left")
+
+    # Add 120 threshold line
+    fig.add_hline(y=120, line_dash="dash", line_color="#4CAF50", line_width=2,
+                  annotation_text="Buy Signal (120)",
+                  annotation_position="right",
+                  annotation_font_color="#4CAF50")
+
+    # Current value annotation
+    latest = vvix_df.iloc[-1]
+    arrow_color = '#4CAF50' if latest['vvix'] >= 120 else '#E91E63'
+    fig.add_annotation(
+        x=latest['date'],
+        y=latest['vvix'],
+        text=f"<b>{latest['vvix']:.1f}</b>",
+        showarrow=True,
+        arrowhead=2,
+        arrowcolor=arrow_color,
+        bgcolor='white',
+        bordercolor=arrow_color,
+        font=dict(color=arrow_color)
+    )
+
+    fig.update_layout(
+        title='<b>VVIX (VIX of VIX)</b><br><sub>Volatility of Volatility - Buy Signal at 120+</sub>',
+        xaxis_title='Date',
+        yaxis_title='VVIX Level',
+        template='plotly_white',
+        hovermode='x unified',
+        height=400,
+        showlegend=False
+    )
+
+    return fig
+
+
 def create_skew_history_chart(skew_df):
     """Create SKEW history chart with regime bands"""
     if skew_df.empty:

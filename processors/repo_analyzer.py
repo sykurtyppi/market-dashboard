@@ -9,6 +9,8 @@ Analyzes funding stress in the repo market using:
 
 The repo market is where banks and dealers get overnight funding.
 Stress here = liquidity/funding crisis potential.
+
+Parameters loaded from config/parameters.yaml
 """
 
 import logging
@@ -17,6 +19,8 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+from config import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -37,16 +41,23 @@ class RepoStressSignal:
 class RepoAnalyzer:
     """
     Analyze repo market stress and funding conditions.
-    
+
     Uses SOFR as primary indicator of funding stress.
+
+    Parameters loaded from config/parameters.yaml
     """
 
-    def __init__(self, lookback_days: int = 252):
+    def __init__(self, lookback_days: Optional[int] = None):
         """
         Args:
-            lookback_days: Days for z-score calculation
+            lookback_days: Days for z-score calculation (default from config)
         """
-        self.lookback_days = lookback_days
+        # Load from config
+        sofr_cfg = cfg.repo.sofr
+        self.lookback_days = lookback_days or sofr_cfg.lookback_days
+        self.stress_threshold = sofr_cfg.stress_threshold
+        self.elevated_threshold = sofr_cfg.elevated_threshold
+        self.supportive_threshold = sofr_cfg.supportive_threshold
 
     def classify_stress(
         self,
@@ -56,48 +67,53 @@ class RepoAnalyzer:
     ) -> tuple:
         """
         Classify repo market stress.
-        
+
         CRITICAL: Only POSITIVE z-scores (high SOFR) = stress
         Negative z-scores (low SOFR) = normal/stable funding
-        
+
+        Uses thresholds from config/parameters.yaml
+
         Returns:
             (stress_level, color, strength, description)
         """
-        # STRESS: SOFR spiking above normal (positive z-score > 2)
-        if z_score > 2.0:
+        # Load RRP thresholds from config
+        rrp_critical = cfg.liquidity.rrp.critical_billions
+
+        # STRESS: SOFR spiking above normal (positive z-score > stress_threshold)
+        if z_score > self.stress_threshold:
             strength = min(100.0, 75.0 + z_score * 10)
-            
+
             # Add context about RRP if available
             context = ""
-            if rrp_billions is not None and rrp_billions < 50:
+            if rrp_billions is not None and rrp_billions < rrp_critical:
                 context = " RRP depleted - potential liquidity shortage."
-            
+
             return (
                 "STRESS",
                 "#F44336",
                 strength,
                 f"SOFR spiking - significant funding stress.{context} Elevated risk of broader market impact."
             )
-        
-        # ELEVATED: SOFR moderately high (positive z-score 1-2)
-        elif z_score > 1.0:
+
+        # ELEVATED: SOFR moderately high (positive z-score between elevated and stress)
+        elif z_score > self.elevated_threshold:
             return (
                 "ELEVATED",
                 "#FF9800",
                 60.0,
                 f"SOFR above normal levels. Moderate funding pressure. Monitor for escalation."
             )
-        
-        # NORMAL: SOFR in normal range or below (z-score <= 1)
+
+        # NORMAL: SOFR in normal range or below (z-score <= elevated_threshold)
         # Note: Low SOFR (negative z-score) is actually GOOD - stable funding
         else:
-            if z_score < -2.0:
+            if z_score < -self.stress_threshold:
                 desc = f"Repo market very stable. SOFR well below historical average ({z_score:.1f}σ) - abundant liquidity."
-            elif z_score < 0:
+            elif z_score < self.supportive_threshold:
                 desc = f"Repo market stable. SOFR below average - healthy funding conditions."
             else:
                 desc = "Repo market functioning normally. No funding stress detected."
-            
+
             return (
                 "NORMAL",
                 "#4CAF50",

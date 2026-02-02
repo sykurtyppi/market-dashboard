@@ -3,10 +3,15 @@ Sector Performance Collector
 Tracks sector ETF performance for rotation analysis
 """
 
-import yfinance as yf
-import pandas as pd
+import logging
 from datetime import datetime, timedelta
 from typing import Dict
+
+import pandas as pd
+import yfinance as yf
+
+logger = logging.getLogger(__name__)
+
 
 class SectorCollector:
     """Collects sector performance data"""
@@ -49,7 +54,7 @@ class SectorCollector:
                         'change_pct': float(change_pct)
                     }
             except Exception as e:
-                print(f"Error fetching {ticker}: {e}")
+                logger.warning(f"Error fetching {ticker}: {e}")
                 continue
         
         return performance
@@ -62,9 +67,3 @@ class SectorCollector:
         df = df.sort_values('change_pct', ascending=False)
         
         return df
-
-
-if __name__ == "__main__":
-    collector = SectorCollector()
-    rankings = collector.get_sector_rankings()
-    print(rankings)

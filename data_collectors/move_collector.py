@@ -1,12 +1,16 @@
 """
 MOVE Index Collector
 Fetches MOVE Index data (Merrill Option Volatility Estimate - Treasury volatility)
+
+Parameters loaded from config/parameters.yaml
 """
 
 import pandas as pd
 from datetime import datetime, timedelta
 import logging
 from typing import Dict, Optional
+
+from config import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -96,14 +100,15 @@ class MOVECollector:
             # Calculate percentile
             percentile = (df['move'] < move_value).sum() / len(df) * 100
             
-            # Classify stress level
-            if move_value < 80:
+            # Classify stress level using config thresholds
+            move_cfg = cfg.treasury.move
+            if move_value < move_cfg.low_max:
                 stress_level = "LOW"
                 stress_color = "#4CAF50"
-            elif move_value < 120:
+            elif move_value < move_cfg.normal_max:
                 stress_level = "NORMAL"
                 stress_color = "#8BC34A"
-            elif move_value < 150:
+            elif move_value < move_cfg.elevated_max:
                 stress_level = "ELEVATED"
                 stress_color = "#FF9800"
             else:
@@ -125,10 +130,10 @@ class MOVECollector:
                 'move_df': df,  # FIX: Add the DataFrame for charts
                 'history': df.to_dict('records'),
                 'thresholds': {
-                    'low': 80,
-                    'normal': 120,
-                    'elevated': 150,
-                    'high': 200
+                    'low': move_cfg.low_max,
+                    'normal': move_cfg.normal_max,
+                    'elevated': move_cfg.elevated_max,
+                    'high': move_cfg.high_min
                 }
             }
             

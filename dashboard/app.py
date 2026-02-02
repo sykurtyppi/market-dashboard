@@ -57,7 +57,7 @@ try:
     from data_collectors.market_data import MarketDataCollector
     from data_collectors.fed_balance_sheet_collector import FedBalanceSheetCollector
     from data_collectors.move_collector import MOVECollector
-    from data_collectors.repo_collector import RepoCollector
+    from data_collectors.repo_collector_enhanced import RepoCollector
 
     # Processors
     from processors.left_strategy import LEFTStrategy
@@ -65,21 +65,55 @@ try:
     from processors.vrp_calculator import VRPCalculator     # Phase 2 VRP (if needed)
     from processors.liquidity_signals import (
         LiquidityAnalyzer,
-        LiquiditySignalGenerator,
+        NetLiquiditySignal,
     )
     from processors.qt_analyzer import QTAnalyzer
     from processors.treasury_liquidity_analyzer import TreasuryLiquidityAnalyzer
     from processors.repo_analyzer import RepoAnalyzer
-    
+
+    # Enhanced Breadth Analysis (institutional-grade)
+    from processors.breadth_enhanced import (
+        EnhancedBreadthAnalyzer,
+        get_new_highs_lows,
+    )
+
     # Settings page
     from settings_page import render_settings_page
     # PDF Export
     from dashboard.pdf_generator_v2 import PDFReportGenerator
-    
+    # UI Helpers
+    from dashboard.ui_helpers import (
+        get_vix_percentile,
+        get_fear_greed_percentile,
+        get_credit_spread_percentile,
+        get_estimated_indicator,
+        format_with_estimated,
+        format_percentile_badge,
+        get_tooltip,
+        METRIC_TOOLTIPS,
+    )
+
 except ImportError as e:
     st.error(f"Import error: {e}")
     st.error("Make sure all required files are in their correct folders")
     st.stop()
+
+# -------------------------------------------------------------------
+# CONSTANTS & HELPERS
+# -------------------------------------------------------------------
+def get_breadth_mode():
+    """Get breadth mode from environment (set in Settings page)."""
+    return os.getenv('BREADTH_MODE', 'fast').lower()
+
+def get_mcclellan_scale_factor():
+    """Get McClellan scale factor based on breadth mode setting.
+    Fast mode (100 stocks): 5.0x scaling
+    Full mode (500 stocks): 1.0x (no scaling)
+    """
+    return 1.0 if get_breadth_mode() == 'full' else 5.0
+
+# Dynamic scale factor based on mode
+MCCLELLAN_SCALE_FACTOR = get_mcclellan_scale_factor()
 
 # -------------------------------------------------------------------
 # PAGE CONFIG + CSS
@@ -137,14 +171,14 @@ def init_components():
             "fred": fred_collector,
             "fear_greed": FearGreedCollector(),
             "cboe": CBOECollector(),
-            "breadth": SP500ADLineCalculator(),
+            "breadth": SP500ADLineCalculator(mode=get_breadth_mode()),
             "yahoo": YahooCollector(),
             "left_strategy": LEFTStrategy(),
             "vrp": VRPAnalyzer(lookback_days=21),
 
-            # Liquidity (Phase 1)
+            # Liquidity collectors & analyzers
             "liquidity": LiquidityCollector(),
-            "liquidity_analyzer": LiquidityAnalyzer(),
+            "liquidity_analyzer": LiquidityAnalyzer(),  # Now uses correct formula: Fed BS - TGA - RRP
 
             # Phase 2 collectors & processors
             "market": MarketDataCollector(),
@@ -152,7 +186,6 @@ def init_components():
             "move": MOVECollector(),
             "repo": RepoCollector(),
             "vrp_calc": VRPCalculator(),
-            "liq_signals": LiquiditySignalGenerator(),
             "qt_analyzer": QTAnalyzer(),
             "treasury_analyzer": TreasuryLiquidityAnalyzer(),
             "repo_analyzer": RepoAnalyzer(),
@@ -280,7 +313,7 @@ def get_sector_performance(period: str = "1d") -> pd.DataFrame:
                     "Start Price": float(start_price),
                 })
         except Exception as e:
-            print(f"Error fetching {ticker}: {e}")
+            logger.warning(f"Error fetching {ticker}: {e}")
             continue
 
     df = pd.DataFrame(performance)
@@ -413,7 +446,8 @@ with st.sidebar:
             "Overview",
             "LEFT Strategy",
             "Sentiment",
-            "Credit & Liquidity",   # Combined Phase 1 + Phase 2
+            "Credit & Liquidity",
+            "CTA Flow Tracker",
             "Volatility & VRP",
             "Sectors & VIX",
             "Market Breadth",
@@ -425,11 +459,22 @@ with st.sidebar:
 
     st.divider()
 
-    latest = components["db"].get_latest_snapshot()
+    # Get latest data WITH age tracking
+    latest = components["db"].get_latest_snapshot(include_age=True)
     if latest:
-        st.success(f"Updated: {latest['date']}")
+        age_status = latest.get('_status', 'unknown')
+        age_string = latest.get('_age_string', 'unknown')
+        is_fresh = latest.get('_is_fresh', False)
+
+        if is_fresh:
+            st.success(f"✅ Data: {latest['date']} ({age_string})")
+        elif age_status == 'stale':
+            st.warning(f"⚠️ Data: {latest['date']} ({age_string})")
+        else:
+            st.error(f"🚨 Data: {latest['date']} ({age_string})")
+            st.caption("Data may be outdated - click 'Update Data' below")
     else:
-        st.warning("No data")
+        st.error("❌ No data available")
 
     # Health Check Widget
     st.divider()
@@ -557,12 +602,13 @@ with st.sidebar:
                 try:
                     breadth_history = components["db"].get_breadth_history(days=90)
                     if not breadth_history.empty:
-                        # Ensure McClellan is calculated
+                        # Ensure McClellan is calculated (scale factor depends on breadth mode)
                         if 'mcclellan' not in breadth_history.columns:
-                            breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean()
-                            breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean()
+                            sf = get_mcclellan_scale_factor()
+                            breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean() * sf
+                            breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean() * sf
                             breadth_history['mcclellan'] = breadth_history['ema19'] - breadth_history['ema39']
-                        
+
                         charts['AD_Line'] = create_adline_chart(breadth_history)
                         charts['McClellan'] = create_mcclellan_chart(breadth_history)
                 except Exception as e:
@@ -631,6 +677,40 @@ st.title("Market Risk Dashboard")
 # ============================================================
 # OVERVIEW
 # ============================================================
+
+@st.cache_resource
+def get_cta_collector():
+    """Cached CTA collector to avoid multiple DB connections"""
+    from data_collectors.cta_collector import CTACollector
+    return CTACollector(db_path="data/cta_prices.db")
+
+
+def save_to_env(key: str, value: str):
+    """Save or update a key-value pair in .env file"""
+    env_path = Path('.env')
+    
+    if env_path.exists():
+        with open(env_path, 'r') as f:
+            lines_env = f.readlines()
+        
+        found = False
+        for i, line in enumerate(lines_env):
+            if line.startswith(f'{key}='):
+                lines_env[i] = f'{key}={value}\n'
+                found = True
+                break
+        
+        if not found:
+            lines_env.append(f'{key}={value}\n')
+        
+        with open(env_path, 'w') as f:
+            f.writelines(lines_env)
+    else:
+        with open(env_path, 'w') as f:
+            f.write(f'{key}={value}\n')
+
+
+
 if page == "Overview":
     snapshot = components["db"].get_latest_snapshot()
 
@@ -705,19 +785,48 @@ if page == "Overview":
 
     with col1:
         val = snapshot.get("credit_spread_hy")
-        st.metric("HYG Spread", f"{val:.2f}%" if val is not None else "N/A")
+        st.metric(
+            "HY Spread",
+            f"{val:.2f}%" if val is not None else "N/A",
+            help=get_tooltip('credit_spread_hy')
+        )
+        if val is not None:
+            credit_pct = get_credit_spread_percentile(val * 100)  # Convert to bps
+            if credit_pct and credit_pct.get('context'):
+                st.caption(credit_pct['context'])
 
     with col2:
         val = snapshot.get("treasury_10y")
-        st.metric("10Y Treasury", f"{val:.2f}%" if val is not None else "N/A")
+        st.metric(
+            "10Y Treasury",
+            f"{val:.2f}%" if val is not None else "N/A",
+            help="Benchmark risk-free rate. Rising = tighter financial conditions."
+        )
 
     with col3:
         val = snapshot.get("fear_greed_score")
-        st.metric("Fear & Greed", f"{val:.0f}" if val is not None else "N/A")
+        st.metric(
+            "Fear & Greed",
+            f"{val:.0f}" if val is not None else "N/A",
+            help=get_tooltip('fear_greed')
+        )
+        if val is not None:
+            fg_ctx = get_fear_greed_percentile(val)
+            if fg_ctx:
+                if fg_ctx.get('is_extreme'):
+                    st.caption(f"⚡ {fg_ctx['context']}")
+                else:
+                    st.caption(fg_ctx['context'])
 
     with col4:
         val = snapshot.get("left_signal")
-        st.metric("LEFT Signal", val if val else "N/A")
+        signal_colors = {"BUY": "🟢", "SELL": "🔴", "NEUTRAL": "⚪"}
+        signal_icon = signal_colors.get(val, "")
+        st.metric(
+            "LEFT Signal",
+            f"{signal_icon} {val}" if val else "N/A",
+            help=get_tooltip('left_signal')
+        )
 
     st.divider()
 
@@ -729,35 +838,73 @@ if page == "Overview":
     try:
         cboe_fresh = CBOECollector()
         fresh_cboe = cboe_fresh.get_all_data()
-        
+
         if fresh_cboe:
             logging.info(
                 f"Fresh CBOE data: VIX={fresh_cboe.get('vix_spot')}, "
                 f"VIX3M={fresh_cboe.get('vix3m')}, "
                 f"Contango={fresh_cboe.get('vix_contango')}"
             )
+
+            # Display prominent warning banner if any data is estimated
+            if fresh_cboe.get('has_estimated_data'):
+                estimated = fresh_cboe.get('estimated_fields', [])
+                estimated_names = [e['field'] for e in estimated]
+
+                # Show inline warning banner (always visible)
+                st.markdown(
+                    f"""<div style='padding: 8px 12px; background: #FFF3E0; border-left: 4px solid #FF9800;
+                    border-radius: 4px; margin-bottom: 10px;'>
+                    <strong>📊 Estimated Data:</strong> {', '.join(estimated_names)}
+                    <span style='color: #666; font-size: 0.85em;'> (not real-time)</span>
+                    </div>""",
+                    unsafe_allow_html=True
+                )
+
+                with st.expander("ℹ️ View estimation details", expanded=False):
+                    for est in estimated:
+                        st.markdown(f"- **{est['field']}**: {est['reason']}")
+                    st.caption("For institutional-grade data, consider professional data feeds (Bloomberg, Refinitiv)")
+
     except Exception as e:
         st.warning(f"Could not fetch fresh CBOE data: {e}")
         fresh_cboe = {}
 
     with col1:
         vix = fresh_cboe.get("vix_spot") or snapshot.get("vix_spot")
-        st.metric("VIX Spot", f"{vix:.2f}" if vix is not None else "N/A")
+        st.metric(
+            "VIX Spot",
+            f"{vix:.2f}" if vix is not None else "N/A",
+            help=get_tooltip('vix')
+        )
+        # Add percentile context
+        if vix is not None:
+            vix_pct = get_vix_percentile(vix, lookback_days=252)
+            if vix_pct:
+                badge = format_percentile_badge(vix_pct['percentile'], 252)
+                st.caption(f"📊 {badge}")
 
     with col2:
         contango = fresh_cboe.get("vix_contango")
+        is_estimated, est_reason = get_estimated_indicator('vix_contango', fresh_cboe.get('estimated_fields', []))
+
         if contango is not None:
-            st.metric("VIX Contango", f"{contango:+.2f}%")
+            # Use ~ prefix for estimated values
+            display_val = f"~{contango:+.2f}%" if is_estimated else f"{contango:+.2f}%"
+            st.metric(
+                "VIX Contango",
+                display_val,
+                help=get_tooltip('vix_contango')
+            )
             if contango > 0:
-                st.caption("Bullish (contango)")
+                st.caption("📈 Contango (bullish)")
             else:
-                st.caption("Risk-off (backwardation)")
+                st.caption("📉 Backwardation (fear)")
         else:
             contango = snapshot.get("vix_contango")
             if contango is not None:
-                st.metric("VIX Contango", f"{contango:+.2f}%")
-                st.caption("⚠️ Using cached data")
-                st.caption("Try 'Update Data' button")
+                st.metric("VIX Contango", f"{contango:+.2f}%", help=get_tooltip('vix_contango'))
+                st.caption("📦 Cached data")
             else:
                 st.metric("VIX Contango", "N/A")
 
@@ -817,68 +964,97 @@ if page == "Overview":
         else:
             st.metric("Market Breadth", "N/A")
 
-    st.subheader(" Advanced Volatility Metrics")
-    col1, col2, col3, col4 = st.columns(4)
-    
+    st.subheader("Advanced Volatility Metrics")
+    col1, col2, col3, col4, col5 = st.columns(5)
+
     with col1:
         vix9d = snapshot.get("vix9d")
         vix = snapshot.get("vix_spot")
         if vix9d is not None:
-            st.metric("VIX9D (9-day)", f"{vix9d:.2f}")
+            st.metric(
+                "VIX9D",
+                f"{vix9d:.2f}",
+                help="9-day implied vol. Spread vs VIX shows near-term event risk."
+            )
             if vix is not None:
                 spread = vix9d - vix
                 spread_pct = (spread / vix) * 100
                 if spread_pct < -10:
-                    st.caption(f"✅ {spread_pct:.1f}% - Calm near-term")
+                    st.caption(f"✅ {spread_pct:+.0f}% calm")
                 elif spread_pct > 10:
-                    st.caption(f"⚠️ {spread_pct:.1f}% - Event risk")
+                    st.caption(f"⚠️ {spread_pct:+.0f}% event risk")
                 else:
-                    st.caption(f"⚪ {spread_pct:.1f}% - Normal")
+                    st.caption(f"{spread_pct:+.0f}% normal")
         else:
-            st.metric("VIX9D (9-day)", "N/A")
-    
+            st.metric("VIX9D", "N/A")
+
     with col2:
+        vvix = fresh_cboe.get("vvix") if fresh_cboe else None
+        if vvix is not None:
+            if vvix >= 120:
+                st.metric("🎯 VVIX", f"{vvix:.1f}", delta="BUY", help=get_tooltip('vvix'))
+                st.caption("🟢 Historic buy zone")
+            elif vvix >= 110:
+                st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
+                st.caption("🟡 Elevated")
+            elif vvix >= 80:
+                st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
+                st.caption("Normal")
+            else:
+                st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
+                st.caption("🟠 Complacent")
+        else:
+            st.metric("VVIX", "N/A")
+
+    with col3:
         skew = snapshot.get("skew")
         if skew is not None:
-            st.metric("SKEW (Tail Risk)", f"{skew:.1f}")
+            st.metric("SKEW", f"{skew:.0f}", help=get_tooltip('skew'))
             if skew > 150:
-                st.caption("🔴 Extreme tail hedging")
+                st.caption("🔴 Extreme hedging")
             elif skew > 145:
-                st.caption("🟡 Elevated protection")
-            elif skew > 135:
-                st.caption("🟢 Normal range")
+                st.caption("🟡 Elevated")
+            elif skew > 130:
+                st.caption("Normal")
             else:
-                st.caption("⚪ Low hedging")
+                st.caption("Low protection")
         else:
             st.metric("SKEW", "N/A")
-    
-    with col3:
+
+    with col4:
         vrp = snapshot.get("vrp")
         if vrp is not None:
-            st.metric("VRP (Vol Premium)", f"{vrp:.2f}")
+            st.metric("VRP", f"{vrp:+.1f}", help=get_tooltip('vrp'))
             if vrp > 5:
-                st.caption("🟢 High premium")
+                st.caption("🟢 Options expensive")
             elif vrp > 0:
-                st.caption("⚪ Positive")
+                st.caption("Positive premium")
             else:
                 st.caption("🔴 Negative (risk)")
         else:
             st.metric("VRP", "N/A")
-    
-    with col4:
-        if vix is not None and fresh_cboe.get("vix3m"):
-            vix3m = fresh_cboe.get("vix3m")
+
+    with col5:
+        vix3m = fresh_cboe.get("vix3m")
+        is_vix3m_est, _ = get_estimated_indicator('vix3m', fresh_cboe.get('estimated_fields', []))
+
+        if vix is not None and vix3m:
             slope = vix3m - vix
             slope_per_day = slope / 63
-            st.metric("VIX Slope", f"{slope_per_day:+.3f}/day")
+            display_val = f"~{slope_per_day:+.3f}" if is_vix3m_est else f"{slope_per_day:+.3f}"
+            st.metric(
+                "Term Slope",
+                display_val,
+                help="VIX term structure slope. Positive = contango (normal)."
+            )
             if slope_per_day > 0.05:
                 st.caption("🟢 Steep contango")
             elif slope_per_day > 0:
-                st.caption("⚪ Normal upslope")
+                st.caption("Normal")
             else:
-                st.caption("🔴 Backwardation")
+                st.caption("🔴 Inverted")
         else:
-            st.metric("VIX Slope", "N/A")
+            st.metric("Term Slope", "N/A")
     
     st.divider()
     signal = snapshot.get("left_signal")
@@ -1008,6 +1184,113 @@ elif page == "Sentiment":
     except Exception as e:
         st.error(f"Error: {e}")
 
+    # ============================================================
+    # PUT/CALL RATIOS
+    # ============================================================
+    st.divider()
+    st.subheader("📊 Put/Call Ratios")
+    
+    try:
+        # Get CBOE data
+        cboe = components["cboe"]
+        cboe_data = cboe.get_all_data()
+        
+        # Check for manual override
+        use_manual = st.session_state.get('use_manual_equity_pc', False)
+        
+        if use_manual:
+            equity_pc = st.session_state.get('manual_equity_pc', 1.0)
+            st.info(f"📝 Using manual equity P/C ratio: {equity_pc:.3f}")
+        else:
+            # Get nested put_call_ratios dict
+            pc_ratios = cboe_data.get("put_call_ratios", {})
+            equity_pc = pc_ratios.get("equity_pc")
+            total_pc = pc_ratios.get("total_pc")
+        
+        if equity_pc is not None or total_pc is not None:
+            col1, col2 = st.columns(2)
+            
+            # Equity P/C Ratio
+            with col1:
+                if equity_pc is not None:
+                    # Determine sentiment
+                    if equity_pc > 1.2:
+                        color, label = "#f44336", "VERY BEARISH"
+                    elif equity_pc > 1.0:
+                        color, label = "#ff9800", "BEARISH"
+                    elif equity_pc > 0.8:
+                        color, label = "#9e9e9e", "NEUTRAL"
+                    elif equity_pc > 0.6:
+                        color, label = "#8bc34a", "BULLISH"
+                    else:
+                        color, label = "#4caf50", "VERY BULLISH"
+                    
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem; border: 2px solid {color};'>"
+                        f"<h3 style='margin:0;'>Equity P/C Ratio</h3>"
+                        f"<h1 style='margin:0.5rem 0; color: {color};'>{equity_pc:.3f}</h1>"
+                        f"<p style='margin:0; font-size: 1.1rem; font-weight: bold;'>{label}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                    
+                    st.caption("**Interpretation:** >1.0 = More puts than calls (bearish), <1.0 = More calls than puts (bullish)")
+                else:
+                    st.warning("Equity P/C ratio unavailable")
+            
+            # Total P/C Ratio
+            with col2:
+                if total_pc is not None:
+                    # Determine sentiment
+                    if total_pc > 1.1:
+                        color, label = "#4caf50", "EXTREME FEAR (Contrarian Buy)"
+                    elif total_pc > 0.90:
+                        color, label = "#8bc34a", "NORMAL/HEALTHY"
+                    elif total_pc > 0.80:
+                        color, label = "#9e9e9e", "NEUTRAL"
+                    elif total_pc > 0.70:
+                        color, label = "#ff9800", "LOW (Complacent)"
+                    else:
+                        color, label = "#f44336", "EXTREME LOW (Danger)"
+                    
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem; border: 2px solid {color};'>"
+                        f"<h3 style='margin:0;'>Total P/C Ratio</h3>"
+                        f"<h1 style='margin:0.5rem 0; color: {color};'>{total_pc:.3f}</h1>"
+                        f"<p style='margin:0; font-size: 1.1rem; font-weight: bold;'>{label}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                    
+                    st.caption("**Interpretation:** Includes index + equity options (broader sentiment)")
+                else:
+                    st.warning("Total P/C ratio unavailable")
+            
+            # Explanation
+            st.markdown("""
+            ---
+            **📖 What are Put/Call Ratios?**
+            
+            Put/Call ratios measure options trading activity:
+            - **Equity P/C**: Individual stock options only (pure directional bets)
+            - **Total P/C**: All options including indices (broader sentiment)
+            
+            **How to interpret:**
+            - **> 1.0**: More put buying than calls → **Bearish/protective sentiment**
+            - **< 1.0**: More call buying than puts → **Bullish sentiment**
+            - **Extreme readings** (>1.5 or <0.5) often mark sentiment extremes and potential reversals
+            
+            **Note:** Can be manually overridden in Settings page if data is unavailable.
+            """)
+        else:
+            st.warning("⚠️ Put/Call ratio data unavailable. You can set manual values in Settings.")
+            
+    except Exception as e:
+        st.error(f"Error loading P/C ratios: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
 # ============================================================
 # CREDIT & LIQUIDITY  (Phase 1 + Phase 2 combined)
 # ============================================================
@@ -1026,7 +1309,7 @@ elif page == "Credit & Liquidity":
     st.divider()
     
     try:
-        # ---------- Liquidity data (Phase 1 style) ----------
+        # ---------- Liquidity data ----------
         liq_collector = components.get("liquidity")
         if liq_collector:
             if hasattr(liq_collector, "get_liquidity_history"):
@@ -1037,42 +1320,42 @@ elif page == "Credit & Liquidity":
                 liquidity_df = pd.DataFrame()
         else:
             liquidity_df = pd.DataFrame()
-        
-        # Old net liquidity signal (Phase 1 LiquidityAnalyzer / LiquiditySignalGenerator)
-        liq_signal = None
-        if not liquidity_df.empty and "liq_signals" in components:
-            try:
-                liq_signal = components["liq_signals"].generate_signal(liquidity_df)
-            except Exception as e:
-                logger.error(f"Error generating liquidity signal: {e}")
-        
+
         # ---------- Credit spreads snapshot ----------
         snapshot = components["db"].get_latest_snapshot()
-        
-        # ---------- Fed Balance Sheet / QT (Phase 2) ----------
+
+        # ---------- Fed Balance Sheet / Net Liquidity ----------
+        # Using CORRECT formula: Net Liquidity = Fed BS - TGA - RRP
         fed_bs_snapshot = components["fed_bs"].get_full_snapshot()
+        net_liq_signal = None
+
         if fed_bs_snapshot and "balance_sheet_df" in fed_bs_snapshot:
-            # Prepare series for QT analyzer
-            if not liquidity_df.empty and fed_bs_snapshot and 'balance_sheet_df' in fed_bs_snapshot:
-                tga_series = liquidity_df.set_index('date')['tga'] if 'tga' in liquidity_df.columns else None
-                rrp_series = liquidity_df.set_index('date')['rrp_on'] if 'rrp_on' in liquidity_df.columns else None
-                
-                qt_signal = components["qt_analyzer"].analyze(
+            # Prepare TGA and RRP series for the liquidity analyzer
+            tga_series = None
+            rrp_series = None
+
+            if not liquidity_df.empty:
+                if 'tga' in liquidity_df.columns and 'date' in liquidity_df.columns:
+                    tga_series = liquidity_df.set_index('date')['tga']
+                if 'rrp_on' in liquidity_df.columns and 'date' in liquidity_df.columns:
+                    rrp_series = liquidity_df.set_index('date')['rrp_on']
+
+            # Use the corrected LiquidityAnalyzer (Fed BS - TGA - RRP)
+            try:
+                net_liq_signal = components["liquidity_analyzer"].analyze(
                     fed_bs_snapshot["balance_sheet_df"],
                     tga_series,
                     rrp_series
                 )
-            else:
-                qt_signal = None
-        else:
-            qt_signal = None
-        
+            except Exception as e:
+                logger.error(f"Error generating net liquidity signal: {e}")
+
         # =======================
         # TOP METRICS
         # =======================
         st.subheader(" Key Indicators")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
+        col1, col2, col3, col4 = st.columns(4)
+
         # Credit regime (HYG / LQD)
         with col1:
             if snapshot and snapshot.get('credit_spread_hy') is not None:
@@ -1082,7 +1365,7 @@ elif page == "Credit & Liquidity":
                     if snapshot.get('credit_spread_ig') is not None
                     else None
                 )
-                
+
                 if hy_spread_bps < 300:
                     regime = "🟢 Tight"
                     color = "#4CAF50"
@@ -1092,7 +1375,7 @@ elif page == "Credit & Liquidity":
                 else:
                     regime = "🔴 Wide"
                     color = "#F44336"
-                
+
                 st.markdown(
                     f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
                     f"<h4 style='margin:0;'>Credit Regime</h4>"
@@ -1104,82 +1387,75 @@ elif page == "Credit & Liquidity":
                 )
             else:
                 st.warning("Credit data unavailable")
-        
-        # Old net liquidity (-(RRP + TGA))
+
+        # Net Liquidity (CORRECT formula: Fed BS - TGA - RRP)
         with col2:
-            if liq_signal:
-                net_liq = liq_signal.net_liquidity_billions
-                regime = liq_signal.regime
-                color = get_status_color(regime)
-                
+            if net_liq_signal and net_liq_signal.signal != "UNAVAILABLE":
+                net_liq = net_liq_signal.net_liquidity_billions
+                regime = net_liq_signal.signal
+                color = net_liq_signal.regime_color
+                fed_bs = net_liq_signal.fed_bs_billions
+                tga = net_liq_signal.tga_billions
+                rrp = net_liq_signal.rrp_billions
+
+                # Add emoji based on regime
+                if regime == "SUPPORTIVE":
+                    regime_display = "🟢 " + regime
+                elif regime == "DRAINING":
+                    regime_display = "🔴 " + regime
+                else:
+                    regime_display = "🟡 " + regime
+
                 st.markdown(
                     f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>Old Net Liquidity</h4>"
-                    f"<h2 style='margin:0; color: {color};'>{regime}</h2>"
-                    f"<p style='margin:0;'>{format_large_number(net_liq)}</p>"
-                    f"<p style='margin:0; font-size: 0.8rem;'>-(RRP + TGA)</p>"
+                    f"<h4 style='margin:0;'>Net Liquidity</h4>"
+                    f"<h2 style='margin:0; color: {color};'>{regime_display}</h2>"
+                    f"<p style='margin:0; font-size: 1.2rem; font-weight: bold;'>{format_large_number(net_liq) if net_liq else 'N/A'}</p>"
+                    f"<p style='margin:0; font-size: 0.75rem; color: #666;'>Fed BS - TGA - RRP</p>"
+                    f"<p style='margin:0; font-size: 0.7rem; color: #888;'>Z-score: {net_liq_signal.z_score:+.2f}</p>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
             else:
-                st.warning("Liquidity data unavailable")
-        
-        # Proper net liquidity (Fed BS - TGA - RRP)
+                st.warning("Net liquidity data unavailable")
+
+        # QT Pace & Fed Balance Sheet (combined in one column)
         with col3:
-            if qt_signal:
-                net_liq = getattr(qt_signal, 'net_liquidity', getattr(qt_signal, 'net_liquidity_billions', 0))
-                regime = getattr(qt_signal, 'liquidity_regime', getattr(qt_signal, 'regime', 'UNKNOWN'))
-                color = get_status_color(regime)
-                
-                st.markdown(
-                    f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>✨ Proper Net Liquidity</h4>"
-                    f"<h2 style='margin:0; color: {color};'>{regime}</h2>"
-                    f"<p style='margin:0;'>{format_large_number(net_liq)}</p>"
-                    f"<p style='margin:0; font-size: 0.8rem;'>Fed BS - TGA - RRP</p>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.warning("Fed BS data unavailable")
-        
-        # QT pace
-        with col4:
             if fed_bs_snapshot and fed_bs_snapshot.get('qt_pace_billions_month'):
                 qt_pace = fed_bs_snapshot['qt_pace_billions_month']
                 qt_cumulative = fed_bs_snapshot.get('qt_cumulative', 0)
-                
+
                 if qt_pace < -100:
                     color = "#F44336"
                 elif qt_pace < 0:
                     color = "#FF9800"
                 else:
                     color = "#4CAF50"
-                
+
                 st.markdown(
                     f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
                     f"<h4 style='margin:0;'>QT Pace</h4>"
                     f"<h2 style='margin:0; color: {color};'>{format_large_number(qt_pace, prefix='', suffix='B/mo')}</h2>"
-                    f"<p style='margin:0;'>Total: {format_large_number(qt_cumulative)}</p>"
+                    f"<p style='margin:0;'>Cumulative QT: {format_large_number(qt_cumulative)}</p>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
             else:
                 st.warning("QT data unavailable")
-        
+
         # Fed balance sheet size
-        with col5:
+        with col4:
             if fed_bs_snapshot and fed_bs_snapshot.get('total_assets'):
                 fed_bs_billions = fed_bs_snapshot['total_assets']
                 fed_bs_trillions = fed_bs_billions / 1000.0
-                
+
                 st.markdown(
                     "<div style='text-align: center; padding: 1rem; background: #1f77b420; border-radius: 0.5rem;'>"
                     "<h4 style='margin:0;'>Fed Balance Sheet</h4>"
                     f"<h2 style='margin:0; color: #1f77b4;'>${fed_bs_trillions:.2f}T</h2>",
                     unsafe_allow_html=True,
                 )
-                
+
                 peak_bs = 8900  # billions, approx April 2022
                 change_pct = ((fed_bs_billions - peak_bs) / peak_bs) * 100
                 st.markdown(
@@ -1237,78 +1513,77 @@ elif page == "Credit & Liquidity":
             st.warning("No credit spread history available.")
         
         # =======================
-        # LIQUIDITY ANALYSIS (Phase 1)
+        # LIQUIDITY ANALYSIS
         # =======================
-        if liq_signal and not liquidity_df.empty:
+        if net_liq_signal and net_liq_signal.signal != "UNAVAILABLE" and not liquidity_df.empty:
             st.divider()
             st.subheader("📊 Macro Liquidity Analysis")
-    
-            # Get Fed Balance Sheet if available
-            fed_bs = None
-            if 'fed_bs' in components:
-                try:
-                    fed_bs_latest = components['fed_bs'].get_latest_data()
-                    if fed_bs_latest and 'total_assets' in fed_bs_latest:
-                        fed_bs = float(fed_bs_latest['total_assets'])
-                except Exception as e:
-                    logger.warning(f"Could not get Fed Balance Sheet: {e}")
-    
-            # Calculate net liquidity
+
+            # Using the correct formula: Fed BS - TGA - RRP
+            fed_bs = net_liq_signal.fed_bs_billions
+            formula_label = "Net Liquidity = Fed Balance Sheet - TGA - RRP"
+            formula_subtitle = "Institutional liquidity calculation"
+            st.success("✅ Using correct institutional liquidity formula")
+
+            # Calculate net liquidity time series for charting
             liquidity_df_calc = liquidity_df.copy()
-    
-            if fed_bs is not None:
-                # ✅ CORRECT FORMULA
+            if fed_bs is not None and fed_bs > 0:
                 liquidity_df_calc["net_liquidity"] = (
-                    fed_bs - 
+                    (fed_bs * 1000) -  # Convert back to millions for calculation
                     liquidity_df_calc["tga"].fillna(0) -
                     liquidity_df_calc["rrp_on"].fillna(0)
-                )
-                formula_label = "Net Liquidity = Fed Balance Sheet - TGA - RRP"
-                formula_subtitle = "Proper liquidity calculation"
-                st.success("✅ Using correct liquidity formula with Fed Balance Sheet")
+                ) / 1000  # Convert to billions for display
             else:
-                # Fallback (but clearly labeled as incomplete)
-                liquidity_df_calc["net_liquidity"] = -(
-                    liquidity_df_calc["rrp_on"].fillna(0) +
-                    liquidity_df_calc["tga"].fillna(0)
-                )
-                formula_label = "Net Liquidity = -(RRP + TGA) [Simplified]"
-                formula_subtitle = "Missing Fed Balance Sheet component"
-                st.warning("⚠️ Fed Balance Sheet data unavailable. Using simplified formula.")
-    
+                # If fed_bs not available, try to get from fed_bs_snapshot
+                if fed_bs_snapshot and 'balance_sheet_df' in fed_bs_snapshot:
+                    bs_df = fed_bs_snapshot['balance_sheet_df']
+                    if not bs_df.empty and 'total_assets' in bs_df.columns:
+                        # Merge Fed BS data with liquidity data
+                        bs_df_copy = bs_df[['date', 'total_assets']].copy()
+                        bs_df_copy = bs_df_copy.set_index('date')
+                        liquidity_df_calc = liquidity_df_calc.set_index('date')
+                        liquidity_df_calc = liquidity_df_calc.join(bs_df_copy, how='left')
+                        liquidity_df_calc['total_assets'] = liquidity_df_calc['total_assets'].ffill()
+                        liquidity_df_calc["net_liquidity"] = (
+                            liquidity_df_calc["total_assets"].fillna(0) / 1000 -
+                            liquidity_df_calc["tga"].fillna(0) / 1000 -
+                            liquidity_df_calc["rrp_on"].fillna(0) / 1000
+                        )
+                        liquidity_df_calc = liquidity_df_calc.reset_index()
+
             # Net Liquidity chart
             st.markdown("**Net Liquidity Trend**")
             st.caption(formula_subtitle)
-    
+
             fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=liquidity_df_calc["date"],
-                    y=liquidity_df_calc["net_liquidity"],
-                    name="Net Liquidity",
-                    line=dict(color='#00D9FF', width=2.5),
-                    fill='tozeroy',
-                    fillcolor='rgba(0, 217, 255, 0.1)',
-                    hovertemplate='Net Liq: $%{y:,.0f}B<extra></extra>'
+            if "net_liquidity" in liquidity_df_calc.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=liquidity_df_calc["date"],
+                        y=liquidity_df_calc["net_liquidity"],
+                        name="Net Liquidity",
+                        line=dict(color='#00D9FF', width=2.5),
+                        fill='tozeroy',
+                        fillcolor='rgba(0, 217, 255, 0.1)',
+                        hovertemplate='Net Liq: $%{y:,.0f}B<extra></extra>'
+                    )
                 )
-            )
-    
-            # Add zero line
-            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
-    
-            # Add context lines if using correct formula
-            if fed_bs is not None:
-                # Show what's "normal" range
+
+                # Add zero line
+                fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+
+                # Show average line
                 mean_liq = liquidity_df_calc["net_liquidity"].mean()
-                fig.add_hline(
-                    y=mean_liq, 
-                    line_dash="dot", 
-                    line_color="yellow", 
-                    opacity=0.3,
-                    annotation_text=f"Average: ${mean_liq:,.0f}B",
-                    annotation_position="right"
-                )
-    
+                if not pd.isna(mean_liq):
+                    fig.add_hline(
+                        y=mean_liq,
+                        line_dash="dot",
+                        line_color="yellow",
+                        opacity=0.3,
+                        annotation_text=f"Average: ${mean_liq:,.0f}B",
+                        annotation_position="right"
+                    )
+
             fig.update_layout(
                 title=formula_label,
                 xaxis_title="Date",
@@ -1316,32 +1591,33 @@ elif page == "Credit & Liquidity":
                 height=450,
                 hovermode='x unified'
             )
-            st.plotly_chart(fig, width='stretch')
-    
+            st.plotly_chart(fig, use_container_width=True)
+
             # Explanation
             with st.expander("ℹ️ Understanding Net Liquidity"):
-                st.markdown("""
+                current_description = net_liq_signal.description if net_liq_signal else "N/A"
+                st.markdown(f"""
                 **Net Liquidity** measures the actual cash available to financial markets:
-        
+
                 **Formula:** `Fed Balance Sheet - TGA - RRP`
-        
+
                 - **Fed Balance Sheet ↑** = Fed injecting liquidity (QE) → **Bullish** 🟢
                 - **TGA ↑** = Treasury hoarding cash at Fed → **Draining** 🔴
                 - **RRP ↑** = Banks parking cash at Fed → **Draining** 🔴
-        
+
                 **When net liquidity is:**
                 - **Increasing** = More cash flowing to markets → Supportive for risk assets
                 - **Decreasing** = Cash being drained → Headwind for risk assets
-        
-                **Current Status:** {liq_signal.description}
+
+                **Current Status:** {current_description}
                 """)
-    
+
             # RRP + TGA stacked chart (keep this - it's useful)
             st.markdown("**Liquidity Components: RRP & TGA**")
             st.caption("Fed Reverse Repo + Treasury General Account (Drains)")
-    
+
             fig = go.Figure()
-    
+
             if "rrp_on" in liquidity_df.columns:
                 fig.add_trace(
                     go.Scatter(
@@ -1355,7 +1631,7 @@ elif page == "Credit & Liquidity":
                         hovertemplate='RRP: $%{y:,.0f}B<extra></extra>'
                     )
                 )
-    
+
             if "tga" in liquidity_df.columns:
                 fig.add_trace(
                     go.Scatter(
@@ -1369,7 +1645,7 @@ elif page == "Credit & Liquidity":
                         hovertemplate='TGA: $%{y:,.0f}B<extra></extra>'
                     )
                 )
-    
+
             fig.update_layout(
                 title="RRP + TGA Stacked (Liquidity Drains)",
                 xaxis_title="Date",
@@ -1378,114 +1654,30 @@ elif page == "Credit & Liquidity":
                 hovermode='x unified',
                 showlegend=True
             )
-            st.plotly_chart(fig, width='stretch')
-    
+            st.plotly_chart(fig, use_container_width=True)
+
             # Summary metrics
             col1, col2, col3 = st.columns(3)
-    
+
             with col1:
-                current_liq = liquidity_df_calc["net_liquidity"].iloc[-1]
+                current_liq = net_liq_signal.net_liquidity_billions
+                z_score = net_liq_signal.z_score
                 st.metric(
                     "Current Net Liquidity",
-                    f"${current_liq:,.0f}B",
-                    delta=f"{liq_signal.z_score:.2f}σ"
+                    f"${current_liq:,.0f}B" if current_liq else "N/A",
+                    delta=f"{z_score:.2f}σ" if z_score is not None else "No data"
                 )
-    
-            with col2:
-                current_rrp = liquidity_df["rrp_on"].iloc[-1]
-                st.metric("Current RRP", f"${current_rrp:,.0f}B")
-    
-            with col3:
-                current_tga = liquidity_df["tga"].iloc[-1]
-                st.metric("Current TGA", f"${current_tga:,.0f}B")
-        
-        # =======================
-        # NET LIQ COMPARISON 
-        # =======================
-        if qt_signal and liq_signal and not liquidity_df.empty and fed_bs_snapshot and 'balance_sheet_df' in fed_bs_snapshot:
-            st.divider()
-            st.subheader("Proper Net Liquidity vs Old Formula")
-            
-            fed_bs_df = fed_bs_snapshot['balance_sheet_df']
-            if not fed_bs_df.empty:
-                comparison_df = liquidity_df[['date', 'rrp_on', 'tga']].copy()
-                comparison_df = comparison_df.merge(
-                    fed_bs_df[['date', 'total_assets']],
-                    on='date',
-                    how='inner'
-                )
-                comparison_df['old_net_liq'] = -(comparison_df['rrp_on'] + comparison_df['tga'])
-                comparison_df['new_net_liq'] = (
-                    comparison_df['total_assets'] -
-                    comparison_df['tga'] -
-                    comparison_df['rrp_on']
-                )
-                
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=comparison_df['date'],
-                    y=comparison_df['old_net_liq'],
-                    name='Old Formula: -(RRP + TGA)',
-                    line=dict(color='#FF9800', width=2, dash='dash')
-                ))
-                fig.add_trace(go.Scatter(
-                    x=comparison_df['date'],
-                    y=comparison_df['new_net_liq'],
-                    name='New Formula: Fed BS - TGA - RRP',
-                    line=dict(color='#4CAF50', width=3)
-                ))
-                fig.update_layout(
-                    title="Net Liquidity Comparison (Billions USD)",
-                    xaxis_title="Date",
-                    yaxis_title="Net Liquidity ($B)",
-                    hovermode='x unified',
-                    height=500,
-                    legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
-                )
-                st.plotly_chart(fig, width='stretch')
-                
-                st.info("""
-                **Why the new formula matters:**
-                - **Old formula** `-(RRP + TGA)` only shows where money is parked
-                - **New formula** `Fed BS - TGA - RRP` shows TRUE liquidity available to markets
-                - This is the formula used by many macro desks
-                - Higher net liquidity = more supportive for risk assets
-                """)
-        
-        st.divider()
-        with st.expander(" How to interpret Credit + Liquidity signals"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("""
-                **Credit Spreads:**
-                - **< 300 bps:** Supportive - Low credit risk
-                - **300-450 bps:** Neutral - Normal conditions
-                - **> 450 bps:** Risk-Off - High credit stress
-                
-                **Widening spreads** → Investors demanding more premium → Risk aversion
-                """)
-            with col2:
-                st.markdown("""
-                **Liquidity (RRP, TGA, Fed BS):**
-                - **Supportive:** Net liquidity rising
-                - **Neutral:** Stable liquidity
-                - **Draining:** Net liquidity falling
-                
-                **Higher RRP/TGA** = cash parked at Fed = less liquidity in markets
-                """)
-            st.markdown("""
-            ---
-            **Combined Signals:**
-            - 🟢 **Supportive Credit + Supportive Liquidity** = Risk-on confirmed  
-            - 🔴 **Widening Spreads + Draining Liquidity** = Risk-off warning  
-            - ⚠️ **Divergence** = Watch closely - regime may be shifting
-            """)
-        
-    except Exception as e:
-        st.error(f"Error loading Credit & Liquidity page: {e}")
-        import traceback
-        st.code(traceback.format_exc())
 
+            with col2:
+                rrp_value = net_liq_signal.rrp_billions
+                st.metric("Current RRP", f"${rrp_value:,.0f}B" if rrp_value else "N/A")
+
+            with col3:
+                tga_value = net_liq_signal.tga_billions
+                st.metric("Current TGA", f"${tga_value:,.0f}B" if tga_value else "N/A")
+    except Exception as e:
+        logger.error(f"Error loading liquidity data: {e}")
+        st.warning(f"⚠️ Liquidity data unavailable: {e}")
 # ============================================================
 # VOLATILITY & VRP
 # ============================================================
@@ -1582,7 +1774,104 @@ elif page == "Volatility & VRP":
                 st.warning("SKEW historical data unavailable")
         
         st.divider()
-        
+
+        # ============================================
+        # VVIX (VIX OF VIX) - BUY SIGNAL
+        # ============================================
+        st.subheader("🎯 VVIX (VIX of VIX) - Institutional Buy Signal")
+
+        st.info("""
+        **What is VVIX?**
+        VVIX measures the expected volatility OF the VIX itself - the "fear of fear" index.
+
+        **Key Levels:**
+        - **< 80:** Low vol-of-vol (complacency, potential for vol expansion)
+        - **80-100:** Normal range
+        - **100-120:** Elevated uncertainty
+        - **≥ 120:** 🟢 **STRONG BUY SIGNAL** - Historic turning point!
+
+        **Why 120+ matters:**
+        When VVIX spikes above 120, dealers are scrambling for gamma protection.
+        This almost always marks capitulation. The subsequent mean reversion creates
+        powerful **vanna and charm tailwinds** as implied vol collapses → S&P500 rallies.
+
+        *Used by institutional traders to identify major market bottoms.*
+        """)
+
+        with st.spinner("Loading VVIX data..."):
+            from dashboard.pdf_chart_builder import create_vvix_history_chart
+
+            # Get VVIX history
+            vvix_df = cboe.get_vvix_history(days=90)
+            vvix_signal = cboe.get_vvix_signal()
+
+            # Display current signal prominently
+            if vvix_signal and vvix_signal.get('signal') != 'UNAVAILABLE':
+                signal = vvix_signal['signal']
+                level = vvix_signal['level']
+                color = vvix_signal['color']
+                description = vvix_signal['description']
+                strength = vvix_signal['strength']
+
+                # Large signal box
+                if signal == 'STRONG BUY':
+                    st.success(f"""
+                    ### 🟢 {signal} - VVIX at {level:.1f}
+                    **Strength: {strength:.0f}/100**
+
+                    {description}
+                    """)
+                elif signal == 'BUY ALERT':
+                    st.warning(f"""
+                    ### 🟡 {signal} - VVIX at {level:.1f}
+                    **Strength: {strength:.0f}/100**
+
+                    {description}
+                    """)
+                elif signal == 'CAUTION':
+                    st.warning(f"""
+                    ### 🟠 {signal} - VVIX at {level:.1f}
+
+                    {description}
+                    """)
+                else:
+                    st.info(f"""
+                    ### ⚪ {signal} - VVIX at {level:.1f}
+
+                    {description}
+                    """)
+
+            # Chart
+            if not vvix_df.empty:
+                vvix_chart = create_vvix_history_chart(vvix_df)
+                if vvix_chart:
+                    st.plotly_chart(vvix_chart, use_container_width=True)
+
+                    # Historical context
+                    latest_vvix = vvix_df.iloc[-1]['vvix']
+                    max_vvix = vvix_df['vvix'].max()
+                    min_vvix = vvix_df['vvix'].min()
+                    avg_vvix = vvix_df['vvix'].mean()
+
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Current VVIX", f"{latest_vvix:.1f}")
+                    with col2:
+                        st.metric("90d High", f"{max_vvix:.1f}")
+                    with col3:
+                        st.metric("90d Low", f"{min_vvix:.1f}")
+                    with col4:
+                        st.metric("90d Average", f"{avg_vvix:.1f}")
+
+                    # Days above 120 in period
+                    days_above_120 = (vvix_df['vvix'] >= 120).sum()
+                    if days_above_120 > 0:
+                        st.caption(f"📊 VVIX was ≥120 on **{days_above_120}** of the last 90 days")
+            else:
+                st.warning("VVIX historical data unavailable")
+
+        st.divider()
+
         # ============================================
         # VIX9D vs VIX SPREAD CHART
         # ============================================
@@ -2067,33 +2356,81 @@ elif page == "Sectors & VIX":
 # MARKET BREADTH
 # ============================================================
 elif page == "Market Breadth":
-    st.header(" S&P 500 Market Breadth Analysis")
-    
+    st.header("📊 S&P 500 Market Breadth Analysis")
+
     st.markdown("""
-    Market breadth measures the number of advancing vs declining stocks. 
-    Strong breadth = healthy market participation. Weak breadth = narrow leadership (risk of reversal).
+    Market breadth measures the number of advancing vs declining stocks.
+    **Strong breadth** = healthy market participation. **Weak breadth** = narrow leadership (risk of reversal).
     """)
-    
+
+    # Get current breadth mode from settings
+    current_breadth_mode = get_breadth_mode()
+    scale_factor = get_mcclellan_scale_factor()
+    stock_count = "500" if current_breadth_mode == 'full' else "100"
+    time_estimate = "3-5 minutes" if current_breadth_mode == 'full' else "30-60 seconds"
+
+    # Add refresh button at the top
+    col_refresh, col_info = st.columns([1, 3])
+    with col_refresh:
+        refresh_breadth = st.button("🔄 Refresh Breadth Data", help=f"Recalculate from {stock_count} S&P 500 stocks (takes {time_estimate})")
+    with col_info:
+        mode_icon = "🎯" if current_breadth_mode == 'full' else "⚡"
+        st.caption(f"{mode_icon} Mode: {current_breadth_mode.upper()} ({stock_count} stocks) - Change in Settings")
+
     try:
-        # Get breadth data
-        breadth_history = components["db"].get_breadth_history(days=90)
-        
-        if breadth_history.empty:
-            st.info("📊 Calculating fresh breadth data (30-60 seconds)...")
+        # Force refresh if button clicked
+        if refresh_breadth:
+            st.info(f"📊 Recalculating breadth data from {stock_count} stocks ({time_estimate})...")
             from data_collectors.sp500_adline_calculator import SP500ADLineCalculator
-            
-            calc = SP500ADLineCalculator()
+
+            calc = SP500ADLineCalculator(mode=current_breadth_mode)
             breadth_history = calc.get_breadth_history(days=90)
-            
+
             if not breadth_history.empty:
-                # Calculate McClellan
-                breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean()
-                breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean()
+                # Calculate McClellan (scale factor depends on mode)
+                breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean() * scale_factor
+                breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean() * scale_factor
                 breadth_history['mcclellan'] = breadth_history['ema19'] - breadth_history['ema39']
-                
+
                 # Save to DB
                 components["db"].save_breadth_data(breadth_history)
-        
+                st.success(f"✅ Breadth data refreshed successfully! ({stock_count} stocks)")
+                st.rerun()
+        else:
+            # Get breadth data from DB
+            breadth_history = components["db"].get_breadth_history(days=90)
+
+        if breadth_history.empty:
+            st.info(f"📊 Calculating fresh breadth data ({time_estimate})...")
+            from data_collectors.sp500_adline_calculator import SP500ADLineCalculator
+
+            calc = SP500ADLineCalculator(mode=current_breadth_mode)
+            breadth_history = calc.get_breadth_history(days=90)
+
+            if not breadth_history.empty:
+                # Calculate McClellan (scale factor depends on mode)
+                breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean() * scale_factor
+                breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean() * scale_factor
+                breadth_history['mcclellan'] = breadth_history['ema19'] - breadth_history['ema39']
+
+                # Save to DB
+                components["db"].save_breadth_data(breadth_history)
+
+        if not breadth_history.empty:
+            # ALWAYS recalculate McClellan from ad_diff to ensure accuracy
+            # (DB values may be stale, NULL, or 0.0)
+            # Scale factor: 5.0 for fast mode (100 stocks), 1.0 for full mode (500 stocks)
+            if 'ad_diff' in breadth_history.columns:
+                breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean() * scale_factor
+                breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean() * scale_factor
+                breadth_history['mcclellan'] = breadth_history['ema19'] - breadth_history['ema39']
+            elif 'advancing' in breadth_history.columns and 'declining' in breadth_history.columns:
+                # Calculate ad_diff if missing
+                breadth_history['ad_diff'] = breadth_history['advancing'] - breadth_history['declining']
+                breadth_history['ema19'] = breadth_history['ad_diff'].ewm(span=19, adjust=False).mean() * scale_factor
+                breadth_history['ema39'] = breadth_history['ad_diff'].ewm(span=39, adjust=False).mean() * scale_factor
+                breadth_history['mcclellan'] = breadth_history['ema19'] - breadth_history['ema39']
+
         if not breadth_history.empty:
             # Get SPY price for divergence detection
             import yfinance as yf
@@ -2112,13 +2449,33 @@ elif page == "Market Breadth":
             z_score = signals['z_score']
             
             # ========== TOP METRICS ROW ==========
-            st.subheader(" Current Breadth Snapshot")
-            
-            col1, col2, col3, col4, col5 = st.columns(5)
-            
+            st.subheader("📈 Current Breadth Snapshot")
+
+            # Get current McClellan value
+            current_mcclellan = breadth_history['mcclellan'].iloc[-1] if 'mcclellan' in breadth_history.columns else 0
+
+            # Determine McClellan status
+            if current_mcclellan > 50:
+                mc_color = "#4CAF50"
+                mc_status = "Strong Bull"
+            elif current_mcclellan > 20:
+                mc_color = "#8BC34A"
+                mc_status = "Bullish"
+            elif current_mcclellan > -20:
+                mc_color = "#FF9800"
+                mc_status = "Neutral"
+            elif current_mcclellan > -50:
+                mc_color = "#FF6B6B"
+                mc_status = "Bearish"
+            else:
+                mc_color = "#F44336"
+                mc_status = "Strong Bear"
+
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
+
             with col1:
                 breadth_pct = latest['breadth_pct']
-                
+
                 if breadth_pct > 70:
                     color = "#4CAF50"
                     status = "Strong"
@@ -2131,59 +2488,71 @@ elif page == "Market Breadth":
                 else:
                     color = "#F44336"
                     status = "Weak"
-                
+
                 st.markdown(
-                    f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>Market Breadth</h4>"
-                    f"<h1 style='margin:0.5rem 0; color: {color};'>{breadth_pct:.1f}%</h1>"
-                    f"<h3 style='margin:0; color: {color};'>{status}</h3>"
+                    f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
+                    f"<h5 style='margin:0;'>Market Breadth</h5>"
+                    f"<h2 style='margin:0.3rem 0; color: {color};'>{breadth_pct:.1f}%</h2>"
+                    f"<p style='margin:0; color: {color}; font-weight: bold;'>{status}</p>"
                     f"</div>",
                     unsafe_allow_html=True
                 )
-            
+
             with col2:
-                adv = latest['advancing']
-                total = adv + latest['declining']
-                
+                # McClellan Oscillator - THE KEY METRIC
                 st.markdown(
-                    "<div style='text-align: center; padding: 1.5rem; background: #4CAF5020; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>Advancing</h4>"
-                    f"<h1 style='margin:0.5rem 0; color: #4CAF50;'>{adv}</h1>"
-                    f"<p style='margin:0;'>out of {total} stocks</p>"
+                    f"<div style='text-align: center; padding: 1rem; background: {mc_color}20; border-radius: 0.5rem;'>"
+                    f"<h5 style='margin:0;'>McClellan Osc</h5>"
+                    f"<h2 style='margin:0.3rem 0; color: {mc_color};'>{current_mcclellan:+.1f}</h2>"
+                    f"<p style='margin:0; color: {mc_color}; font-weight: bold;'>{mc_status}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            with col3:
+                adv = latest['advancing']
+                dec = latest['declining']
+                total = adv + dec
+
+                st.markdown(
+                    "<div style='text-align: center; padding: 1rem; background: #4CAF5020; border-radius: 0.5rem;'>"
+                    f"<h5 style='margin:0;'>Advancing</h5>"
+                    f"<h2 style='margin:0.3rem 0; color: #4CAF50;'>{adv}</h2>"
+                    f"<p style='margin:0;'>of {total} stocks</p>"
                     "</div>",
                     unsafe_allow_html=True
                 )
-            
-            with col3:
+
+            with col4:
                 ratio = ad_ratio['ratio']
                 ratio_color = ad_ratio['color']
                 ratio_interp = ad_ratio['interpretation']
-                
+
                 ratio_display = f"{ratio:.2f}x" if ratio < 10 else "∞"
-                
+
                 st.markdown(
-                    f"<div style='text-align: center; padding: 1.5rem; background: {ratio_color}20; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>A/D Ratio</h4>"
-                    f"<h1 style='margin:0.5rem 0; color: {ratio_color};'>{ratio_display}</h1>"
+                    f"<div style='text-align: center; padding: 1rem; background: {ratio_color}20; border-radius: 0.5rem;'>"
+                    f"<h5 style='margin:0;'>A/D Ratio</h5>"
+                    f"<h2 style='margin:0.3rem 0; color: {ratio_color};'>{ratio_display}</h2>"
                     f"<p style='margin:0;'>{ratio_interp}</p>"
-                    "</div>",
+                    f"</div>",
                     unsafe_allow_html=True
                 )
-            
-            with col4:
-                zweig_color = zweig['color']
-                zweig_status = " ACTIVE" if zweig['active'] else "None"
-                
-                st.markdown(
-                    f"<div style='text-align: center; padding: 1.5rem; background: {zweig_color}20; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>Zweig Thrust</h4>"
-                    f"<h1 style='margin:0.5rem 0; color: {zweig_color};'>{zweig_status}</h1>"
-                    f"<p style='margin:0; font-size: 0.85rem;'>Rare bull signal</p>"
-                    "</div>",
-                    unsafe_allow_html=True
-                )
-            
+
             with col5:
+                zweig_color = zweig['color']
+                zweig_status = "✅ ACTIVE" if zweig['active'] else "None"
+
+                st.markdown(
+                    f"<div style='text-align: center; padding: 1rem; background: {zweig_color}20; border-radius: 0.5rem;'>"
+                    f"<h5 style='margin:0;'>Zweig Thrust</h5>"
+                    f"<h2 style='margin:0.3rem 0; color: {zweig_color};'>{zweig_status}</h2>"
+                    f"<p style='margin:0; font-size: 0.8rem;'>Rare bull signal</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            with col6:
                 div_color = divergence['color']
                 div_type = divergence['type'].upper()
                 
@@ -2362,36 +2731,264 @@ elif page == "Market Breadth":
                     with col3:
                         mc_min = breadth_history['mcclellan'].min()
                         st.metric("90-Day Low", f"{mc_min:+.1f}")
-            
+
             st.divider()
-            
+
+            # ========== INSTITUTIONAL BREADTH SECTION ==========
+            st.subheader(" Institutional Breadth Metrics")
+            st.caption("Advanced breadth analysis used by professional traders")
+
+            # Initialize enhanced breadth analyzer
+            enhanced_analyzer = EnhancedBreadthAnalyzer()
+
+            # Get enhanced metrics
+            with st.spinner("Calculating institutional metrics..."):
+                summation = enhanced_analyzer.calculate_mcclellan_summation(breadth_history)
+                regime = enhanced_analyzer.classify_breadth_regime(breadth_history)
+
+            # Top row: Summation Index and Regime
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("##### McClellan Summation Index")
+                if summation['value'] is not None:
+                    sum_val = summation['value']
+                    sum_color = summation['color']
+                    sum_signal = summation['signal'].replace('_', ' ')
+
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1.5rem; background: {sum_color}20; border-radius: 0.5rem;'>"
+                        f"<h1 style='margin:0; color: {sum_color};'>{sum_val:+,.0f}</h1>"
+                        f"<h4 style='margin:0.5rem 0; color: {sum_color};'>{sum_signal}</h4>"
+                        f"<p style='margin:0;'>{summation['description']}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                    with st.expander("Summation Index Guide"):
+                        st.markdown("""
+                        **McClellan Summation Index** = Cumulative sum of McClellan Oscillator
+
+                        | Range | Interpretation |
+                        |-------|----------------|
+                        | > +1000 | Strong bull market regime |
+                        | +500 to +1000 | Moderately bullish |
+                        | -500 to +500 | Neutral/transitional |
+                        | -1000 to -500 | Moderately bearish |
+                        | < -1000 | Strong bear market regime |
+
+                        *Zero line crossings often signal trend changes.*
+                        """)
+                else:
+                    st.warning("Insufficient data for Summation Index")
+
+            with col2:
+                st.markdown("##### Breadth Regime Classification")
+                if regime['regime'] != 'UNKNOWN':
+                    regime_color = regime['color']
+                    regime_name = regime['regime'].replace('_', ' ')
+
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1.5rem; background: {regime_color}20; border-radius: 0.5rem;'>"
+                        f"<h1 style='margin:0; color: {regime_color};'>{regime_name}</h1>"
+                        f"<h4 style='margin:0.5rem 0;'>Score: {regime['score']}/100</h4>"
+                        f"<p style='margin:0;'>{regime['description']}</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                    # Show regime components
+                    with st.expander("Regime Components"):
+                        for component in regime.get('components', []):
+                            st.write(f"- {component}")
+
+                        if 'details' in regime:
+                            d = regime['details']
+                            st.markdown(f"""
+                            **Current Breadth:** {d.get('current_breadth', 'N/A'):.1f}%
+                            **5-Day Avg:** {d.get('avg_5d', 'N/A'):.1f}%
+                            **20-Day Avg:** {d.get('avg_20d', 'N/A'):.1f}%
+                            **McClellan:** {d.get('mcclellan', 0):+.1f}
+                            """)
+                else:
+                    st.warning("Insufficient data for regime classification")
+
+            st.divider()
+
+            # New Highs vs New Lows (real data from stock analysis)
+            st.markdown("##### 52-Week New Highs vs New Lows")
+            st.caption("Calculated from 50 representative S&P 500 stocks - shows market leadership quality")
+
+            with st.spinner("Analyzing 52-week highs/lows..."):
+                nh_nl = get_new_highs_lows()
+
+            if nh_nl.get('new_highs') is not None:
+                col1, col2, col3, col4 = st.columns(4)
+
+                nh_color = nh_nl['color']
+
+                with col1:
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1rem; background: #4CAF5020; border-radius: 0.5rem;'>"
+                        f"<h4 style='margin:0;'>New Highs</h4>"
+                        f"<h2 style='margin:0.3rem 0; color: #4CAF50;'>{nh_nl['new_highs']}</h2>"
+                        f"<p style='margin:0;'>{nh_nl['pct_at_high']:.0f}% of sample</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                with col2:
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1rem; background: #F4433620; border-radius: 0.5rem;'>"
+                        f"<h4 style='margin:0;'>New Lows</h4>"
+                        f"<h2 style='margin:0.3rem 0; color: #F44336;'>{nh_nl['new_lows']}</h2>"
+                        f"<p style='margin:0;'>{nh_nl['pct_at_low']:.0f}% of sample</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                with col3:
+                    net = nh_nl['net']
+                    net_color = '#4CAF50' if net > 0 else '#F44336' if net < 0 else '#FF9800'
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1rem; background: {net_color}20; border-radius: 0.5rem;'>"
+                        f"<h4 style='margin:0;'>Net</h4>"
+                        f"<h2 style='margin:0.3rem 0; color: {net_color};'>{net:+d}</h2>"
+                        f"<p style='margin:0;'>Highs - Lows</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                with col4:
+                    st.markdown(
+                        f"<div style='text-align: center; padding: 1rem; background: {nh_color}20; border-radius: 0.5rem;'>"
+                        f"<h4 style='margin:0;'>Signal</h4>"
+                        f"<h2 style='margin:0.3rem 0; color: {nh_color};'>{nh_nl['signal'].replace('_', ' ')}</h2>"
+                        f"<p style='margin:0;'>{nh_nl['total_stocks']} stocks analyzed</p>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+
+                st.info(f" {nh_nl['description']}")
+            else:
+                st.warning("Could not fetch new highs/lows data")
+
+            st.divider()
+
+            # % Above 200 SMA - Market Health Indicator
+            st.markdown("##### Percent of Stocks Above 200-Day SMA")
+            st.caption("Institutional health check - measures percentage of stocks in long-term uptrends")
+
+            # Add button to fetch (since this takes time)
+            if st.button(" Calculate % Above 200 SMA", help="Analyzes 50 stocks - takes 30-60 seconds"):
+                with st.spinner("Analyzing 50 stocks vs their 200-day SMA..."):
+                    sma_result = enhanced_analyzer.calculate_percent_above_sma(period=200)
+
+                if sma_result.get('percentage') is not None:
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    sma_color = sma_result['color']
+                    pct = sma_result['percentage']
+
+                    with col1:
+                        st.markdown(
+                            f"<div style='text-align: center; padding: 1rem; background: {sma_color}20; border-radius: 0.5rem;'>"
+                            f"<h4 style='margin:0;'>% Above 200 SMA</h4>"
+                            f"<h1 style='margin:0.3rem 0; color: {sma_color};'>{pct:.0f}%</h1>"
+                            f"<p style='margin:0;'>{sma_result['signal'].replace('_', ' ')}</p>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
+
+                    with col2:
+                        st.metric("Stocks Above", f"{sma_result['stocks_above']}")
+
+                    with col3:
+                        st.metric("Stocks Below", f"{sma_result['stocks_below']}")
+
+                    with col4:
+                        st.metric("Total Analyzed", f"{sma_result['total_stocks']}")
+
+                    st.info(f" {sma_result['description']}")
+
+                    # Show strongest/weakest stocks
+                    with st.expander("Top 10 Strongest vs Weakest"):
+                        col_a, col_b = st.columns(2)
+
+                        with col_a:
+                            st.markdown("**Strongest (Furthest Above SMA)**")
+                            for stock in sma_result.get('above_list', [])[:5]:
+                                st.write(f"  {stock['ticker']}: {stock['pct_from_sma']:+.1f}% above SMA")
+
+                        with col_b:
+                            st.markdown("**Weakest (Furthest Below SMA)**")
+                            for stock in sma_result.get('below_list', [])[:5]:
+                                st.write(f"  {stock['ticker']}: {stock['pct_from_sma']:+.1f}% from SMA")
+                else:
+                    st.warning("Could not calculate % above SMA")
+            else:
+                st.info(" Click the button above to calculate (takes 30-60 seconds)")
+
+            st.divider()
+
             with st.expander(" How to Interpret These Signals"):
                 st.markdown("""
+                ### Basic Breadth Metrics
+
                 **A/D Ratio:**
                 - **>2.5x:** Strong buying pressure
                 - **1.5-2.5x:** Moderate buying
                 - **0.67-1.5x:** Neutral/balanced
                 - **0.4-0.67x:** Moderate selling
                 - **<0.4x:** Strong selling pressure
-                
+
                 **Zweig Breadth Thrust:**
                 - Rare signal (happens few times per decade)
                 - Triggers when 10-day EMA of breadth goes from <40% to >61.5%
                 - Historically precedes strong bull moves
-                
+
                 **Divergence:**
                 - **Bearish:** Price new high BUT breadth weak = warning
                 - **Bullish:** Price new low BUT breadth holds = potential bottom
                 - **None:** Price and breadth aligned = healthy
-                
+
                 **Z-Score:**
                 - **>+2σ:** Extremely strong (rare)
                 - **+1 to +2σ:** Above average strength
                 - **-1 to +1σ:** Normal range
                 - **<-2σ:** Extremely weak (rare)
-                
+
                 ---
-                **Data Source:** Calculated from 100 representative S&P 500 stocks using Yahoo Finance.
+
+                ### Institutional Breadth Metrics
+
+                **McClellan Summation Index:**
+                - Cumulative version of McClellan Oscillator
+                - **>+1000:** Strong bull market regime
+                - **+500 to +1000:** Moderately bullish
+                - **-500 to +500:** Transitional/neutral
+                - **-1000 to -500:** Moderately bearish
+                - **<-1000:** Strong bear market regime
+
+                **Breadth Regime Classification:**
+                - Combines multiple breadth factors into single regime score
+                - Components: current breadth, trend momentum, McClellan direction, consistency
+                - Regimes: STRONG BULL → BULL → NEUTRAL → BEAR → STRONG BEAR
+
+                **New Highs vs New Lows:**
+                - Measures stocks at 52-week extremes
+                - More new highs = healthy leadership
+                - More new lows = deteriorating internals
+                - Extreme readings often mark market turns
+
+                **% Above 200 SMA:**
+                - **>70%:** Strong bull market - most stocks in uptrends
+                - **50-70%:** Healthy market conditions
+                - **30-50%:** Breadth weakening - caution warranted
+                - **<30%:** Bear market conditions - most stocks in downtrends
+
+                ---
+                **Data Source:** Calculated from 50-100 representative S&P 500 stocks using Yahoo Finance (real-time data).
                 """)
         
         else:
@@ -2659,7 +3256,7 @@ elif page == "Treasury Stress (MOVE)":
 # ============================================================
 elif page == "Repo Market (SOFR)":
     st.markdown(
-        "<h1 class='main-header'> Repo Market Stress</h1>",
+        "<h1 class='main-header'>💰 Repo Market & Liquidity Stress</h1>",
         unsafe_allow_html=True,
     )
     
@@ -2682,9 +3279,9 @@ elif page == "Repo Market (SOFR)":
         logger.error(f"Error in repo_stress page: {e}")
         st.stop()
     
-    st.subheader(" Current Repo Market Status")
+    st.subheader("📊 Current Repo Market Status")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         sofr = repo_snapshot['sofr']
@@ -2694,37 +3291,45 @@ elif page == "Repo Market (SOFR)":
             f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem;'>"
             f"<h4 style='margin:0;'>SOFR Rate</h4>"
             f"<h1 style='margin:0.5rem 0; color: {color};'>{sofr:.2f}%</h1>"
-            f"<p style='margin:0;'>Secured Overnight</p>"
+            f"<p style='margin:0; font-size:0.9em;'>Secured Overnight</p>"
             f"</div>",
             unsafe_allow_html=True,
         )
     
     with col2:
-        if repo_signal and hasattr(repo_signal, 'z_score'):
-            z_score = repo_signal.z_score
-            
-            if abs(z_score) < 1:
-                desc = "Normal"
-                color = "#4CAF50"
-            elif abs(z_score) < 2:
-                desc = "Elevated"
-                color = "#FF9800"
-            else:
-                desc = "Extreme"
-                color = "#F44336"
+        if 'iorb' in repo_snapshot:
+            iorb = repo_snapshot['iorb']
+            color = "#9C27B0"
             
             st.markdown(
                 f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem;'>"
-                f"<h4 style='margin:0;'>SOFR Z-Score</h4>"
-                f"<h1 style='margin:0.5rem 0; color: {color};'>{z_score:.2f}σ</h1>"
-                f"<p style='margin:0;'>{desc}</p>"
+                f"<h4 style='margin:0;'>IORB Rate</h4>"
+                f"<h1 style='margin:0.5rem 0; color: {color};'>{iorb:.2f}%</h1>"
+                f"<p style='margin:0; font-size:0.9em;'>Fed Floor Rate</p>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         else:
-            st.warning("Analysis unavailable")
+            st.warning("IORB unavailable")
     
     with col3:
+        if 'sofr_iorb_spread' in repo_snapshot:
+            spread = repo_snapshot['sofr_iorb_spread']
+            status = repo_snapshot.get('liquidity_status', 'UNKNOWN')
+            color = repo_snapshot.get('liquidity_color', '#9E9E9E')
+            
+            st.markdown(
+                f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem;'>"
+                f"<h4 style='margin:0;'>SOFR-IORB Spread</h4>"
+                f"<h1 style='margin:0.5rem 0; color: {color};'>{spread:+.1f} bps</h1>"
+                f"<p style='margin:0; font-size:0.9em;'>{status}</p>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.warning("Spread unavailable")
+    
+    with col4:
         if repo_signal:
             stress_level = repo_signal.stress_level
             strength = repo_signal.strength
@@ -2734,14 +3339,14 @@ elif page == "Repo Market (SOFR)":
                 f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem;'>"
                 f"<h4 style='margin:0;'>Funding Stress</h4>"
                 f"<h1 style='margin:0.5rem 0; color: {color};'>{stress_level}</h1>"
-                f"<p style='margin:0;'>Strength: {strength:.0f}/100</p>"
+                f"<p style='margin:0; font-size:0.9em;'>Strength: {strength:.0f}/100</p>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         else:
             st.warning("Stress analysis unavailable")
     
-    with col4:
+    with col5:
         rrp_volume = repo_snapshot.get('rrp_volume', 0)
         
         if rrp_volume < 50:
@@ -2758,62 +3363,160 @@ elif page == "Repo Market (SOFR)":
             f"<div style='text-align: center; padding: 1.5rem; background: {color}20; border-radius: 0.5rem;'>"
             f"<h4 style='margin:0;'>RRP Volume</h4>"
             f"<h1 style='margin:0.5rem 0; color: {color};'>${rrp_volume:.0f}B</h1>"
-            f"<p style='margin:0;'>{desc}</p>"
+            f"<p style='margin:0; font-size:0.9em;'>{desc}</p>"
             f"</div>",
             unsafe_allow_html=True,
         )
     
     st.markdown("---")
     
-    with st.expander("ℹ️ What is the Repo Market & SOFR?", expanded=False):
+    with st.expander("ℹ️ What is the Repo Market, SOFR & IORB?", expanded=False):
         st.markdown("""
         **The Repo Market** is where the financial system gets overnight funding:
         
         **SOFR (Secured Overnight Financing Rate):**
         - Benchmark rate for overnight Treasury repo transactions  
         - Replaced LIBOR as primary U.S. rate benchmark  
-        - Typically trades close to Fed Funds
+        - Reflects actual market funding conditions
         
-        **Stress indicators:**
-        - SOFR significantly above Fed Funds → funding stress  
-        - Z-score > +2 → significant stress  
+        **IORB (Interest on Reserve Balances):**
+        - Rate the Fed pays banks on reserves held at the Fed
+        - Acts as a "floor" for overnight rates
+        - Changed via Fed policy (FOMC decisions)
+        
+        **SOFR-IORB Spread = KEY LIQUIDITY INDICATOR:**
+        - **Normal**: 5-15 bps positive spread
+        - **Abundant**: SOFR ≤ IORB or 0-5 bps (plenty of cash)
+        - **Tightening**: 15-30 bps (liquidity getting scarce)
+        - **Stress**: >30 bps (funding pressure building)
+        - **Crisis**: >50-100 bps (September 2019: 390 bps!)
+        
+        **Why it matters:**
+        - Wide spread = Banks prefer lending in repo over holding reserves
+        - Signals declining liquidity and potential funding stress
+        - Fed monitors closely to gauge reserve adequacy
         """)
     
-    tab1, tab2, tab3 = st.tabs([" SOFR History", " Z-Score & Stress", " RRP Volume"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📈 SOFR vs IORB", 
+        "📊 SOFR-IORB Spread", 
+        "📉 Z-Score & Stress", 
+        "💵 RRP Volume"
+    ])
     
     with tab1:
-        st.subheader("SOFR Rate Historical Chart")
+        st.subheader("SOFR vs IORB - Funding Rate Comparison")
         
-        if repo_df is not None and not repo_df.empty:
+        if repo_df is not None and not repo_df.empty and 'iorb' in repo_df.columns:
             fig = go.Figure()
+            
             fig.add_trace(go.Scatter(
                 x=repo_df['date'],
                 y=repo_df['sofr'],
-                name='SOFR',
+                name='SOFR (Market Rate)',
                 line=dict(color='#1f77b4', width=2),
-                fill='tozeroy',
-                fillcolor='rgba(31, 119, 180, 0.2)'
             ))
+            
+            fig.add_trace(go.Scatter(
+                x=repo_df['date'],
+                y=repo_df['iorb'],
+                name='IORB (Fed Floor)',
+                line=dict(color='#9C27B0', width=2, dash='dash'),
+            ))
+            
             fig.update_layout(
-                title="SOFR Rate - Last 2 Years",
+                title="SOFR vs IORB - Last 2 Years",
                 xaxis_title="Date",
                 yaxis_title="Rate (%)",
                 hovermode='x unified',
-                height=500
+                height=500,
+                legend=dict(x=0.01, y=0.99)
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Current SOFR", f"{repo_df['sofr'].iloc[-1]:.2f}%")
             with col2:
-                st.metric("30-Day Average", f"{repo_df['sofr'].tail(30).mean():.2f}%")
+                st.metric("Current IORB", f"{repo_df['iorb'].iloc[-1]:.2f}%")
             with col3:
-                st.metric("1-Year High", f"{repo_df['sofr'].max():.2f}%")
+                current_spread = repo_df['sofr_iorb_spread'].iloc[-1]
+                st.metric("Spread", f"{current_spread:+.1f} bps")
+            with col4:
+                avg_spread = repo_df['sofr_iorb_spread'].tail(252).mean()
+                st.metric("1Y Avg Spread", f"{avg_spread:+.1f} bps")
+            
+            if current_spread <= 5:
+                st.success("✅ **ABUNDANT LIQUIDITY**: SOFR trading at or below IORB - funding conditions very easy")
+            elif current_spread <= 15:
+                st.info("➡️ **NORMAL CONDITIONS**: SOFR slightly above IORB - healthy funding market")
+            elif current_spread <= 30:
+                st.warning("⚠️ **TIGHTENING**: SOFR-IORB spread widening - liquidity starting to thin")
+            else:
+                st.error("🚨 **FUNDING STRESS**: Wide spread indicates significant liquidity pressure")
         else:
-            st.warning("SOFR historical data unavailable")
+            st.warning("IORB data unavailable for comparison")
     
     with tab2:
+        st.subheader("SOFR-IORB Spread History (Liquidity Indicator)")
+        
+        if repo_df is not None and not repo_df.empty and 'sofr_iorb_spread' in repo_df.columns:
+            fig = go.Figure()
+            
+            fig.add_trace(go.Scatter(
+                x=repo_df['date'],
+                y=repo_df['sofr_iorb_spread'],
+                name='SOFR-IORB Spread',
+                line=dict(color='#2E86AB', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(46, 134, 171, 0.3)'
+            ))
+            
+            fig.add_hrect(y0=-5, y1=5, fillcolor="green", opacity=0.1,
+                         annotation_text="ABUNDANT", annotation_position="left")
+            fig.add_hrect(y0=5, y1=15, fillcolor="lightgreen", opacity=0.1,
+                         annotation_text="NORMAL", annotation_position="left")
+            fig.add_hrect(y0=15, y1=30, fillcolor="orange", opacity=0.1,
+                         annotation_text="TIGHTENING", annotation_position="left")
+            fig.add_hrect(y0=30, y1=100, fillcolor="red", opacity=0.1,
+                         annotation_text="STRESS", annotation_position="left")
+            
+            fig.add_hline(y=0, line_dash="solid", line_color="gray", 
+                         annotation_text="IORB Floor")
+            
+            fig.update_layout(
+                title="SOFR-IORB Spread with Liquidity Bands",
+                xaxis_title="Date",
+                yaxis_title="Spread (basis points)",
+                hovermode='x unified',
+                height=500
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                current = repo_df['sofr_iorb_spread'].iloc[-1]
+                st.metric("Current Spread", f"{current:+.1f} bps")
+            with col2:
+                max_spread = repo_df['sofr_iorb_spread'].max()
+                st.metric("2Y Maximum", f"{max_spread:+.1f} bps")
+            with col3:
+                days_above_15 = (repo_df['sofr_iorb_spread'] > 15).sum()
+                pct = (days_above_15 / len(repo_df)) * 100
+                st.metric("Days >15 bps", f"{days_above_15} ({pct:.1f}%)")
+            
+            st.info("""
+            **Interpretation Guide:**
+            - **Negative or 0-5 bps**: Abundant liquidity, SOFR at or below floor
+            - **5-15 bps**: Normal conditions, typical small premium
+            - **15-30 bps**: Liquidity tightening, monitor for escalation
+            - **>30 bps**: Funding stress, potential liquidity shortage
+            - **>50 bps**: Severe stress (see September 2019: 390 bps spike!)
+            """)
+        else:
+            st.warning("Spread data unavailable")
+    
+    with tab3:
         st.subheader("SOFR Z-Score & Stress Bands")
         
         if repo_df is not None and not repo_df.empty and 'sofr_z_score' in repo_df.columns:
@@ -2838,14 +3541,14 @@ elif page == "Repo Market (SOFR)":
                 hovermode='x unified',
                 height=500
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
             
             if repo_signal and hasattr(repo_signal, 'description'):
                 st.info(f"**Current Status:** {repo_signal.description}")
         else:
             st.warning("Z-score data unavailable")
     
-    with tab3:
+    with tab4:
         st.subheader("Overnight RRP Volume")
         
         if repo_df is not None and not repo_df.empty and 'rrp_on' in repo_df.columns:
@@ -2863,7 +3566,7 @@ elif page == "Repo Market (SOFR)":
                 hovermode='x unified',
                 height=500
             )
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
             
             current_rrp = repo_df['rrp_on'].iloc[-1]
             peak_rrp = repo_df['rrp_on'].max()
@@ -2880,16 +3583,360 @@ elif page == "Repo Market (SOFR)":
         else:
             st.warning("RRP volume data unavailable")
 
+elif page == "CTA Flow Tracker":
+    st.markdown("<h1 class='main-header'> CTA Flow Tracker</h1>", unsafe_allow_html=True)
+    
+    st.markdown("""
+    Track systematic trend-following flows. CTAs control $400B+ and create self-reinforcing 
+    momentum at key technical levels. **Flip levels** show where CTAs likely adjust positions.
+    """)
+    
+    # Get cached CTA collector
+    cta_collector = get_cta_collector()
+    
+    # Control buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(" Update Prices", help="Fetch latest price data (incremental)"):
+            with st.spinner("Updating prices..."):
+                cta_collector.update_prices()
+                st.success("✓ Prices updated")
+                st.rerun()
+    
+    with col2:
+        if st.button(" Refresh Analysis", help="Recompute CTA signals"):
+            st.session_state["cta_refresh"] = st.session_state.get("cta_refresh", 0) + 1
+    
+    # Run analysis (cached by session state)
+    refresh_key = st.session_state.get("cta_refresh", 0)
+    
+    @st.cache_data(ttl=900)  # Cache for 15 minutes
+    def get_cta_result(_refresh):
+        return cta_collector.get_cta_analysis()
+    
+    with st.spinner("Running CTA analysis..."):
+        result = get_cta_result(refresh_key)
+    
+    if result is None:
+        st.warning(" No CTA data available. Click 'Update Prices' to fetch data.")
+    else:
+        # Asset class groupings
+        equities = ["SPY", "QQQ", "IWM", "EEM"]
+        bonds = ["TLT", "HYG"]
+        commodities = ["GLD"]
+        fx = ["UUP"]
+        
+        def safe_sum(symbols):
+            return result.latest_exposure[[s for s in symbols if s in result.latest_exposure.index]].sum()
+        
+        eq_exp = safe_sum(equities)
+        bond_exp = safe_sum(bonds)
+        comm_exp = safe_sum(commodities)
+        fx_exp = safe_sum(fx)
+        total_gross = result.latest_exposure.abs().sum()
+        
+        # Top metrics
+        st.subheader("🎯 Aggregate CTA Positioning")
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        def render_exposure_card(col, title, exposure):
+            color = "#4CAF50" if exposure > 0.1 else ("#f44336" if exposure < -0.1 else "#757575")
+            state = 'LONG' if exposure > 0.1 else ('SHORT' if exposure < -0.1 else 'FLAT')
+            col.markdown(
+                f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
+                f"<h4 style='margin:0;'>{title}</h4>"
+                f"<h2 style='margin:0; color: {color};'>{exposure:+.2f}</h2>"
+                f"<p style='margin:0; font-size: 0.8rem;'>{state}</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        
+        render_exposure_card(col1, "Equities", eq_exp)
+        render_exposure_card(col2, "Bonds", bond_exp)
+        render_exposure_card(col3, "Gold", comm_exp)
+        render_exposure_card(col4, "USD", fx_exp)
+        
+        with col5:
+            leverage_pct = (total_gross / 2.0) * 100
+            st.metric("Gross Leverage", f"{leverage_pct:.0f}%", help="Total absolute exposure (max 200%)")
+        
+        st.divider()
+        
+        # Flip levels table
+        st.subheader(" CTA Flip Levels")
+        st.markdown("**Flip levels** = prices where momentum turns. Breaking above/below triggers CTA flows.")
+        
+        if not result.flip_levels.empty:
+            display_data = []
+            for symbol in result.flip_levels['symbol'].unique():
+                row = {'Symbol': symbol}
+                current = result.flip_levels[result.flip_levels['symbol'] == symbol]['current_price'].iloc[0]
+                row['Current'] = f"${current:.2f}"
+                
+                for horizon in [21, 63, 126, 252]:
+                    sym_data = result.flip_levels[
+                        (result.flip_levels['symbol'] == symbol) & 
+                        (result.flip_levels['horizon_days'] == horizon)
+                    ]
+                    if not sym_data.empty:
+                        flip = sym_data['flip_price'].iloc[0]
+                        dist = sym_data['distance_pct'].iloc[0]
+                        row[f'{horizon}d'] = f"${flip:.2f} ({dist:+.1f}%)"
+                    else:
+                        row[f'{horizon}d'] = "N/A"
+                
+                row['State'] = result.latest_state.get(symbol, 'N/A')
+                display_data.append(row)
+            
+            df_display = pd.DataFrame(display_data)
+            st.dataframe(df_display, use_container_width=True)
+        
+        st.divider()
+        
+        # Exposure heatmap
+        st.subheader("📊 Historical CTA Exposures (90 Days)")
+        exposures_90d = result.exposures.tail(90)
+        
+        if not exposures_90d.empty:
+            fig = go.Figure(data=go.Heatmap(
+                z=exposures_90d.T.values,
+                x=exposures_90d.index,
+                y=exposures_90d.columns,
+                colorscale='RdYlGn',
+                zmid=0,
+                colorbar=dict(title="Exposure"),
+            ))
+            fig.update_layout(
+                title="CTA Trend Strength Over Time",
+                xaxis_title="Date",
+                yaxis_title="Symbol",
+                height=400,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        st.divider()
+        
+        # Signal interpretation
+        st.subheader(" Trading Implications")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("** Strong Longs (>0.3)**")
+            strong_longs = result.latest_exposure[result.latest_exposure > 0.3].sort_values(ascending=False)
+            if not strong_longs.empty:
+                for sym, exp in strong_longs.items():
+                    st.markdown(f"- **{sym}**: {exp:.2f}")
+            else:
+                st.markdown("*None*")
+        
+        with col2:
+            st.markdown("** Strong Shorts (<-0.3)**")
+            strong_shorts = result.latest_exposure[result.latest_exposure < -0.3].sort_values()
+            if not strong_shorts.empty:
+                for sym, exp in strong_shorts.items():
+                    st.markdown(f"- **{sym}**: {exp:.2f}")
+            else:
+                st.markdown("*None*")
+        
+        st.info(" **Strategy:** Watch price action near flip levels. Breaking above = CTA buying. Breaking below = CTA selling.")
+
+        
+
 # ============================================================
 # SETTINGS
 # ============================================================
-elif page == "Settings":
-    try:
-        render_settings_page()
-    except Exception as e:
-        st.error(f"Error loading settings: {e}")
 
-# -------------------------------------------------------------------
+elif page == "Settings":
+    st.markdown("<h1 class='main-header'> Settings</h1>", unsafe_allow_html=True)
+    
+    st.markdown("""
+    Configure API keys and dashboard preferences. Changes are saved to `.env` file.
+    """)
+    
+    # API Keys Section
+    st.subheader(" API Keys")
+    
+    # FRED API Key
+    with st.expander("FRED API Key (Required)", expanded=False):
+        st.markdown("Get your free API key at: https://fred.stlouisfed.org/docs/api/api_key.html")
+        
+        current_fred_key = os.getenv('FRED_API_KEY', '')
+        fred_key = st.text_input(
+            "FRED API Key",
+            value=current_fred_key,
+            type="password",
+            key="fred_api_key"
+        )
+        
+        if st.button("Save FRED API Key"):
+            if fred_key:
+                save_to_env('FRED_API_KEY', fred_key)
+                st.success("✓ FRED API key saved! Restart dashboard to apply.")
+            else:
+                st.error("Please enter an API key")
+    
+    # Alpha Vantage API Key
+    with st.expander("Alpha Vantage API Key (Optional)", expanded=False):
+        st.markdown("Get your free API key at: https://www.alphavantage.co/support/#api-key")
+        st.info("Used for: Alternative market data, economic indicators")
+        
+        current_alpha_key = os.getenv('ALPHA_VANTAGE_API_KEY', '')
+        alpha_key = st.text_input(
+            "Alpha Vantage API Key",
+            value=current_alpha_key,
+            type="password",
+            key="alpha_api_key"
+        )
+        
+        if st.button("Save Alpha Vantage API Key"):
+            if alpha_key:
+                save_to_env('ALPHA_VANTAGE_API_KEY', alpha_key)
+                st.success("✓ Alpha Vantage API key saved! Restart dashboard to apply.")
+            else:
+                st.error("Please enter an API key")
+    
+    # Polygon API Key
+    with st.expander("Polygon.io API Key (Optional)", expanded=False):
+        st.markdown("Get your API key at: https://polygon.io/")
+        st.info("Used for: Real-time market data, options flow")
+        
+        current_polygon_key = os.getenv('POLYGON_API_KEY', '')
+        polygon_key = st.text_input(
+            "Polygon API Key",
+            value=current_polygon_key,
+            type="password",
+            key="polygon_api_key"
+        )
+        
+        if st.button("Save Polygon API Key"):
+            if polygon_key:
+                save_to_env('POLYGON_API_KEY', polygon_key)
+                st.success("✓ Polygon API key saved! Restart dashboard to apply.")
+            else:
+                st.error("Please enter an API key")
+    
+    st.divider()
+    
+    # Manual Overrides Section
+    st.subheader(" Manual Data Overrides")
+    
+    with st.expander("Equity Put/Call Ratio Override", expanded=False):
+        st.markdown("""
+        Manually set the equity put/call ratio when automatic data is unavailable or incorrect.
+        """)
+        
+        use_manual = st.checkbox("Use Manual Equity P/C Ratio", key="use_manual_pc")
+        
+        if use_manual:
+            manual_pc = st.number_input(
+                "Manual Equity P/C Ratio",
+                min_value=0.0,
+                max_value=5.0,
+                value=1.0,
+                step=0.01,
+                help="Typical range: 0.5-2.0. Above 1.0 = bearish, below 1.0 = bullish"
+            )
+            
+            if st.button("Save Manual P/C Ratio"):
+                st.session_state['manual_equity_pc'] = manual_pc
+                st.session_state['use_manual_equity_pc'] = True
+                st.success(f"✓ Manual equity P/C ratio set to {manual_pc:.2f}")
+        else:
+            if 'use_manual_equity_pc' in st.session_state:
+                st.session_state['use_manual_equity_pc'] = False
+            st.info("Using automatic equity P/C ratio from CBOE")
+
+    st.divider()
+
+    # Market Breadth Settings
+    st.subheader("📊 Market Breadth Settings")
+
+    st.markdown("""
+    **Stock Sample Size for Breadth Calculation**
+
+    Choose between speed and precision for market breadth analysis:
+    """)
+
+    # Get current setting from env
+    current_breadth_mode = os.getenv('BREADTH_MODE', 'fast').lower()
+
+    breadth_mode = st.radio(
+        "Breadth Calculation Mode",
+        options=['fast', 'full'],
+        index=0 if current_breadth_mode == 'fast' else 1,
+        format_func=lambda x: {
+            'fast': '⚡ Fast Mode (100 stocks) - Recommended',
+            'full': '🎯 Full Mode (500 stocks) - More precise'
+        }[x],
+        key="breadth_mode_setting",
+        help="Fast mode uses 100 representative stocks (~30-60 sec). Full mode uses all 500 S&P stocks (~3-5 min)."
+    )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        **⚡ Fast Mode (100 stocks)**
+        - ~30-60 seconds refresh
+        - Representative sample
+        - McClellan scaled to NYSE standard
+        """)
+    with col2:
+        st.markdown("""
+        **🎯 Full Mode (500 stocks)**
+        - ~3-5 minutes refresh
+        - True S&P 500 breadth
+        - No scaling needed
+        """)
+
+    if st.button("Save Breadth Mode", key="save_breadth_mode_btn"):
+        save_to_env('BREADTH_MODE', breadth_mode)
+        st.success(f"✅ Breadth mode saved: {breadth_mode.upper()}")
+        st.info("🔄 Go to Market Breadth page and click 'Refresh Breadth Data' to apply.")
+
+    # Show current status
+    mode_icon = "⚡" if current_breadth_mode == 'fast' else "🎯"
+    stock_count = "100" if current_breadth_mode == 'fast' else "500"
+    st.caption(f"Current mode: {mode_icon} {current_breadth_mode.upper()} ({stock_count} stocks)")
+
+    st.divider()
+
+    # Dashboard Preferences
+    st.subheader(" Dashboard Preferences")
+    
+    st.markdown("""
+    **Streamlit Built-in Settings** (accessible via ☰ menu in top right):
+    - Theme (Light/Dark mode)
+    - Wide mode toggle
+    - Run on save
+    - Developer options
+    """)
+    
+    st.divider()
+    
+    # About Section
+    st.subheader("About")
+    
+    st.markdown("""
+    **Market Dashboard** - Institutional-grade market analysis
+    
+    **Core Features:**
+    -  VIX & Volatility Risk Premium tracking
+    -  Fed liquidity monitoring (RRP, TGA, Balance Sheet)
+    -  CTA systematic flow tracking
+    -  Credit spreads & repo stress
+    -  Market breadth & sentiment
+    
+    **Data Sources:**
+    - Federal Reserve Economic Data (FRED)
+    - CBOE (VIX, SKEW, Options)
+    - Yahoo Finance (Market data)
+    - CNN Fear & Greed Index
+    - Alpha Vantage (Optional)
+    - Polygon.io (Optional)
+    
+    **Version:** 2.0 | **Last Updated:** December 2024
+    """)
+
 # FOOTER
 # -------------------------------------------------------------------
 st.divider()

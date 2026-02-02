@@ -1,6 +1,8 @@
 """
 Volatility Risk Premium (VRP) & Regime Classification Module
 Calculates realized volatility, VRP, and classifies volatility regimes
+
+Parameters loaded from config/parameters.yaml
 """
 
 import yfinance as yf
@@ -11,31 +13,26 @@ from typing import Dict, Optional, Tuple
 import logging
 from utils.validators import validate_vix, validate_realized_vol
 
+from config import cfg
+
 # Set up logger
 logger = logging.getLogger(__name__)
 
 
 class VRPAnalyzer:
     """Analyzes Volatility Risk Premium and classifies volatility regimes"""
-    
-    # Historical VIX-to-forward-return mapping (based on empirical data)
-    VIX_FORWARD_RETURNS = {
-        (0, 12): {"6m_return": 15.2, "label": "Complacent"},
-        (12, 16): {"6m_return": 12.8, "label": "Normal"},
-        (16, 20): {"6m_return": 10.5, "label": "Elevated"},
-        (20, 30): {"6m_return": 8.2, "label": "Fearful"},
-        (30, 40): {"6m_return": 18.5, "label": "Panic"},
-        (40, 100): {"6m_return": 25.0, "label": "Extreme Panic"},
-    }
-    
-    def __init__(self, lookback_days: int = 21):
+
+    def __init__(self, lookback_days: Optional[int] = None):
         """
         Initialize VRP Analyzer
-        
+
         Args:
-            lookback_days: Number of days for realized volatility calculation (default 21)
+            lookback_days: Number of days for realized volatility calculation (default from config)
         """
-        self.lookback_days = lookback_days
+        # Load from config
+        vrp_cfg = cfg.volatility.vrp
+        self.lookback_days = lookback_days or vrp_cfg.lookback_days
+        self._regimes = vrp_cfg.regimes
     
     def calculate_realized_volatility(self, ticker: str = "SPY") -> Optional[float]:
         """
@@ -98,41 +95,82 @@ class VRPAnalyzer:
     def classify_vol_regime(self, vix: float) -> Dict:
         """
         Classify volatility regime based on VIX level
-        
+
         Args:
             vix: Current VIX level
-        
+
         Returns:
             Dict with regime label and expected 6-month forward return
         """
-        for (low, high), data in self.VIX_FORWARD_RETURNS.items():
-            if low <= vix < high:
-                return {
-                    "regime": data["label"],
-                    "vix_range": f"{low}-{high}",
-                    "expected_6m_return": data["6m_return"],
-                    "vix_level": vix
-                }
-        
-        # Default to highest bucket
-        return {
-            "regime": "Extreme Panic",
-            "vix_range": "40+",
-            "expected_6m_return": 25.0,
-            "vix_level": vix
-        }
+        # Use config-based regime thresholds
+        complacent = self._regimes.complacent
+        normal = self._regimes.normal
+        elevated = self._regimes.elevated
+        fearful = self._regimes.fearful
+        panic = self._regimes.panic
+        extreme = self._regimes.extreme_panic
+
+        if vix < complacent.vix_max:
+            return {
+                "regime": "Complacent",
+                "vix_range": f"0-{complacent.vix_max}",
+                "expected_6m_return": complacent.expected_6m_return,
+                "vix_level": vix,
+                "color": complacent.color
+            }
+        elif vix < normal.vix_max:
+            return {
+                "regime": "Normal",
+                "vix_range": f"{normal.vix_min}-{normal.vix_max}",
+                "expected_6m_return": normal.expected_6m_return,
+                "vix_level": vix,
+                "color": normal.color
+            }
+        elif vix < elevated.vix_max:
+            return {
+                "regime": "Elevated",
+                "vix_range": f"{elevated.vix_min}-{elevated.vix_max}",
+                "expected_6m_return": elevated.expected_6m_return,
+                "vix_level": vix,
+                "color": elevated.color
+            }
+        elif vix < fearful.vix_max:
+            return {
+                "regime": "Fearful",
+                "vix_range": f"{fearful.vix_min}-{fearful.vix_max}",
+                "expected_6m_return": fearful.expected_6m_return,
+                "vix_level": vix,
+                "color": fearful.color
+            }
+        elif vix < panic.vix_max:
+            return {
+                "regime": "Panic",
+                "vix_range": f"{panic.vix_min}-{panic.vix_max}",
+                "expected_6m_return": panic.expected_6m_return,
+                "vix_level": vix,
+                "color": panic.color
+            }
+        else:
+            return {
+                "regime": "Extreme Panic",
+                "vix_range": f"{extreme.vix_min}+",
+                "expected_6m_return": extreme.expected_6m_return,
+                "vix_level": vix,
+                "color": extreme.color
+            }
     
     def get_regime_color(self, regime: str) -> str:
         """Get color code for regime visualization"""
-        colors = {
-            "Complacent": "#90EE90",      # Light green
-            "Normal": "#4CAF50",          # Green
-            "Elevated": "#FFC107",        # Amber
-            "Fearful": "#FF9800",         # Orange
-            "Panic": "#F44336",           # Red
-            "Extreme Panic": "#B71C1C",   # Dark red
+        # Use config-based colors
+        color_map = {
+            "Complacent": self._regimes.complacent.color,
+            "Normal": self._regimes.normal.color,
+            "Elevated": self._regimes.elevated.color,
+            "Fearful": self._regimes.fearful.color,
+            "Panic": self._regimes.panic.color,
+            "Extreme Panic": self._regimes.extreme_panic.color,
         }
-        return colors.get(regime, "#9E9E9E")
+        return color_map.get(regime, "#9E9E9E")
     
     def get_vrp_interpretation(self, vrp: float) -> Dict:
         """
@@ -328,47 +366,3 @@ class VRPAnalyzer:
             import traceback
             logger.error(traceback.format_exc())
             return pd.DataFrame()
-
-
-# Test function
-if __name__ == "__main__":
-    print("\n" + "="*80)
-    print("VRP & VOLATILITY REGIME ANALYZER - TEST")
-    print("="*80)
-    
-    analyzer = VRPAnalyzer(lookback_days=21)
-    
-    print("\n Running complete VRP analysis...")
-    analysis = analyzer.get_complete_analysis()
-    
-    if "error" in analysis:
-        print(f"❌ Error: {analysis['error']}")
-    else:
-        print(f"\n✅ CURRENT METRICS:")
-        print(f"   VIX: {analysis['vix']}")
-        print(f"   Realized Vol (21d): {analysis['realized_vol']:.2f}")
-        print(f"   VRP: {analysis['vrp']:.2f}")
-        
-        print(f"\n REGIME CLASSIFICATION:")
-        print(f"   Regime: {analysis['regime']}")
-        print(f"   VIX Range: {analysis['vix_range']}")
-        print(f"   Expected 6M Return: {analysis['expected_6m_return']:.1f}%")
-        
-        print(f"\n VRP INTERPRETATION:")
-        print(f"   Level: {analysis['vrp_level']}")
-        print(f"   {analysis['vrp_interpretation']}")
-        print(f"   Implication: {analysis['vrp_implication']}")
-    
-    print("\n Fetching historical VRP (last 90 days)...")
-    history = analyzer.get_historical_vrp(days=90)
-    
-    if not history.empty:
-        print(f"✅ Retrieved {len(history)} days of historical data")
-        print(f"   VRP Range: {history['vrp'].min():.2f} to {history['vrp'].max():.2f}")
-        print(f"   Current VRP Percentile: {(history['vrp'] < analysis['vrp']).mean() * 100:.1f}%")
-    else:
-        print("❌ Could not retrieve historical data")
-    
-    print("\n" + "="*80)
-    print("✓ TEST COMPLETE")
-    print("="*80 + "\n")
