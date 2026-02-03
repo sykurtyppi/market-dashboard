@@ -208,17 +208,8 @@ class YahooCollector:
         except Exception as e:
             logger.error(f"Error calculating SPY P/C ratio: {e}")
             return None
-    
-        """Get all Yahoo Finance data with retry logic"""
-        return {
-            'vix': self.get_vix(),
-            'vix_contango_proxy': self.get_vix_futures_proxy(),
-            'market_breadth_proxy': self.get_market_breadth_proxy(),
-            'put_call_proxy': self.get_put_call_ratio_proxy(),
-            'timestamp': datetime.now().isoformat()
-        }
-    
-    
+
+
     def get_all_data(self) -> Dict:
         """Get all Yahoo Finance data"""
         return {

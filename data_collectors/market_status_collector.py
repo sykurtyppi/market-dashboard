@@ -16,6 +16,11 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
+try:
+    import pandas_market_calendars as mcal
+except Exception:
+    mcal = None
+
 # US Market Holidays 2024-2026 (NYSE/NASDAQ closed)
 US_MARKET_HOLIDAYS = {
     # 2024
@@ -71,6 +76,7 @@ class MarketStatusCollector:
 
     def __init__(self):
         self.eastern = ZoneInfo("America/New_York")
+        self._nyse = mcal.get_calendar("NYSE") if mcal else None
 
         # Market hours (Eastern Time)
         self.pre_market_start = time(4, 0)   # 4:00 AM ET
@@ -89,6 +95,7 @@ class MarketStatusCollector:
         now_et = datetime.now(self.eastern)
         today = now_et.date()
         current_time = now_et.time()
+        today_dt = datetime(today.year, today.month, today.day)
 
         # Check if weekend
         if now_et.weekday() >= 5:  # Saturday = 5, Sunday = 6
@@ -103,23 +110,29 @@ class MarketStatusCollector:
                 'current_time_et': now_et.strftime('%I:%M %p ET'),
             }
 
-        # Check if holiday
-        today_dt = datetime(today.year, today.month, today.day)
-        if today_dt in US_MARKET_HOLIDAYS:
+        # Check if holiday (calendar-backed if available, fallback to static list)
+        schedule_today = self._get_nyse_schedule(today_dt, today_dt)
+        if schedule_today is None or schedule_today.empty:
+            holiday_name = US_MARKET_HOLIDAYS.get(today_dt, "Market Holiday")
             next_open = self._get_next_market_open(now_et)
             return {
                 'status': 'CLOSED',
                 'status_color': '#F44336',
-                'reason': f"Holiday: {US_MARKET_HOLIDAYS[today_dt]}",
+                'reason': f"Holiday: {holiday_name}",
                 'emoji': '🎉',
                 'next_open': next_open,
                 'time_until_open': self._format_timedelta(next_open - now_et) if next_open else None,
                 'current_time_et': now_et.strftime('%I:%M %p ET'),
             }
 
+        # NYSE trading day: use schedule times (handles early closes)
+        market_open_dt = schedule_today.iloc[0]["market_open"].tz_convert(self.eastern)
+        market_close_dt = schedule_today.iloc[0]["market_close"].tz_convert(self.eastern)
+        open_time = market_open_dt.time()
+        close_time = market_close_dt.time()
+
         # Check for early close
-        is_early_close = today_dt in EARLY_CLOSE_DAYS
-        close_time = self.early_close if is_early_close else self.market_close
+        is_early_close = close_time < self.market_close
 
         # Determine session
         if current_time < self.pre_market_start:
@@ -134,28 +147,28 @@ class MarketStatusCollector:
                 'current_time_et': now_et.strftime('%I:%M %p ET'),
             }
 
-        elif current_time < self.market_open:
+        elif current_time < open_time:
             # Pre-market
             return {
                 'status': 'PRE-MARKET',
                 'status_color': '#FF9800',
                 'reason': 'Extended hours trading',
                 'emoji': '🌅',
-                'next_session': 'Market Opens at 9:30 AM ET',
-                'time_until_open': self._time_until(self.market_open, now_et),
+                'next_session': f"Market Opens at {market_open_dt.strftime('%I:%M %p ET')}",
+                'time_until_open': self._time_until_datetime(market_open_dt, now_et),
                 'current_time_et': now_et.strftime('%I:%M %p ET'),
             }
 
         elif current_time < close_time:
             # Market open
-            time_remaining = self._time_until(close_time, now_et)
+            time_remaining = self._time_until_datetime(market_close_dt, now_et)
             early_note = " (Early Close)" if is_early_close else ""
             return {
                 'status': 'OPEN',
                 'status_color': '#4CAF50',
                 'reason': f'Regular trading session{early_note}',
                 'emoji': '📈',
-                'closes_at': close_time.strftime('%I:%M %p ET'),
+                'closes_at': market_close_dt.strftime('%I:%M %p ET'),
                 'time_until_close': time_remaining,
                 'current_time_et': now_et.strftime('%I:%M %p ET'),
             }
@@ -187,8 +200,15 @@ class MarketStatusCollector:
 
     def _get_next_market_open(self, from_dt: datetime) -> Optional[datetime]:
         """Find next market open datetime"""
-        next_day = from_dt + timedelta(days=1)
+        if self._nyse:
+            start = (from_dt + timedelta(days=1)).date()
+            end = (from_dt + timedelta(days=10)).date()
+            schedule = self._get_nyse_schedule(start, end)
+            if schedule is not None and not schedule.empty:
+                next_open = schedule.iloc[0]["market_open"].tz_convert(self.eastern)
+                return next_open
 
+        next_day = from_dt + timedelta(days=1)
         # Look up to 10 days ahead (handles long weekends)
         for _ in range(10):
             next_day = next_day.replace(hour=9, minute=30, second=0, microsecond=0)
@@ -237,6 +257,21 @@ class MarketStatusCollector:
         else:
             return f"{minutes}m"
 
+    def _time_until_datetime(self, target_dt: datetime, from_dt: datetime) -> str:
+        """Calculate time until a specific datetime"""
+        delta = target_dt - from_dt
+        return self._format_timedelta(delta)
+
+    def _get_nyse_schedule(self, start_date, end_date):
+        """Get NYSE schedule for date range if calendar available."""
+        if not self._nyse:
+            return None
+        try:
+            return self._nyse.schedule(start_date=start_date, end_date=end_date)
+        except Exception as e:
+            logger.debug(f"NYSE calendar schedule error: {e}")
+            return None
+
     def get_next_holiday(self) -> Optional[Dict]:
         """Get the next upcoming market holiday"""
         now = datetime.now()
@@ -262,12 +297,22 @@ class MarketStatusCollector:
         now_et = datetime.now(self.eastern)
         today_dt = datetime(now_et.year, now_et.month, now_et.day)
 
-        is_early_close = today_dt in EARLY_CLOSE_DAYS
+        schedule_today = self._get_nyse_schedule(today_dt, today_dt)
+        if schedule_today is not None and not schedule_today.empty:
+            market_open_dt = schedule_today.iloc[0]["market_open"].tz_convert(self.eastern)
+            market_close_dt = schedule_today.iloc[0]["market_close"].tz_convert(self.eastern)
+            is_early_close = market_close_dt.time() < self.market_close
+            regular_hours = f"{market_open_dt.strftime('%I:%M %p')} - {market_close_dt.strftime('%I:%M %p')} ET"
+            after_hours = f"{market_close_dt.strftime('%I:%M %p')} - 8:00 PM ET"
+        else:
+            is_early_close = today_dt in EARLY_CLOSE_DAYS
+            regular_hours = f"9:30 AM - {'1:00 PM' if is_early_close else '4:00 PM'} ET"
+            after_hours = f"{'1:00 PM' if is_early_close else '4:00 PM'} - 8:00 PM ET"
 
         return {
             'pre_market': '4:00 AM - 9:30 AM ET',
-            'regular': f"9:30 AM - {'1:00 PM' if is_early_close else '4:00 PM'} ET",
-            'after_hours': f"{'1:00 PM' if is_early_close else '4:00 PM'} - 8:00 PM ET",
+            'regular': regular_hours,
+            'after_hours': after_hours,
             'is_early_close': is_early_close,
             'early_close_reason': EARLY_CLOSE_DAYS.get(today_dt, None),
         }

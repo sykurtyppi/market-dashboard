@@ -440,23 +440,44 @@ class CBOECollector:
         """
         Get all put/call ratios
 
+        Priority:
+        1. CBOE official data (scraped)
+        2. SPY options chain (from Yahoo Finance)
+        3. VIX/VIX3M proxy estimate
+
         Returns:
-            Dict with equity_pc, total_pc, and metadata
+            Dict with equity_pc, total_pc, source, and metadata
         """
         try:
-            equity_pc = self.get_equity_put_call_ratio()
-            total_pc = self.get_total_put_call_ratio()
-
-            # Try to get CBOE official P/C (if available)
+            # Try to get CBOE official P/C first (if available)
             cboe_pc = self._scrape_cboe_put_call()
 
-            result = {
-                'equity_pc': cboe_pc.get('equity_pc') if cboe_pc else equity_pc,
-                'total_pc': cboe_pc.get('total_pc') if cboe_pc else total_pc,
-                'index_pc': cboe_pc.get('index_pc') if cboe_pc else None,
-                'is_estimated': cboe_pc is None,
-                'timestamp': datetime.now().isoformat()
-            }
+            if cboe_pc and cboe_pc.get('equity_pc'):
+                result = {
+                    'equity_pc': cboe_pc.get('equity_pc'),
+                    'total_pc': cboe_pc.get('total_pc'),
+                    'index_pc': cboe_pc.get('index_pc'),
+                    'source': 'CBOE',
+                    'is_estimated': False,
+                    'timestamp': datetime.now().isoformat()
+                }
+            else:
+                # Fall back to computed values (SPY options or VIX proxy)
+                equity_pc = self.get_equity_put_call_ratio()
+                total_pc = self.get_total_put_call_ratio()
+
+                # Determine source based on whether we used SPY options or VIX proxy
+                # The get_equity_put_call_ratio tries SPY first, then falls back to VIX
+                is_estimated = 'equity_put_call' in self._estimated_fields
+
+                result = {
+                    'equity_pc': equity_pc,
+                    'total_pc': total_pc,
+                    'index_pc': None,
+                    'source': 'VIX_PROXY' if is_estimated else 'SPY_OPTIONS',
+                    'is_estimated': is_estimated,
+                    'timestamp': datetime.now().isoformat()
+                }
 
             # Add sentiment interpretation
             pc = result['equity_pc'] or result['total_pc']

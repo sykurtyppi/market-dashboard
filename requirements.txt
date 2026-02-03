@@ -25,3 +25,4 @@ python-dotenv>=1.0.0
 
 # Calculations
 scipy>=1.11.0  # For advanced calculations
+pandas_market_calendars>=4.4.0  # Accurate NYSE holiday/early close calendar

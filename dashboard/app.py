@@ -16,6 +16,12 @@ from pathlib import Path
 import os
 import yfinance as yf
 import logging
+from utils.data_status import (
+    DataStatus,
+    DataStatusTracker,
+    calculate_data_age,
+    get_staleness_status,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -127,6 +133,8 @@ try:
         calculate_composite_risk_score,
         compare_to_historical,
         HISTORICAL_PERIODS,
+        data_source_caption,
+        metric_status_caption,
     )
 
 except ImportError as e:
@@ -147,6 +155,34 @@ def get_mcclellan_scale_factor():
     Full mode (500 stocks): 1.0x (no scaling)
     """
     return 1.0 if get_breadth_mode() == 'full' else 5.0
+
+
+def parse_timestamp(value):
+    """Parse date/timestamp strings or datetime objects into datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if hasattr(value, "to_pydatetime"):
+        return value.to_pydatetime()
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            try:
+                return datetime.strptime(value, "%Y-%m-%d")
+            except ValueError:
+                return None
+    return None
+
+
+def status_from_timestamp(value):
+    """Return (DataStatus, age_hours) based on a timestamp."""
+    ts = parse_timestamp(value)
+    if ts is None:
+        return DataStatus.UNAVAILABLE, None
+    age_hours = calculate_data_age(ts)
+    return get_staleness_status(age_hours), age_hours
 
 # Dynamic scale factor based on mode
 MCCLELLAN_SCALE_FACTOR = get_mcclellan_scale_factor()
@@ -339,21 +375,25 @@ def get_vrp_history_cached(days: int = 180):
 
 @st.cache_data(ttl=300)
 def get_vix_term_structure():
-    """Approximate VIX term structure using VIX and VIX ETFs."""
+    """Build VIX term structure from available CBOE/Yahoo indices."""
     try:
-        vix = yf.Ticker("^VIX").history(period="1d")["Close"].iloc[-1]
-        vixy = yf.Ticker("VIXY").history(period="1d")["Close"].iloc[-1]
-        vxz = yf.Ticker("VXZ").history(period="1d")["Close"].iloc[-1]
+        cboe = CBOECollector()
+        vix9d = cboe.get_vix9d()
+        vix = cboe.get_vix()
+        vix3m = cboe.get_vix3m()
 
-        term_structure = {
-            "Spot": float(vix),
-            "1-Month": float(vix * 1.02),
-            "2-Month": float(vix * (vixy / 20)),
-            "3-Month": float(vix * (vxz / 20)),
-            "4-Month": float(vix * (vxz / 20) * 1.03),
-        }
+        term_points = []
+        if vix9d is not None:
+            term_points.append(("9D", float(vix9d)))
+        if vix is not None:
+            term_points.append(("Spot", float(vix)))
+        if vix3m is not None:
+            term_points.append(("3M", float(vix3m)))
 
-        return pd.DataFrame(list(term_structure.items()), columns=["Maturity", "VIX Level"])
+        if not term_points:
+            return pd.DataFrame()
+
+        return pd.DataFrame(term_points, columns=["Maturity", "VIX Level"])
     except Exception:
         return pd.DataFrame()
 
@@ -802,6 +842,13 @@ with st.sidebar:
                 st.error(f"Error: {e}")
                 logger.error(f"PDF error: {e}", exc_info=True)
 
+    st.divider()
+    st.caption(
+        "Data notice: This product uses the FRED® API but is not endorsed or certified by "
+        "the Federal Reserve Bank of St. Louis. Market data sources may be delayed."
+    )
+    st.caption("Created by Tristan Alejandro. Not financial advice.")
+
 # -------------------------------------------------------------------
 # MAIN TITLE
 # -------------------------------------------------------------------
@@ -849,12 +896,54 @@ def save_to_env(key: str, value: str):
 
 
 if page == "Overview":
-    snapshot = components["db"].get_latest_snapshot()
+    snapshot = components["db"].get_latest_snapshot(include_age=True)
 
     if not snapshot:
-        st.warning("No data available. Run: python scheduler/daily_update.py")
-        st.code("python scheduler/daily_update.py")
-        st.stop()
+        st.warning("⏳ No cached data available. Fetching fresh data...")
+
+        # Try to fetch fresh data on-demand for Streamlit Cloud
+        try:
+            with st.spinner("Loading market data (this may take a moment on first load)..."):
+                from scheduler.daily_update import MarketDataUpdater
+                updater = MarketDataUpdater()
+                updater.run_full_update()
+
+                # Reload snapshot after update
+                snapshot = components["db"].get_latest_snapshot(include_age=True)
+
+                if snapshot:
+                    st.success("✅ Data loaded successfully!")
+                    st.rerun()
+                else:
+                    st.error("❌ Could not fetch data. Please check API keys in Settings → Secrets.")
+                    st.info("Required: FRED_API_KEY. Get one free at https://fred.stlouisfed.org/docs/api/api_key.html")
+                    st.stop()
+        except Exception as e:
+            st.error(f"❌ Error loading data: {str(e)}")
+            st.info("💡 Make sure FRED_API_KEY is set in Streamlit Cloud Secrets (Settings → Secrets)")
+            st.code("""# Add to Streamlit Secrets:
+FRED_API_KEY = "your_key_here"
+NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
+            st.stop()
+
+    status_tracker = DataStatusTracker()
+    snapshot_status, snapshot_age_hours = status_from_timestamp(snapshot.get("date"))
+    status_tracker.update("snapshot", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+
+    def latest_indicator_timestamp(indicator_name: str, days: int = 30):
+        df = components["db"].get_indicator_history(indicator_name, days=days)
+        if df.empty:
+            return None
+        return df["date"].iloc[-1]
+
+    credit_ts = latest_indicator_timestamp("credit_spread_hy") or snapshot.get("date")
+    credit_status, credit_age = status_from_timestamp(credit_ts)
+    treasury_ts = latest_indicator_timestamp("treasury_10y") or snapshot.get("date")
+    treasury_status, treasury_age = status_from_timestamp(treasury_ts)
+
+    breadth_latest = components["db"].get_latest_breadth()
+    breadth_ts = (breadth_latest or {}).get("date") or snapshot.get("date")
+    breadth_status, breadth_age = status_from_timestamp(breadth_ts)
     
     # ========== REGIME SUMMARY BANNER ==========
     st.markdown("###  Market Regime Summary")
@@ -1031,6 +1120,9 @@ if page == "Overview":
             f"{val:.2f}%" if val is not None else "N/A",
             help=get_tooltip('credit_spread_hy')
         )
+        status_tracker.update("credit_spread_hy", credit_status, age_hours=credit_age or 0.0)
+        data_source_caption(col1, "FRED (BAMLH0A0HYM2)", "daily")
+        metric_status_caption(col1, status_tracker.get_source("credit_spread_hy"))
         if val is not None:
             credit_pct = get_credit_spread_percentile(val * 100)  # Convert to bps
             if credit_pct and credit_pct.get('context'):
@@ -1043,6 +1135,9 @@ if page == "Overview":
             f"{val:.2f}%" if val is not None else "N/A",
             help="Benchmark risk-free rate. Rising = tighter financial conditions."
         )
+        status_tracker.update("treasury_10y", treasury_status, age_hours=treasury_age or 0.0)
+        data_source_caption(col2, "FRED (DGS10)", "daily")
+        metric_status_caption(col2, status_tracker.get_source("treasury_10y"))
 
     with col3:
         val = snapshot.get("fear_greed_score")
@@ -1051,6 +1146,9 @@ if page == "Overview":
             f"{val:.0f}" if val is not None else "N/A",
             help=get_tooltip('fear_greed')
         )
+        status_tracker.update("fear_greed_score", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+        data_source_caption(col3, "CNN Fear & Greed Index", "daily (approx)")
+        metric_status_caption(col3, status_tracker.get_source("fear_greed_score"))
         if val is not None:
             fg_ctx = get_fear_greed_percentile(val)
             if fg_ctx:
@@ -1068,6 +1166,9 @@ if page == "Overview":
             f"{signal_icon} {val}" if val else "N/A",
             help=get_tooltip('left_signal')
         )
+        status_tracker.update("left_signal", credit_status, age_hours=credit_age or 0.0)
+        data_source_caption(col4, "Derived (FRED HYG OAS)", "daily")
+        metric_status_caption(col4, status_tracker.get_source("left_signal"))
 
     st.divider()
 
@@ -1118,6 +1219,15 @@ if page == "Overview":
             f"{vix:.2f}" if vix is not None else "N/A",
             help=get_tooltip('vix')
         )
+        if fresh_cboe.get("vix_spot") is not None:
+            vix_status, vix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+            status_tracker.update("vix_spot", vix_status, age_hours=vix_age or 0.0)
+        elif vix is not None:
+            status_tracker.update("vix_spot", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+        else:
+            status_tracker.update("vix_spot", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+        data_source_caption(col1, "Yahoo Finance (^VIX)", "delayed")
+        metric_status_caption(col1, status_tracker.get_source("vix_spot"))
         # Add percentile context
         if vix is not None:
             vix_pct = get_vix_percentile(vix, lookback_days=252)
@@ -1137,6 +1247,13 @@ if page == "Overview":
                 display_val,
                 help=get_tooltip('vix_contango')
             )
+            contango_status = DataStatus.ESTIMATED if is_estimated else DataStatus.OK
+            contango_status, contango_age = (
+                (DataStatus.ESTIMATED, 0.0) if is_estimated else status_from_timestamp(fresh_cboe.get("timestamp"))
+            )
+            status_tracker.update("vix_contango", contango_status, age_hours=contango_age or 0.0)
+            data_source_caption(col2, "Derived (VIX/VIX3M, Yahoo)", "delayed")
+            metric_status_caption(col2, status_tracker.get_source("vix_contango"))
             if contango > 0:
                 st.caption("📈 Contango (bullish)")
             else:
@@ -1145,65 +1262,110 @@ if page == "Overview":
             contango = snapshot.get("vix_contango")
             if contango is not None:
                 st.metric("VIX Contango", f"{contango:+.2f}%", help=get_tooltip('vix_contango'))
+                status_tracker.update("vix_contango", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+                data_source_caption(col2, "Local DB snapshot", "varies")
+                metric_status_caption(col2, status_tracker.get_source("vix_contango"))
                 st.caption("📦 Cached data")
             else:
                 st.metric("VIX Contango", "N/A")
+                status_tracker.update("vix_contango", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+                data_source_caption(col2, "Derived (VIX/VIX3M, Yahoo)", "delayed")
+                metric_status_caption(col2, status_tracker.get_source("vix_contango"))
 
     with col3:
-        load_dotenv()
-        manual_pcce = os.getenv('MANUAL_PCCE', '0.0')
-        manual_pcce_date = os.getenv('MANUAL_PCCE_DATE', '')
-        
-        try:
-            manual_pcce_value = float(manual_pcce) if manual_pcce else 0.0
-        except Exception:
-            manual_pcce_value = 0.0
-        
-        if manual_pcce_value > 0:
-            st.metric("Equity Put/Call (PCCE)", f"{manual_pcce_value:.3f}")
-            st.caption(f"✅ Manual ({manual_pcce_date or 'Today'})")
-            
-            if manual_pcce_value > 1.0:
-                st.caption("Bearish (high P/C)")
-            elif manual_pcce_value < 0.7:
-                st.caption("Bullish (low P/C)")
+        # Get put/call ratio - prioritize live data over manual
+        pc_ratios = fresh_cboe.get("put_call_ratios", {})
+        equity_pc = pc_ratios.get("equity_pc")
+        pc_source = pc_ratios.get("source", "")
+
+        # Determine the source and display appropriately
+        if equity_pc is not None:
+            st.metric("Equity Put/Call", f"{equity_pc:.3f}")
+
+            # Show source
+            if pc_source == "CBOE":
+                pc_status, pc_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+                status_tracker.update("equity_put_call", pc_status, age_hours=pc_age or 0.0)
+                data_source_caption(col3, "CBOE", "delayed")
+                st.caption("📊 CBOE Live")
+            elif pc_source == "SPY_OPTIONS":
+                pc_status, pc_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+                status_tracker.update("equity_put_call", pc_status, age_hours=pc_age or 0.0)
+                data_source_caption(col3, "Yahoo Finance (SPY options)", "delayed")
+                st.caption("📈 SPY Options OI")
+            elif pc_source == "VIX_PROXY":
+                status_tracker.update("equity_put_call", DataStatus.ESTIMATED, age_hours=0.0)
+                data_source_caption(col3, "Derived (VIX/VIX3M)", "delayed")
+                st.caption("📉 VIX/VIX3M Proxy")
             else:
-                st.caption("Neutral range")
+                status_tracker.update("equity_put_call", DataStatus.PARTIAL, age_hours=0.0)
+                data_source_caption(col3, "Unknown source", "unknown")
+                st.caption("📈 Live Data")
+            metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
+
+            # Interpretation
+            if equity_pc > 1.0:
+                st.caption("🔴 Bearish (high P/C)")
+            elif equity_pc < 0.7:
+                st.caption("🟢 Bullish (low P/C)")
+            else:
+                st.caption("🟡 Neutral range")
         else:
-            pc_ratios = fresh_cboe.get("put_call_ratios", {})
-            equity_pc = pc_ratios.get("equity_pc")
-            
-            if equity_pc is not None:
-                st.metric("Equity P/C (Estimated)", f"{equity_pc:.2f}")
-                st.caption(" VIX/VXV proxy")
-                
-                if equity_pc > 1.0:
-                    st.caption("Bearish (high)")
-                elif equity_pc < 0.7:
-                    st.caption("Bullish (low)")
+            # Fallback to manual or cached
+            load_dotenv()
+            manual_pcce = os.getenv('MANUAL_PCCE', '0.0')
+            manual_pcce_date = os.getenv('MANUAL_PCCE_DATE', '')
+
+            try:
+                manual_pcce_value = float(manual_pcce) if manual_pcce else 0.0
+            except Exception:
+                manual_pcce_value = 0.0
+
+            if manual_pcce_value > 0:
+                st.metric("Equity Put/Call", f"{manual_pcce_value:.3f}")
+                status_tracker.update("equity_put_call", DataStatus.ESTIMATED, age_hours=0.0)
+                data_source_caption(col3, "Manual input", "user-provided")
+                metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
+                st.caption(f"✏️ Manual ({manual_pcce_date or 'Today'})")
+
+                if manual_pcce_value > 1.0:
+                    st.caption("🔴 Bearish (high P/C)")
+                elif manual_pcce_value < 0.7:
+                    st.caption("🟢 Bullish (low P/C)")
                 else:
-                    st.caption("Neutral")
+                    st.caption("🟡 Neutral range")
             else:
                 pc = snapshot.get("put_call_ratio")
                 if pc is not None:
-                    st.metric("Equity P/C (Cached)", f"{pc:.2f}")
-                    st.caption("⚠️ Stale data")
-                    st.caption("Update or set manual")
+                    st.metric("Equity Put/Call", f"{pc:.3f}")
+                    status_tracker.update("equity_put_call", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+                    data_source_caption(col3, "Local DB snapshot", "varies")
+                    metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
+                    st.caption("📦 Cached data")
                 else:
                     st.metric("Equity Put/Call", "N/A")
-                    st.caption("Set in Settings →")
+                    status_tracker.update("equity_put_call", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+                    data_source_caption(col3, "Unknown source", "unknown")
+                    metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
+                    st.caption("Data unavailable")
 
     with col4:
         breadth = snapshot.get("market_breadth")
         if breadth is not None:
             pct = breadth * 100 if breadth <= 1 else breadth
             st.metric("Market Breadth", f"{pct:.1f}%")
+            status_tracker.update("market_breadth", breadth_status, age_hours=breadth_age or 0.0)
+            data_source_caption(col4, "Yahoo Finance (S&P 500 components)", "delayed")
+            metric_status_caption(col4, status_tracker.get_source("market_breadth"))
             if pct > 60:
                 st.caption("Strong participation")
             elif pct < 40:
                 st.caption("Weak participation")
         else:
             st.metric("Market Breadth", "N/A")
+            status_tracker.update("market_breadth", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col4, "Yahoo Finance (S&P 500 components)", "delayed")
+            metric_status_caption(col4, status_tracker.get_source("market_breadth"))
 
     st.subheader("Advanced Volatility Metrics")
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -1217,6 +1379,9 @@ if page == "Overview":
                 f"{vix9d:.2f}",
                 help="9-day implied vol. Spread vs VIX shows near-term event risk."
             )
+            status_tracker.update("vix9d", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col1, "Yahoo Finance (^VIX9D)", "delayed")
+            metric_status_caption(col1, status_tracker.get_source("vix9d"))
             if vix is not None:
                 spread = vix9d - vix
                 spread_pct = (spread / vix) * 100
@@ -1228,29 +1393,54 @@ if page == "Overview":
                     st.caption(f"{spread_pct:+.0f}% normal")
         else:
             st.metric("VIX9D", "N/A")
+            status_tracker.update("vix9d", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col1, "Yahoo Finance (^VIX9D)", "delayed")
+            metric_status_caption(col1, status_tracker.get_source("vix9d"))
 
     with col2:
         vvix = fresh_cboe.get("vvix") if fresh_cboe else None
         if vvix is not None:
             if vvix >= 120:
                 st.metric("🎯 VVIX", f"{vvix:.1f}", delta="BUY", help=get_tooltip('vvix'))
+                vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+                status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
+                data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
+                metric_status_caption(col2, status_tracker.get_source("vvix"))
                 st.caption("🟢 Historic buy zone")
             elif vvix >= 110:
                 st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
+                vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+                status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
+                data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
+                metric_status_caption(col2, status_tracker.get_source("vvix"))
                 st.caption("🟡 Elevated")
             elif vvix >= 80:
                 st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
+                vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+                status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
+                data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
+                metric_status_caption(col2, status_tracker.get_source("vvix"))
                 st.caption("Normal")
             else:
                 st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
+                vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+                status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
+                data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
+                metric_status_caption(col2, status_tracker.get_source("vvix"))
                 st.caption("🟠 Complacent")
         else:
             st.metric("VVIX", "N/A")
+            status_tracker.update("vvix", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
+            metric_status_caption(col2, status_tracker.get_source("vvix"))
 
     with col3:
         skew = snapshot.get("skew")
         if skew is not None:
             st.metric("SKEW", f"{skew:.0f}", help=get_tooltip('skew'))
+            status_tracker.update("skew", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col3, "Yahoo Finance (^SKEW)", "delayed")
+            metric_status_caption(col3, status_tracker.get_source("skew"))
             if skew > 150:
                 st.caption("🔴 Extreme hedging")
             elif skew > 145:
@@ -1261,11 +1451,17 @@ if page == "Overview":
                 st.caption("Low protection")
         else:
             st.metric("SKEW", "N/A")
+            status_tracker.update("skew", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col3, "Yahoo Finance (^SKEW)", "delayed")
+            metric_status_caption(col3, status_tracker.get_source("skew"))
 
     with col4:
         vrp = snapshot.get("vrp")
         if vrp is not None:
             st.metric("VRP", f"{vrp:+.1f}", help=get_tooltip('vrp'))
+            status_tracker.update("vrp", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col4, "Derived (VIX & SPY realized)", "varies")
+            metric_status_caption(col4, status_tracker.get_source("vrp"))
             if vrp > 5:
                 st.caption("🟢 Options expensive")
             elif vrp > 0:
@@ -1274,6 +1470,9 @@ if page == "Overview":
                 st.caption("🔴 Negative (risk)")
         else:
             st.metric("VRP", "N/A")
+            status_tracker.update("vrp", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col4, "Derived (VIX & SPY realized)", "varies")
+            metric_status_caption(col4, status_tracker.get_source("vrp"))
 
     with col5:
         vix3m = fresh_cboe.get("vix3m")
@@ -1288,6 +1487,13 @@ if page == "Overview":
                 display_val,
                 help="VIX term structure slope. Positive = contango (normal)."
             )
+            if is_vix3m_est:
+                slope_status, slope_age = DataStatus.ESTIMATED, 0.0
+            else:
+                slope_status, slope_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+            status_tracker.update("term_slope", slope_status, age_hours=slope_age or 0.0)
+            data_source_caption(col5, "Derived (VIX vs VIX3M)", "varies")
+            metric_status_caption(col5, status_tracker.get_source("term_slope"))
             if slope_per_day > 0.05:
                 st.caption("🟢 Steep contango")
             elif slope_per_day > 0:
@@ -1296,6 +1502,9 @@ if page == "Overview":
                 st.caption("🔴 Inverted")
         else:
             st.metric("Term Slope", "N/A")
+            status_tracker.update("term_slope", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+            data_source_caption(col5, "Derived (VIX vs VIX3M)", "varies")
+            metric_status_caption(col5, status_tracker.get_source("term_slope"))
     
     st.divider()
     signal = snapshot.get("left_signal")

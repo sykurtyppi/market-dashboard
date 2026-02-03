@@ -16,6 +16,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from utils.data_status import DataResult, format_age_string
+
 
 # =============================================================================
 # PERCENTILE CALCULATIONS
@@ -356,6 +358,53 @@ def metric_with_context(
     # Add custom caption if provided
     if caption:
         st_column.caption(caption)
+
+
+# =============================================================================
+# DATA SOURCE LABELS
+# =============================================================================
+
+def data_source_caption(
+    st_column,
+    source: str,
+    delay: Optional[str] = None,
+    note: Optional[str] = None
+):
+    """
+    Display a compact data source + delay label under a metric.
+
+    Args:
+        st_column: Streamlit column context
+        source: Data source label (e.g., "FRED (DGS10)")
+        delay: Optional delay label (e.g., "daily", "delayed")
+        note: Optional extra note
+    """
+    parts = [f"Source: {source}"]
+    if delay:
+        parts.append(f"Delay: {delay}")
+    if note:
+        parts.append(note)
+
+    st_column.caption(" | ".join(parts))
+
+
+def metric_status_caption(st_column, data_result: Optional[DataResult]):
+    """
+    Display a compact status badge for a metric.
+
+    Args:
+        st_column: Streamlit column context
+        data_result: DataResult from DataStatusTracker
+    """
+    if not data_result:
+        return
+
+    label = data_result.status.value.replace("_", " ").title()
+    age_note = ""
+    if data_result.age_hours and data_result.age_hours > 0:
+        age_note = f" ({format_age_string(data_result.age_hours)})"
+
+    st_column.caption(f"Status: {data_result.status_emoji} {label}{age_note}")
 
 
 # =============================================================================

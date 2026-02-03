@@ -47,17 +47,30 @@ class MarketDataUpdater:
     """Main class for daily market data updates."""
 
     def __init__(self):
-        # Phase 1 collectors
-        self.fred = FREDCollector()
+        # Phase 1 collectors - FRED is optional (requires API key)
+        try:
+            self.fred = FREDCollector()
+        except ValueError as e:
+            print(f"⚠️ FRED collector disabled: {e}")
+            self.fred = None
+
         self.fear_greed = FearGreedCollector()
         self.cboe = CBOECollector()
         self.breadth = SP500ADLineCalculator()
         self.yahoo = YahooCollector()
 
-        # Phase 2 collectors
-        self.fed_bs = FedBalanceSheetCollector()
+        # Phase 2 collectors - also optional
+        try:
+            self.fed_bs = FedBalanceSheetCollector()
+        except Exception:
+            self.fed_bs = None
+
         self.move = MOVECollector()
-        self.repo = RepoCollector()
+
+        try:
+            self.repo = RepoCollector()
+        except Exception:
+            self.repo = None
 
         # DB & processors
         self.db = DatabaseManager()
@@ -87,17 +100,21 @@ class MarketDataUpdater:
         print("=" * 80)
 
         # ------------------------------------------------------------------
-        # 1. FRED data
+        # 1. FRED data (optional - requires API key)
         # ------------------------------------------------------------------
-        print("\n📊 Fetching FRED data...")
-        fred_data = self.fred.get_all_indicators()
+        fred_data = None
+        if self.fred:
+            print("\n📊 Fetching FRED data...")
+            fred_data = self.fred.get_all_indicators()
 
-        if fred_data:
-            print(f"✓ Fetched {len(fred_data)} FRED indicator series")
-            self.db.save_indicators_batch(fred_data)
-            print("✓ Saved FRED indicators to database")
+            if fred_data:
+                print(f"✓ Fetched {len(fred_data)} FRED indicator series")
+                self.db.save_indicators_batch(fred_data)
+                print("✓ Saved FRED indicators to database")
+            else:
+                print("⚠️ No FRED data returned")
         else:
-            print("✗ Failed to fetch FRED data")
+            print("\n⚠️ Skipping FRED data (no API key configured)")
 
         # ------------------------------------------------------------------
         # 2. LEFT strategy signal (uses HY credit spreads from FRED)
@@ -260,6 +277,9 @@ class MarketDataUpdater:
         print("\n🏦 Fetching Fed Balance Sheet data (Phase 2)...")
         fed_bs_data = None
         try:
+            if not self.fed_bs:
+                print("⚠️ Fed Balance Sheet collector not available (requires FRED API)")
+                raise Exception("Collector not initialized")
             fed_bs_data = self.fed_bs.get_balance_sheet_df()
             if fed_bs_data is not None and not fed_bs_data.empty:
                 latest_assets = fed_bs_data['total_assets'].iloc[-1] / 1e6  # Convert to trillions
@@ -308,6 +328,9 @@ class MarketDataUpdater:
         sofr_value = None
         rrp_value = None
         try:
+            if not self.repo:
+                print("⚠️ Repo collector not available (requires FRED API)")
+                raise Exception("Collector not initialized")
             repo_df = self.repo.get_repo_history(days_back=90)
             if repo_df is not None and not repo_df.empty:
                 latest = repo_df.iloc[-1]
