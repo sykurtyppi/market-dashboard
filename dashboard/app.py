@@ -16,6 +16,16 @@ from pathlib import Path
 import os
 import yfinance as yf
 import logging
+
+# -------------------------------------------------------------------
+# PATH / ENV SETUP - MUST BE BEFORE OTHER LOCAL IMPORTS
+# -------------------------------------------------------------------
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
+
+# Now import from utils (after path setup)
 from utils.data_status import (
     DataStatus,
     DataStatusTracker,
@@ -26,13 +36,6 @@ from utils.data_status import (
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# -------------------------------------------------------------------
-# PATH / ENV SETUP
-# -------------------------------------------------------------------
-current_dir = Path(__file__).parent
-parent_dir = current_dir.parent
-sys.path.insert(0, str(parent_dir))
 
 from dotenv import load_dotenv
 load_dotenv()
