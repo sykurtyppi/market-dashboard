@@ -14,23 +14,21 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.retry_utils import exponential_backoff_retry
+from utils.secrets_helper import get_secret
 from config import cfg
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 class FREDCollector:
     """Collects data from FRED API"""
-    
+
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv('FRED_API_KEY')
+        self.api_key = api_key or get_secret('FRED_API_KEY')
         self.base_url = "https://api.stlouisfed.org/fred/series/observations"
-        
+
         if not self.api_key:
             raise ValueError(
                 "FRED API key not found. Get one at https://fred.stlouisfed.org/docs/api/api_key.html"
