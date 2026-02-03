@@ -468,7 +468,7 @@ class CBOECollector:
 
                 # Determine source based on whether we used SPY options or VIX proxy
                 # The get_equity_put_call_ratio tries SPY first, then falls back to VIX
-                is_estimated = 'equity_put_call' in self._estimated_fields
+                is_estimated = any(e.get('field') == 'equity_put_call' for e in self.estimated_fields)
 
                 result = {
                     'equity_pc': equity_pc,

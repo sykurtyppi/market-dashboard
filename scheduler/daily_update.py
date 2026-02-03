@@ -391,13 +391,33 @@ class MarketDataUpdater:
         elif vvix_signal == 'BUY ALERT':
             print(f"🟡 VVIX elevated at {vvix:.1f} - Watch for 120+ spike")
 
+        # Get fallback values from Yahoo if FRED unavailable
+        fred_hy_spread = self._safe_get_latest_fred(fred_data, "credit_spread_hy")
+        fred_treasury_10y = self._safe_get_latest_fred(fred_data, "treasury_10y")
+
+        # Use Yahoo fallbacks if FRED data is missing
+        treasury_10y_final = fred_treasury_10y
+        hy_spread_final = fred_hy_spread
+
+        if treasury_10y_final is None:
+            yahoo_treasury = yahoo_data.get("treasury_10y")
+            if yahoo_treasury is not None:
+                treasury_10y_final = yahoo_treasury
+                print(f"  📊 Using Yahoo fallback for 10Y Treasury: {treasury_10y_final:.2f}%")
+
+        if hy_spread_final is None:
+            yahoo_hy = yahoo_data.get("hy_spread_proxy")
+            if yahoo_hy is not None:
+                hy_spread_final = yahoo_hy
+                print(f"  📊 Using Yahoo fallback for HY Spread: {hy_spread_final:.2f}%")
+
         snapshot = {
             # Core identifiers
             "date": datetime.now().strftime("%Y-%m-%d"),
-            # Phase 1: Credit & Rates
-            "credit_spread_hy": self._safe_get_latest_fred(fred_data, "credit_spread_hy"),
+            # Phase 1: Credit & Rates (with Yahoo fallbacks)
+            "credit_spread_hy": hy_spread_final,
             "credit_spread_ig": self._safe_get_latest_fred(fred_data, "credit_spread_ig"),
-            "treasury_10y": self._safe_get_latest_fred(fred_data, "treasury_10y"),
+            "treasury_10y": treasury_10y_final,
             "fed_funds": self._safe_get_latest_fred(fred_data, "fed_funds"),
             # Phase 1: Volatility
             "vix_spot": vix_spot,

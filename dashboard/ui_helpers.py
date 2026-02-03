@@ -399,7 +399,16 @@ def metric_status_caption(st_column, data_result: Optional[DataResult]):
     if not data_result:
         return
 
-    label = data_result.status.value.replace("_", " ").title()
+    # Handle case where status is None
+    if not data_result.status:
+        return
+
+    # Handle case where status might be a string instead of DataStatus enum
+    if hasattr(data_result.status, 'value'):
+        label = data_result.status.value.replace("_", " ").title()
+    else:
+        # If status is already a string, use it directly
+        label = str(data_result.status).replace("_", " ").title()
     age_note = ""
     if data_result.age_hours and data_result.age_hours > 0:
         age_note = f" ({format_age_string(data_result.age_hours)})"

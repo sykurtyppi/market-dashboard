@@ -868,8 +868,17 @@ st.title("Market Risk Dashboard")
 @st.cache_resource
 def get_cta_collector():
     """Cached CTA collector to avoid multiple DB connections"""
-    from data_collectors.cta_collector import CTACollector
-    return CTACollector(db_path="data/cta_prices.db")
+    try:
+        from data_collectors.cta_collector import CTACollector
+        import os
+        # Use temp directory for Streamlit Cloud (ephemeral storage)
+        db_path = "data/cta_prices.db"
+        # Ensure data directory exists
+        os.makedirs("data", exist_ok=True)
+        return CTACollector(db_path=db_path)
+    except Exception as e:
+        logger.warning(f"CTA collector unavailable: {e}")
+        return None
 
 
 def save_to_env(key: str, value: str):
@@ -933,6 +942,28 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
     snapshot_status, snapshot_age_hours = status_from_timestamp(snapshot.get("date"))
     status_tracker.update("snapshot", snapshot_status, age_hours=snapshot_age_hours or 0.0)
 
+    # Check if FRED data is missing and show warning
+    fred_data_missing = (
+        snapshot.get("credit_spread_hy") is None or
+        snapshot.get("treasury_10y") is None
+    )
+
+    if fred_data_missing:
+        from utils.secrets_helper import get_secret
+        fred_key = get_secret('FRED_API_KEY')
+
+        if not fred_key:
+            st.warning("""
+            ⚠️ **FRED API Key Not Configured** - Some data using Yahoo Finance fallbacks
+
+            For full functionality, add your FRED API key:
+            1. Get a **free** key at https://fred.stlouisfed.org/docs/api/api_key.html
+            2. Go to **Settings** → **Secrets** (in Streamlit Cloud)
+            3. Add: `FRED_API_KEY = "your_key_here"`
+            """)
+        else:
+            st.info("ℹ️ Some FRED data unavailable - using Yahoo Finance fallbacks where possible")
+
     def latest_indicator_timestamp(indicator_name: str, days: int = 30):
         df = components["db"].get_indicator_history(indicator_name, days=days)
         if df.empty:
@@ -956,18 +987,18 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
     
     # Build regime components
     regime_parts = []
-    
+
     # 1. Credit / Macro
     if snapshot.get('credit_spread_hy'):
         hy_spread = snapshot['credit_spread_hy']
         # hy_spread is in bps (e.g. 350 = 3.5%)
         if hy_spread < 300:
-            credit_status = "🟢 Supportive"
+            credit_regime_label = "🟢 Supportive"
         elif hy_spread < 450:
-            credit_status = "🟡 Neutral"
+            credit_regime_label = "🟡 Neutral"
         else:
-            credit_status = "🔴 Risk-Off"
-        regime_parts.append(f"**Credit:** {credit_status}")
+            credit_regime_label = "🔴 Risk-Off"
+        regime_parts.append(f"**Credit:** {credit_regime_label}")
     
     # 2. Volatility Regime
     if vrp_data:
@@ -1114,18 +1145,55 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
             st.table(pd.DataFrame(comp_data))
 
     st.subheader("Key Market Indicators")
+
+    # Fetch live Yahoo data for fallbacks when FRED is unavailable
+    @st.cache_data(ttl=300)  # Cache for 5 minutes
+    def get_live_yahoo_fallbacks():
+        """Fetch Treasury and HY spread from Yahoo as fallback"""
+        try:
+            yahoo = YahooCollector()
+            return {
+                'treasury_10y': yahoo.get_treasury_10y(),
+                'hy_spread_proxy': yahoo.get_hy_spread_proxy(),
+            }
+        except Exception as e:
+            logger.warning(f"Yahoo fallback fetch failed: {e}")
+            return {}
+
+    # Get fallback data if needed
+    yahoo_fallbacks = {}
+    if snapshot.get("credit_spread_hy") is None or snapshot.get("treasury_10y") is None:
+        yahoo_fallbacks = get_live_yahoo_fallbacks()
+
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         val = snapshot.get("credit_spread_hy")
+        source_text = "FRED (BAMLH0A0HYM2)"
+        is_fallback = False
+
+        # Use Yahoo fallback if FRED data unavailable
+        if val is None and yahoo_fallbacks.get('hy_spread_proxy'):
+            val = yahoo_fallbacks['hy_spread_proxy']
+            source_text = "Yahoo (HYG proxy)"
+            is_fallback = True
+
         st.metric(
             "HY Spread",
             f"{val:.2f}%" if val is not None else "N/A",
             help=get_tooltip('credit_spread_hy')
         )
-        status_tracker.update("credit_spread_hy", credit_status, age_hours=credit_age or 0.0)
-        data_source_caption(col1, "FRED (BAMLH0A0HYM2)", "daily")
+
+        if is_fallback:
+            status_tracker.update("credit_spread_hy", DataStatus.ESTIMATED, age_hours=0.0)
+            data_source_caption(col1, source_text, "estimated")
+            st.caption("📊 Yahoo proxy (FRED unavailable)")
+        else:
+            status_tracker.update("credit_spread_hy", credit_status, age_hours=credit_age or 0.0)
+            data_source_caption(col1, source_text, "daily")
+
         metric_status_caption(col1, status_tracker.get_source("credit_spread_hy"))
+
         if val is not None:
             credit_pct = get_credit_spread_percentile(val * 100)  # Convert to bps
             if credit_pct and credit_pct.get('context'):
@@ -1133,13 +1201,29 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
 
     with col2:
         val = snapshot.get("treasury_10y")
+        source_text = "FRED (DGS10)"
+        is_fallback = False
+
+        # Use Yahoo fallback if FRED data unavailable
+        if val is None and yahoo_fallbacks.get('treasury_10y'):
+            val = yahoo_fallbacks['treasury_10y']
+            source_text = "Yahoo (^TNX)"
+            is_fallback = True
+
         st.metric(
             "10Y Treasury",
             f"{val:.2f}%" if val is not None else "N/A",
             help="Benchmark risk-free rate. Rising = tighter financial conditions."
         )
-        status_tracker.update("treasury_10y", treasury_status, age_hours=treasury_age or 0.0)
-        data_source_caption(col2, "FRED (DGS10)", "daily")
+
+        if is_fallback:
+            status_tracker.update("treasury_10y", DataStatus.ESTIMATED, age_hours=0.0)
+            data_source_caption(col2, source_text, "live")
+            st.caption("📊 Yahoo live (FRED unavailable)")
+        else:
+            status_tracker.update("treasury_10y", treasury_status, age_hours=treasury_age or 0.0)
+            data_source_caption(col2, source_text, "daily")
+
         metric_status_caption(col2, status_tracker.get_source("treasury_10y"))
 
     with col3:
@@ -2037,22 +2121,26 @@ elif page == "Credit & Liquidity":
 
                     # Performance comparison table
                     with st.expander("📊 Detailed Performance"):
+                        # Safely get values with fallback to 0 for None
+                        def safe_pct(val):
+                            return val if val is not None else 0
+
                         perf_data = {
                             'Period': ['1 Day', '5 Day', '20 Day'],
                             'HYG': [
-                                f"{credit_flows.get('hyg_1d_pct', 0):+.2f}%",
-                                f"{credit_flows.get('hyg_5d_pct', 0):+.2f}%",
-                                f"{credit_flows.get('hyg_20d_pct', 0):+.2f}%"
+                                f"{safe_pct(credit_flows.get('hyg_1d_pct')):+.2f}%",
+                                f"{safe_pct(credit_flows.get('hyg_5d_pct')):+.2f}%",
+                                f"{safe_pct(credit_flows.get('hyg_20d_pct')):+.2f}%"
                             ],
                             'LQD': [
-                                f"{credit_flows.get('lqd_1d_pct', 0):+.2f}%",
-                                f"{credit_flows.get('lqd_5d_pct', 0):+.2f}%",
-                                f"{credit_flows.get('lqd_20d_pct', 0):+.2f}%"
+                                f"{safe_pct(credit_flows.get('lqd_1d_pct')):+.2f}%",
+                                f"{safe_pct(credit_flows.get('lqd_5d_pct')):+.2f}%",
+                                f"{safe_pct(credit_flows.get('lqd_20d_pct')):+.2f}%"
                             ],
                             'HYG-LQD (Relative)': [
-                                f"{credit_flows.get('relative_1d', 0):+.2f}%",
-                                f"{credit_flows.get('relative_5d', 0):+.2f}%",
-                                f"{credit_flows.get('relative_20d', 0):+.2f}%"
+                                f"{safe_pct(credit_flows.get('relative_1d')):+.2f}%",
+                                f"{safe_pct(credit_flows.get('relative_5d')):+.2f}%",
+                                f"{safe_pct(credit_flows.get('relative_20d')):+.2f}%"
                             ]
                         }
                         st.dataframe(pd.DataFrame(perf_data), hide_index=True, use_container_width=True)
@@ -4357,155 +4445,167 @@ elif page == "CTA Flow Tracker":
     Track systematic trend-following flows. CTAs control $400B+ and create self-reinforcing
     momentum at key technical levels. **Flip levels** show where CTAs likely adjust positions.
     """)
-    
+
     # Get cached CTA collector
     cta_collector = get_cta_collector()
-    
-    # Control buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(" Update Prices", help="Fetch latest price data (incremental)"):
-            with st.spinner("Updating prices..."):
-                cta_collector.update_prices()
-                st.success("✓ Prices updated")
-                st.rerun()
-    
-    with col2:
-        if st.button(" Refresh Analysis", help="Recompute CTA signals"):
-            st.session_state["cta_refresh"] = st.session_state.get("cta_refresh", 0) + 1
-    
-    # Run analysis (cached by session state)
-    refresh_key = st.session_state.get("cta_refresh", 0)
-    
-    @st.cache_data(ttl=900)  # Cache for 15 minutes
-    def get_cta_result(_refresh):
-        return cta_collector.get_cta_analysis()
-    
-    with st.spinner("Running CTA analysis..."):
-        result = get_cta_result(refresh_key)
-    
-    if result is None:
-        st.warning(" No CTA data available. Click 'Update Prices' to fetch data.")
+
+    # Handle case when collector is unavailable
+    if cta_collector is None:
+        st.warning("⚠️ CTA Flow Tracker requires local database. Not available on Streamlit Cloud.")
+        st.info("""
+        **To use CTA Flow Tracker locally:**
+        1. Run `python scheduler/daily_update.py` to initialize the database
+        2. The CTA collector will automatically fetch 5 years of price history
+        3. Refresh this page after the update completes
+        """)
     else:
-        # Asset class groupings
-        equities = ["SPY", "QQQ", "IWM", "EEM"]
-        bonds = ["TLT", "HYG"]
-        commodities = ["GLD"]
-        fx = ["UUP"]
-        
-        def safe_sum(symbols):
-            return result.latest_exposure[[s for s in symbols if s in result.latest_exposure.index]].sum()
-        
-        eq_exp = safe_sum(equities)
-        bond_exp = safe_sum(bonds)
-        comm_exp = safe_sum(commodities)
-        fx_exp = safe_sum(fx)
-        total_gross = result.latest_exposure.abs().sum()
-        
-        # Top metrics
-        st.subheader("🎯 Aggregate CTA Positioning")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        def render_exposure_card(col, title, exposure):
-            color = "#4CAF50" if exposure > 0.1 else ("#f44336" if exposure < -0.1 else "#757575")
-            state = 'LONG' if exposure > 0.1 else ('SHORT' if exposure < -0.1 else 'FLAT')
-            col.markdown(
-                f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
-                f"<h4 style='margin:0;'>{title}</h4>"
-                f"<h2 style='margin:0; color: {color};'>{exposure:+.2f}</h2>"
-                f"<p style='margin:0; font-size: 0.8rem;'>{state}</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-        
-        render_exposure_card(col1, "Equities", eq_exp)
-        render_exposure_card(col2, "Bonds", bond_exp)
-        render_exposure_card(col3, "Gold", comm_exp)
-        render_exposure_card(col4, "USD", fx_exp)
-        
-        with col5:
-            leverage_pct = (total_gross / 2.0) * 100
-            st.metric("Gross Leverage", f"{leverage_pct:.0f}%", help="Total absolute exposure (max 200%)")
-        
-        st.divider()
-        
-        # Flip levels table
-        st.subheader(" CTA Flip Levels")
-        st.markdown("**Flip levels** = prices where momentum turns. Breaking above/below triggers CTA flows.")
-        
-        if not result.flip_levels.empty:
-            display_data = []
-            for symbol in result.flip_levels['symbol'].unique():
-                row = {'Symbol': symbol}
-                current = result.flip_levels[result.flip_levels['symbol'] == symbol]['current_price'].iloc[0]
-                row['Current'] = f"${current:.2f}"
-                
-                for horizon in [21, 63, 126, 252]:
-                    sym_data = result.flip_levels[
-                        (result.flip_levels['symbol'] == symbol) & 
-                        (result.flip_levels['horizon_days'] == horizon)
-                    ]
-                    if not sym_data.empty:
-                        flip = sym_data['flip_price'].iloc[0]
-                        dist = sym_data['distance_pct'].iloc[0]
-                        row[f'{horizon}d'] = f"${flip:.2f} ({dist:+.1f}%)"
-                    else:
-                        row[f'{horizon}d'] = "N/A"
-                
-                row['State'] = result.latest_state.get(symbol, 'N/A')
-                display_data.append(row)
-            
-            df_display = pd.DataFrame(display_data)
-            st.dataframe(df_display, use_container_width=True)
-        
-        st.divider()
-        
-        # Exposure heatmap
-        st.subheader("📊 Historical CTA Exposures (90 Days)")
-        exposures_90d = result.exposures.tail(90)
-        
-        if not exposures_90d.empty:
-            fig = go.Figure(data=go.Heatmap(
-                z=exposures_90d.T.values,
-                x=exposures_90d.index,
-                y=exposures_90d.columns,
-                colorscale='RdYlGn',
-                zmid=0,
-                colorbar=dict(title="Exposure"),
-            ))
-            fig.update_layout(
-                title="CTA Trend Strength Over Time",
-                xaxis_title="Date",
-                yaxis_title="Symbol",
-                height=400,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-        st.divider()
-        
-        # Signal interpretation
-        st.subheader(" Trading Implications")
+        # Control buttons
         col1, col2 = st.columns(2)
-        
         with col1:
-            st.markdown("** Strong Longs (>0.3)**")
-            strong_longs = result.latest_exposure[result.latest_exposure > 0.3].sort_values(ascending=False)
-            if not strong_longs.empty:
-                for sym, exp in strong_longs.items():
-                    st.markdown(f"- **{sym}**: {exp:.2f}")
-            else:
-                st.markdown("*None*")
-        
+            if st.button(" Update Prices", help="Fetch latest price data (incremental)"):
+                with st.spinner("Updating prices..."):
+                    cta_collector.update_prices()
+                    st.success("✓ Prices updated")
+                    st.rerun()
+
         with col2:
-            st.markdown("** Strong Shorts (<-0.3)**")
-            strong_shorts = result.latest_exposure[result.latest_exposure < -0.3].sort_values()
-            if not strong_shorts.empty:
-                for sym, exp in strong_shorts.items():
-                    st.markdown(f"- **{sym}**: {exp:.2f}")
-            else:
-                st.markdown("*None*")
-        
-        st.info(" **Strategy:** Watch price action near flip levels. Breaking above = CTA buying. Breaking below = CTA selling.")
+            if st.button(" Refresh Analysis", help="Recompute CTA signals"):
+                st.session_state["cta_refresh"] = st.session_state.get("cta_refresh", 0) + 1
+
+        # Run analysis (cached by session state)
+        refresh_key = st.session_state.get("cta_refresh", 0)
+
+        @st.cache_data(ttl=900)  # Cache for 15 minutes
+        def get_cta_result(_refresh, _collector):
+            if _collector is None:
+                return None
+            return _collector.get_cta_analysis()
+
+        with st.spinner("Running CTA analysis..."):
+            result = get_cta_result(refresh_key, cta_collector)
+
+        if result is None:
+            st.warning(" No CTA data available. Click 'Update Prices' to fetch data.")
+        else:
+            # Asset class groupings
+            equities = ["SPY", "QQQ", "IWM", "EEM"]
+            bonds = ["TLT", "HYG"]
+            commodities = ["GLD"]
+            fx = ["UUP"]
+
+            def safe_sum(symbols):
+                return result.latest_exposure[[s for s in symbols if s in result.latest_exposure.index]].sum()
+
+            eq_exp = safe_sum(equities)
+            bond_exp = safe_sum(bonds)
+            comm_exp = safe_sum(commodities)
+            fx_exp = safe_sum(fx)
+            total_gross = result.latest_exposure.abs().sum()
+
+            # Top metrics
+            st.subheader("🎯 Aggregate CTA Positioning")
+            col1, col2, col3, col4, col5 = st.columns(5)
+
+            def render_exposure_card(col, title, exposure):
+                color = "#4CAF50" if exposure > 0.1 else ("#f44336" if exposure < -0.1 else "#757575")
+                state = 'LONG' if exposure > 0.1 else ('SHORT' if exposure < -0.1 else 'FLAT')
+                col.markdown(
+                    f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
+                    f"<h4 style='margin:0;'>{title}</h4>"
+                    f"<h2 style='margin:0; color: {color};'>{exposure:+.2f}</h2>"
+                    f"<p style='margin:0; font-size: 0.8rem;'>{state}</p>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            render_exposure_card(col1, "Equities", eq_exp)
+            render_exposure_card(col2, "Bonds", bond_exp)
+            render_exposure_card(col3, "Gold", comm_exp)
+            render_exposure_card(col4, "USD", fx_exp)
+
+            with col5:
+                leverage_pct = (total_gross / 2.0) * 100
+                st.metric("Gross Leverage", f"{leverage_pct:.0f}%", help="Total absolute exposure (max 200%)")
+
+            st.divider()
+
+            # Flip levels table
+            st.subheader(" CTA Flip Levels")
+            st.markdown("**Flip levels** = prices where momentum turns. Breaking above/below triggers CTA flows.")
+
+            if not result.flip_levels.empty:
+                display_data = []
+                for symbol in result.flip_levels['symbol'].unique():
+                    row = {'Symbol': symbol}
+                    current = result.flip_levels[result.flip_levels['symbol'] == symbol]['current_price'].iloc[0]
+                    row['Current'] = f"${current:.2f}"
+
+                    for horizon in [21, 63, 126, 252]:
+                        sym_data = result.flip_levels[
+                            (result.flip_levels['symbol'] == symbol) &
+                            (result.flip_levels['horizon_days'] == horizon)
+                        ]
+                        if not sym_data.empty:
+                            flip = sym_data['flip_price'].iloc[0]
+                            dist = sym_data['distance_pct'].iloc[0]
+                            row[f'{horizon}d'] = f"${flip:.2f} ({dist:+.1f}%)"
+                        else:
+                            row[f'{horizon}d'] = "N/A"
+
+                    row['State'] = result.latest_state.get(symbol, 'N/A')
+                    display_data.append(row)
+
+                df_display = pd.DataFrame(display_data)
+                st.dataframe(df_display, use_container_width=True)
+
+            st.divider()
+
+            # Exposure heatmap
+            st.subheader("📊 Historical CTA Exposures (90 Days)")
+            exposures_90d = result.exposures.tail(90)
+
+            if not exposures_90d.empty:
+                fig = go.Figure(data=go.Heatmap(
+                    z=exposures_90d.T.values,
+                    x=exposures_90d.index,
+                    y=exposures_90d.columns,
+                    colorscale='RdYlGn',
+                    zmid=0,
+                    colorbar=dict(title="Exposure"),
+                ))
+                fig.update_layout(
+                    title="CTA Trend Strength Over Time",
+                    xaxis_title="Date",
+                    yaxis_title="Symbol",
+                    height=400,
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
+
+            # Signal interpretation
+            st.subheader(" Trading Implications")
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("** Strong Longs (>0.3)**")
+                strong_longs = result.latest_exposure[result.latest_exposure > 0.3].sort_values(ascending=False)
+                if not strong_longs.empty:
+                    for sym, exp in strong_longs.items():
+                        st.markdown(f"- **{sym}**: {exp:.2f}")
+                else:
+                    st.markdown("*None*")
+
+            with col2:
+                st.markdown("** Strong Shorts (<-0.3)**")
+                strong_shorts = result.latest_exposure[result.latest_exposure < -0.3].sort_values()
+                if not strong_shorts.empty:
+                    for sym, exp in strong_shorts.items():
+                        st.markdown(f"- **{sym}**: {exp:.2f}")
+                else:
+                    st.markdown("*None*")
+
+            st.info(" **Strategy:** Watch price action near flip levels. Breaking above = CTA buying. Breaking below = CTA selling.")
 
 
 # ============================================================

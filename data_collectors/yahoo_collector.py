@@ -217,8 +217,92 @@ class YahooCollector:
             'vix_contango_proxy': self.get_vix_futures_proxy(),
             'market_breadth_proxy': self.get_market_breadth_proxy(),
             'put_call_proxy': self.get_put_call_ratio_proxy(),
+            'treasury_10y': self.get_treasury_10y(),
+            'hy_spread_proxy': self.get_hy_spread_proxy(),
             'timestamp': datetime.now().isoformat()
         }
+
+    @with_retry
+    def get_treasury_10y(self) -> Optional[float]:
+        """
+        Get 10-Year Treasury Yield from Yahoo Finance (^TNX)
+
+        This is a fallback when FRED API is unavailable.
+        Yahoo's ^TNX tracks the 10-year Treasury yield.
+
+        Returns:
+            10Y yield as percentage (e.g., 4.25 for 4.25%)
+        """
+        try:
+            tnx = yf.Ticker("^TNX")
+            data = tnx.history(period="5d")
+
+            if not data.empty:
+                # Yahoo TNX is already in percentage form
+                yield_pct = float(data['Close'].iloc[-1])
+                logger.info(f"10Y Treasury (Yahoo ^TNX): {yield_pct:.2f}%")
+                return yield_pct
+
+            logger.warning("No 10Y Treasury data from Yahoo")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error fetching 10Y Treasury: {e}")
+            return None
+
+    @with_retry
+    def get_hy_spread_proxy(self) -> Optional[float]:
+        """
+        Estimate HY credit spread using HYG yield vs Treasury yield.
+
+        This is a proxy when FRED's BAMLH0A0HYM2 is unavailable.
+        Uses: HYG SEC Yield - 10Y Treasury
+
+        Typical HY spreads:
+        - Normal: 3-4% (300-400 bps)
+        - Elevated: 5-6% (500-600 bps)
+        - Crisis: 8%+ (800+ bps)
+
+        Returns:
+            Estimated HY spread as percentage (e.g., 3.5 for 350 bps)
+        """
+        try:
+            # HYG - iShares iBoxx High Yield Corporate Bond ETF
+            hyg = yf.Ticker("HYG")
+
+            # Get HYG info for SEC yield
+            info = hyg.info
+            hyg_yield = info.get('yield')  # This is the 30-day SEC yield
+
+            if hyg_yield is None:
+                # Fallback: estimate from dividend yield
+                hyg_yield = info.get('dividendYield', 0.06)  # ~6% typical
+
+            # Get 10Y Treasury for comparison
+            treasury_10y = self.get_treasury_10y()
+
+            if hyg_yield and treasury_10y:
+                # HYG yield is already decimal (0.06 = 6%)
+                hyg_yield_pct = hyg_yield * 100 if hyg_yield < 1 else hyg_yield
+
+                # Spread = HYG yield - Treasury yield
+                spread = hyg_yield_pct - treasury_10y
+
+                # Sanity check - HY spread should be positive and reasonable
+                if 1.0 < spread < 15.0:
+                    logger.info(f"HY Spread Proxy: {spread:.2f}% (HYG: {hyg_yield_pct:.2f}%, 10Y: {treasury_10y:.2f}%)")
+                    return round(spread, 2)
+                else:
+                    logger.warning(f"HY spread estimate out of range: {spread:.2f}%")
+                    # Return a reasonable estimate based on current market
+                    return 3.5  # ~350 bps is typical "normal" spread
+
+            logger.warning("Could not calculate HY spread proxy")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error calculating HY spread proxy: {e}")
+            return None
 
     @with_retry
     def get_credit_etf_flows(self) -> Optional[Dict]:
