@@ -379,74 +379,91 @@ def get_vrp_history_cached(days: int = 180):
 @st.cache_data(ttl=300)
 def get_vix_term_structure():
     """
-    Build VIX term structure from available CBOE/Yahoo indices.
-    Includes more data points for a precise contango/backwardation view.
+    Build VIX term structure similar to vixcentral.com.
+    Uses VIX indices at different tenors for accurate contango/backwardation view.
+    Returns multiple points across the volatility curve.
     """
     try:
-        cboe = CBOECollector()
-
-        # Collect all available VIX indices
         term_points = []
 
-        # VIX9D - 9-day VIX
-        vix9d = cboe.get_vix9d()
-        if vix9d is not None:
-            term_points.append({"Maturity": "9D", "Days": 9, "VIX Level": float(vix9d)})
+        # Get VIX spot from CBOE
+        cboe = CBOECollector()
+        vix_spot = cboe.get_vix()
 
-        # VIX Spot - 30-day VIX
-        vix = cboe.get_vix()
-        if vix is not None:
-            term_points.append({"Maturity": "1M (Spot)", "Days": 30, "VIX Level": float(vix)})
-
-        # Try to get VIX futures ETF prices for intermediate points
+        # VIX1D - 1-day implied volatility
         try:
-            # VIXY tracks short-term VIX futures (~1 month)
-            vixy = yf.Ticker("VIXY")
-            vixy_data = vixy.history(period="5d")
-            if not vixy_data.empty:
-                # VIXY price can be used as proxy for ~1-2 month futures
-                vixy_price = float(vixy_data['Close'].iloc[-1])
-                # Estimate VIX level from VIXY (rough approximation)
-                if vix is not None:
-                    # VIXY typically trades at a discount to VIX due to roll costs
-                    vix_1_5m_estimate = vix * 1.02  # Slight premium for 1.5 month
-                    term_points.append({"Maturity": "1.5M", "Days": 45, "VIX Level": float(vix_1_5m_estimate)})
-        except Exception:
-            pass
-
-        # Try VIX1D (1-day VIX) if available
-        try:
-            vix1d = yf.Ticker("^VIX1D")
-            vix1d_data = vix1d.history(period="5d")
+            vix1d_ticker = yf.Ticker("^VIX1D")
+            vix1d_data = vix1d_ticker.history(period="5d")
             if not vix1d_data.empty:
-                vix1d_val = float(vix1d_data['Close'].iloc[-1])
-                term_points.append({"Maturity": "1D", "Days": 1, "VIX Level": vix1d_val})
+                vix1d = float(vix1d_data['Close'].iloc[-1])
+                if 5 < vix1d < 150:
+                    term_points.append({
+                        "Maturity": "1D",
+                        "Days": 1,
+                        "VIX Level": vix1d
+                    })
         except Exception:
             pass
 
-        # VIX3M - 3-month VIX
-        vix3m = cboe.get_vix3m()
-        if vix3m is not None:
-            term_points.append({"Maturity": "3M", "Days": 90, "VIX Level": float(vix3m)})
-
-        # Try VIX6M if available
+        # VIX9D - 9-day implied volatility
         try:
-            vix6m = yf.Ticker("^VIX6M")
-            vix6m_data = vix6m.history(period="5d")
+            vix9d = cboe.get_vix9d()
+            if vix9d is not None:
+                term_points.append({
+                    "Maturity": "9D",
+                    "Days": 9,
+                    "VIX Level": float(vix9d)
+                })
+        except Exception:
+            pass
+
+        # VIX (30-day)
+        if vix_spot is not None:
+            term_points.append({
+                "Maturity": "VIX",
+                "Days": 30,
+                "VIX Level": float(vix_spot)
+            })
+
+        # VIX3M - 3-month implied volatility
+        try:
+            vix3m = cboe.get_vix3m()
+            if vix3m is not None:
+                term_points.append({
+                    "Maturity": "3M",
+                    "Days": 90,
+                    "VIX Level": float(vix3m)
+                })
+        except Exception:
+            pass
+
+        # VIX6M - 6-month implied volatility
+        try:
+            vix6m_ticker = yf.Ticker("^VIX6M")
+            vix6m_data = vix6m_ticker.history(period="5d")
             if not vix6m_data.empty:
-                vix6m_val = float(vix6m_data['Close'].iloc[-1])
-                term_points.append({"Maturity": "6M", "Days": 180, "VIX Level": vix6m_val})
+                vix6m = float(vix6m_data['Close'].iloc[-1])
+                if 5 < vix6m < 100:
+                    term_points.append({
+                        "Maturity": "6M",
+                        "Days": 180,
+                        "VIX Level": vix6m
+                    })
         except Exception:
             pass
 
-        # VXZ tracks mid-term VIX futures (~4-7 months)
+        # VIX1Y - 1-year implied volatility
         try:
-            vxz = yf.Ticker("VXZ")
-            vxz_data = vxz.history(period="5d")
-            if not vxz_data.empty and vix3m is not None:
-                # Estimate 4-5 month VIX from VXZ
-                vix_4_5m_estimate = vix3m * 0.98  # Mid-term typically slightly lower
-                term_points.append({"Maturity": "4-5M", "Days": 135, "VIX Level": float(vix_4_5m_estimate)})
+            vix1y_ticker = yf.Ticker("^VIX1Y")
+            vix1y_data = vix1y_ticker.history(period="5d")
+            if not vix1y_data.empty:
+                vix1y = float(vix1y_data['Close'].iloc[-1])
+                if 5 < vix1y < 80:
+                    term_points.append({
+                        "Maturity": "1Y",
+                        "Days": 365,
+                        "VIX Level": vix1y
+                    })
         except Exception:
             pass
 
@@ -457,7 +474,6 @@ def get_vix_term_structure():
         df = pd.DataFrame(term_points)
         df = df.sort_values("Days").reset_index(drop=True)
 
-        # Return simplified format for compatibility
         return df[["Maturity", "VIX Level"]]
 
     except Exception as e:
@@ -2907,36 +2923,60 @@ elif page == "Sectors & VIX":
                     mode="lines+markers",
                     name="VIX Term Structure",
                     line=dict(color="royalblue", width=3),
-                    marker=dict(size=10),  
+                    marker=dict(size=12, color="royalblue"),
+                    text=[f"{v:.2f}" for v in vix_term["VIX Level"]],
+                    textposition="top center",
+                    hovertemplate="<b>%{x}</b><br>VIX: %{y:.2f}<extra></extra>"
                 )
             )
 
-            if vix_term["VIX Level"].iloc[-1] > vix_term["VIX Level"].iloc[0]:
-                contango_text = "Contango (bullish)"
+            # Calculate contango/backwardation
+            front = vix_term["VIX Level"].iloc[0]
+            back = vix_term["VIX Level"].iloc[-1]
+            spread = back - front
+            spread_pct = (spread / front) * 100 if front > 0 else 0
+
+            if back > front:
+                contango_text = "Contango"
+                structure_desc = "bullish - normal market conditions"
                 color = "green"
             else:
-                contango_text = "Backwardation (risk-off)"
+                contango_text = "Backwardation"
+                structure_desc = "risk-off - elevated near-term fear"
                 color = "red"
 
             fig.update_layout(
-                title=f"VIX Term Structure - {contango_text}",
+                title=f"VIX Term Structure - {contango_text} ({spread_pct:+.1f}%)",
                 xaxis_title="Maturity",
                 yaxis_title="VIX Level",
                 height=400,
+                hovermode="x unified",
                 annotations=[
                     dict(
-                        text=contango_text,
+                        text=f"{contango_text}: {structure_desc}",
                         x=0.5,
-                        y=0.95,
+                        y=1.08,
                         xref="paper",
                         yref="paper",
                         showarrow=False,
-                        font=dict(size=14, color=color),
+                        font=dict(size=12, color=color),
                     )
                 ],
             )
 
-            st.plotly_chart(fig, width='stretch')
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Show summary metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Front (Short-term)", f"{front:.2f}")
+            with col2:
+                st.metric("Back (Long-term)", f"{back:.2f}")
+            with col3:
+                delta_color = "normal" if spread > 0 else "inverse"
+                st.metric("Spread", f"{spread:+.2f}", delta=f"{spread_pct:+.1f}%", delta_color=delta_color)
+        else:
+            st.warning("VIX term structure data unavailable. Unable to fetch VIX indices.")
 
         st.divider()
 
