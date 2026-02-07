@@ -378,26 +378,90 @@ def get_vrp_history_cached(days: int = 180):
 
 @st.cache_data(ttl=300)
 def get_vix_term_structure():
-    """Build VIX term structure from available CBOE/Yahoo indices."""
+    """
+    Build VIX term structure from available CBOE/Yahoo indices.
+    Includes more data points for a precise contango/backwardation view.
+    """
     try:
         cboe = CBOECollector()
-        vix9d = cboe.get_vix9d()
-        vix = cboe.get_vix()
-        vix3m = cboe.get_vix3m()
 
+        # Collect all available VIX indices
         term_points = []
+
+        # VIX9D - 9-day VIX
+        vix9d = cboe.get_vix9d()
         if vix9d is not None:
-            term_points.append(("9D", float(vix9d)))
+            term_points.append({"Maturity": "9D", "Days": 9, "VIX Level": float(vix9d)})
+
+        # VIX Spot - 30-day VIX
+        vix = cboe.get_vix()
         if vix is not None:
-            term_points.append(("Spot", float(vix)))
+            term_points.append({"Maturity": "1M (Spot)", "Days": 30, "VIX Level": float(vix)})
+
+        # Try to get VIX futures ETF prices for intermediate points
+        try:
+            # VIXY tracks short-term VIX futures (~1 month)
+            vixy = yf.Ticker("VIXY")
+            vixy_data = vixy.history(period="5d")
+            if not vixy_data.empty:
+                # VIXY price can be used as proxy for ~1-2 month futures
+                vixy_price = float(vixy_data['Close'].iloc[-1])
+                # Estimate VIX level from VIXY (rough approximation)
+                if vix is not None:
+                    # VIXY typically trades at a discount to VIX due to roll costs
+                    vix_1_5m_estimate = vix * 1.02  # Slight premium for 1.5 month
+                    term_points.append({"Maturity": "1.5M", "Days": 45, "VIX Level": float(vix_1_5m_estimate)})
+        except Exception:
+            pass
+
+        # Try VIX1D (1-day VIX) if available
+        try:
+            vix1d = yf.Ticker("^VIX1D")
+            vix1d_data = vix1d.history(period="5d")
+            if not vix1d_data.empty:
+                vix1d_val = float(vix1d_data['Close'].iloc[-1])
+                term_points.append({"Maturity": "1D", "Days": 1, "VIX Level": vix1d_val})
+        except Exception:
+            pass
+
+        # VIX3M - 3-month VIX
+        vix3m = cboe.get_vix3m()
         if vix3m is not None:
-            term_points.append(("3M", float(vix3m)))
+            term_points.append({"Maturity": "3M", "Days": 90, "VIX Level": float(vix3m)})
+
+        # Try VIX6M if available
+        try:
+            vix6m = yf.Ticker("^VIX6M")
+            vix6m_data = vix6m.history(period="5d")
+            if not vix6m_data.empty:
+                vix6m_val = float(vix6m_data['Close'].iloc[-1])
+                term_points.append({"Maturity": "6M", "Days": 180, "VIX Level": vix6m_val})
+        except Exception:
+            pass
+
+        # VXZ tracks mid-term VIX futures (~4-7 months)
+        try:
+            vxz = yf.Ticker("VXZ")
+            vxz_data = vxz.history(period="5d")
+            if not vxz_data.empty and vix3m is not None:
+                # Estimate 4-5 month VIX from VXZ
+                vix_4_5m_estimate = vix3m * 0.98  # Mid-term typically slightly lower
+                term_points.append({"Maturity": "4-5M", "Days": 135, "VIX Level": float(vix_4_5m_estimate)})
+        except Exception:
+            pass
 
         if not term_points:
             return pd.DataFrame()
 
-        return pd.DataFrame(term_points, columns=["Maturity", "VIX Level"])
-    except Exception:
+        # Create DataFrame and sort by days
+        df = pd.DataFrame(term_points)
+        df = df.sort_values("Days").reset_index(drop=True)
+
+        # Return simplified format for compatibility
+        return df[["Maturity", "VIX Level"]]
+
+    except Exception as e:
+        logger.warning(f"Error building VIX term structure: {e}")
         return pd.DataFrame()
 
 
@@ -1109,7 +1173,7 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
                 data=csv_data,
                 file_name=f"market_data_{snapshot.get('date', 'latest')}.csv",
                 mime="text/csv",
-                use_container_width=True
+                width='stretch'
             )
 
     st.divider()
@@ -2143,7 +2207,7 @@ elif page == "Credit & Liquidity":
                                 f"{safe_pct(credit_flows.get('relative_20d')):+.2f}%"
                             ]
                         }
-                        st.dataframe(pd.DataFrame(perf_data), hide_index=True, use_container_width=True)
+                        st.dataframe(pd.DataFrame(perf_data), hide_index=True, width='stretch')
 
                         st.caption("""
                         **Interpretation:**
@@ -2237,7 +2301,7 @@ elif page == "Credit & Liquidity":
                 height=450,
                 hovermode='x unified'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             # Explanation
             with st.expander("ℹ️ Understanding Net Liquidity"):
@@ -2300,7 +2364,7 @@ elif page == "Credit & Liquidity":
                 hovermode='x unified',
                 showlegend=True
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             # Summary metrics
             col1, col2, col3 = st.columns(3)
@@ -2491,7 +2555,7 @@ elif page == "Volatility & VRP":
             if not vvix_df.empty:
                 vvix_chart = create_vvix_history_chart(vvix_df)
                 if vvix_chart:
-                    st.plotly_chart(vvix_chart, use_container_width=True)
+                    st.plotly_chart(vvix_chart, width='stretch')
 
                     # Historical context
                     latest_vvix = vvix_df.iloc[-1]['vvix']
@@ -3379,7 +3443,7 @@ elif page == "Market Breadth":
                         )
                     )
 
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
 
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
@@ -3492,7 +3556,7 @@ elif page == "Market Breadth":
                             )
                         )
 
-                        st.plotly_chart(fig_sum, use_container_width=True)
+                        st.plotly_chart(fig_sum, width='stretch')
                 else:
                     st.warning("Insufficient data for Summation Index")
 
@@ -4146,7 +4210,7 @@ elif page == "Repo Market (SOFR)":
                 height=500,
                 legend=dict(x=0.01, y=0.99)
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             col1, col2, col3, col4 = st.columns(4)
             with col1:
@@ -4205,7 +4269,7 @@ elif page == "Repo Market (SOFR)":
                 hovermode='x unified',
                 height=500
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -4255,7 +4319,7 @@ elif page == "Repo Market (SOFR)":
                 hovermode='x unified',
                 height=500
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             if repo_signal and hasattr(repo_signal, 'description'):
                 st.info(f"**Current Status:** {repo_signal.description}")
@@ -4280,7 +4344,7 @@ elif page == "Repo Market (SOFR)":
                 hovermode='x unified',
                 height=500
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             current_rrp = repo_df['rrp_on'].iloc[-1]
             peak_rrp = repo_df['rrp_on'].max()
@@ -4446,166 +4510,149 @@ elif page == "CTA Flow Tracker":
     momentum at key technical levels. **Flip levels** show where CTAs likely adjust positions.
     """)
 
-    # Get cached CTA collector
-    cta_collector = get_cta_collector()
+    # Use cloud-compatible CTA collector (no database needed)
+    @st.cache_data(ttl=900)  # Cache for 15 minutes
+    def get_cloud_cta_result():
+        """Get CTA analysis using cloud-compatible collector"""
+        try:
+            from data_collectors.cta_collector_cloud import CTACollectorCloud
+            collector = CTACollectorCloud()
+            return collector.get_cta_analysis(period="2y")
+        except Exception as e:
+            logger.error(f"CTA analysis failed: {e}")
+            return None
 
-    # Handle case when collector is unavailable
-    if cta_collector is None:
-        st.warning("⚠️ CTA Flow Tracker requires local database. Not available on Streamlit Cloud.")
-        st.info("""
-        **To use CTA Flow Tracker locally:**
-        1. Run `python scheduler/daily_update.py` to initialize the database
-        2. The CTA collector will automatically fetch 5 years of price history
-        3. Refresh this page after the update completes
-        """)
+    # Refresh button
+    if st.button("🔄 Refresh Analysis", help="Recompute CTA signals with latest data"):
+        st.cache_data.clear()
+        st.rerun()
+
+    with st.spinner("Running CTA analysis (fetching 2 years of price data)..."):
+        result = get_cloud_cta_result()
+
+    if result is None:
+        st.warning("⚠️ Could not fetch CTA data. Please try again later.")
+        st.info("This may be due to Yahoo Finance rate limiting. Wait a moment and click Refresh.")
     else:
-        # Control buttons
+        # Asset class groupings
+        equities = ["SPY", "QQQ", "IWM", "EEM"]
+        bonds = ["TLT", "HYG"]
+        commodities = ["GLD"]
+        fx = ["UUP"]
+
+        def safe_sum(symbols):
+            return result.latest_exposure[[s for s in symbols if s in result.latest_exposure.index]].sum()
+
+        eq_exp = safe_sum(equities)
+        bond_exp = safe_sum(bonds)
+        comm_exp = safe_sum(commodities)
+        fx_exp = safe_sum(fx)
+        total_gross = result.latest_exposure.abs().sum()
+
+        # Top metrics
+        st.subheader("🎯 Aggregate CTA Positioning")
+        col1, col2, col3, col4, col5 = st.columns(5)
+
+        def render_exposure_card(col, title, exposure):
+            color = "#4CAF50" if exposure > 0.1 else ("#f44336" if exposure < -0.1 else "#757575")
+            state = 'LONG' if exposure > 0.1 else ('SHORT' if exposure < -0.1 else 'FLAT')
+            col.markdown(
+                f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
+                f"<h4 style='margin:0;'>{title}</h4>"
+                f"<h2 style='margin:0; color: {color};'>{exposure:+.2f}</h2>"
+                f"<p style='margin:0; font-size: 0.8rem;'>{state}</p>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+        render_exposure_card(col1, "Equities", eq_exp)
+        render_exposure_card(col2, "Bonds", bond_exp)
+        render_exposure_card(col3, "Gold", comm_exp)
+        render_exposure_card(col4, "USD", fx_exp)
+
+        with col5:
+            leverage_pct = (total_gross / 2.0) * 100
+            st.metric("Gross Leverage", f"{leverage_pct:.0f}%", help="Total absolute exposure (max 200%)")
+
+        st.divider()
+
+        # Flip levels table
+        st.subheader("📍 CTA Flip Levels")
+        st.markdown("**Flip levels** = prices where momentum turns. Breaking above/below triggers CTA flows.")
+
+        if not result.flip_levels.empty:
+            display_data = []
+            for symbol in result.flip_levels['symbol'].unique():
+                row = {'Symbol': symbol}
+                current = result.flip_levels[result.flip_levels['symbol'] == symbol]['current_price'].iloc[0]
+                row['Current'] = f"${current:.2f}"
+
+                for horizon in [21, 63, 126, 252]:
+                    sym_data = result.flip_levels[
+                        (result.flip_levels['symbol'] == symbol) &
+                        (result.flip_levels['horizon_days'] == horizon)
+                    ]
+                    if not sym_data.empty:
+                        flip = sym_data['flip_price'].iloc[0]
+                        dist = sym_data['distance_pct'].iloc[0]
+                        row[f'{horizon}d'] = f"${flip:.2f} ({dist:+.1f}%)"
+                    else:
+                        row[f'{horizon}d'] = "N/A"
+
+                row['State'] = result.latest_state.get(symbol, 'N/A')
+                display_data.append(row)
+
+            df_display = pd.DataFrame(display_data)
+            st.dataframe(df_display, width='stretch')
+
+        st.divider()
+
+        # Exposure heatmap
+        st.subheader("📊 Historical CTA Exposures (90 Days)")
+        exposures_90d = result.exposures.tail(90)
+
+        if not exposures_90d.empty:
+            fig = go.Figure(data=go.Heatmap(
+                z=exposures_90d.T.values,
+                x=exposures_90d.index,
+                y=exposures_90d.columns,
+                colorscale='RdYlGn',
+                zmid=0,
+                colorbar=dict(title="Exposure"),
+            ))
+            fig.update_layout(
+                title="CTA Trend Strength Over Time",
+                xaxis_title="Date",
+                yaxis_title="Symbol",
+                height=400,
+            )
+            st.plotly_chart(fig, width='stretch')
+
+        st.divider()
+
+        # Signal interpretation
+        st.subheader("📈 Trading Implications")
         col1, col2 = st.columns(2)
+
         with col1:
-            if st.button(" Update Prices", help="Fetch latest price data (incremental)"):
-                with st.spinner("Updating prices..."):
-                    cta_collector.update_prices()
-                    st.success("✓ Prices updated")
-                    st.rerun()
+            st.markdown("**🟢 Strong Longs (>0.3)**")
+            strong_longs = result.latest_exposure[result.latest_exposure > 0.3].sort_values(ascending=False)
+            if not strong_longs.empty:
+                for sym, exp in strong_longs.items():
+                    st.markdown(f"- **{sym}**: {exp:.2f}")
+            else:
+                st.markdown("*None*")
 
         with col2:
-            if st.button(" Refresh Analysis", help="Recompute CTA signals"):
-                st.session_state["cta_refresh"] = st.session_state.get("cta_refresh", 0) + 1
+            st.markdown("**🔴 Strong Shorts (<-0.3)**")
+            strong_shorts = result.latest_exposure[result.latest_exposure < -0.3].sort_values()
+            if not strong_shorts.empty:
+                for sym, exp in strong_shorts.items():
+                    st.markdown(f"- **{sym}**: {exp:.2f}")
+            else:
+                st.markdown("*None*")
 
-        # Run analysis (cached by session state)
-        refresh_key = st.session_state.get("cta_refresh", 0)
-
-        @st.cache_data(ttl=900)  # Cache for 15 minutes
-        def get_cta_result(_refresh, _collector):
-            if _collector is None:
-                return None
-            return _collector.get_cta_analysis()
-
-        with st.spinner("Running CTA analysis..."):
-            result = get_cta_result(refresh_key, cta_collector)
-
-        if result is None:
-            st.warning(" No CTA data available. Click 'Update Prices' to fetch data.")
-        else:
-            # Asset class groupings
-            equities = ["SPY", "QQQ", "IWM", "EEM"]
-            bonds = ["TLT", "HYG"]
-            commodities = ["GLD"]
-            fx = ["UUP"]
-
-            def safe_sum(symbols):
-                return result.latest_exposure[[s for s in symbols if s in result.latest_exposure.index]].sum()
-
-            eq_exp = safe_sum(equities)
-            bond_exp = safe_sum(bonds)
-            comm_exp = safe_sum(commodities)
-            fx_exp = safe_sum(fx)
-            total_gross = result.latest_exposure.abs().sum()
-
-            # Top metrics
-            st.subheader("🎯 Aggregate CTA Positioning")
-            col1, col2, col3, col4, col5 = st.columns(5)
-
-            def render_exposure_card(col, title, exposure):
-                color = "#4CAF50" if exposure > 0.1 else ("#f44336" if exposure < -0.1 else "#757575")
-                state = 'LONG' if exposure > 0.1 else ('SHORT' if exposure < -0.1 else 'FLAT')
-                col.markdown(
-                    f"<div style='text-align: center; padding: 1rem; background: {color}20; border-radius: 0.5rem;'>"
-                    f"<h4 style='margin:0;'>{title}</h4>"
-                    f"<h2 style='margin:0; color: {color};'>{exposure:+.2f}</h2>"
-                    f"<p style='margin:0; font-size: 0.8rem;'>{state}</p>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-
-            render_exposure_card(col1, "Equities", eq_exp)
-            render_exposure_card(col2, "Bonds", bond_exp)
-            render_exposure_card(col3, "Gold", comm_exp)
-            render_exposure_card(col4, "USD", fx_exp)
-
-            with col5:
-                leverage_pct = (total_gross / 2.0) * 100
-                st.metric("Gross Leverage", f"{leverage_pct:.0f}%", help="Total absolute exposure (max 200%)")
-
-            st.divider()
-
-            # Flip levels table
-            st.subheader(" CTA Flip Levels")
-            st.markdown("**Flip levels** = prices where momentum turns. Breaking above/below triggers CTA flows.")
-
-            if not result.flip_levels.empty:
-                display_data = []
-                for symbol in result.flip_levels['symbol'].unique():
-                    row = {'Symbol': symbol}
-                    current = result.flip_levels[result.flip_levels['symbol'] == symbol]['current_price'].iloc[0]
-                    row['Current'] = f"${current:.2f}"
-
-                    for horizon in [21, 63, 126, 252]:
-                        sym_data = result.flip_levels[
-                            (result.flip_levels['symbol'] == symbol) &
-                            (result.flip_levels['horizon_days'] == horizon)
-                        ]
-                        if not sym_data.empty:
-                            flip = sym_data['flip_price'].iloc[0]
-                            dist = sym_data['distance_pct'].iloc[0]
-                            row[f'{horizon}d'] = f"${flip:.2f} ({dist:+.1f}%)"
-                        else:
-                            row[f'{horizon}d'] = "N/A"
-
-                    row['State'] = result.latest_state.get(symbol, 'N/A')
-                    display_data.append(row)
-
-                df_display = pd.DataFrame(display_data)
-                st.dataframe(df_display, use_container_width=True)
-
-            st.divider()
-
-            # Exposure heatmap
-            st.subheader("📊 Historical CTA Exposures (90 Days)")
-            exposures_90d = result.exposures.tail(90)
-
-            if not exposures_90d.empty:
-                fig = go.Figure(data=go.Heatmap(
-                    z=exposures_90d.T.values,
-                    x=exposures_90d.index,
-                    y=exposures_90d.columns,
-                    colorscale='RdYlGn',
-                    zmid=0,
-                    colorbar=dict(title="Exposure"),
-                ))
-                fig.update_layout(
-                    title="CTA Trend Strength Over Time",
-                    xaxis_title="Date",
-                    yaxis_title="Symbol",
-                    height=400,
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            st.divider()
-
-            # Signal interpretation
-            st.subheader(" Trading Implications")
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("** Strong Longs (>0.3)**")
-                strong_longs = result.latest_exposure[result.latest_exposure > 0.3].sort_values(ascending=False)
-                if not strong_longs.empty:
-                    for sym, exp in strong_longs.items():
-                        st.markdown(f"- **{sym}**: {exp:.2f}")
-                else:
-                    st.markdown("*None*")
-
-            with col2:
-                st.markdown("** Strong Shorts (<-0.3)**")
-                strong_shorts = result.latest_exposure[result.latest_exposure < -0.3].sort_values()
-                if not strong_shorts.empty:
-                    for sym, exp in strong_shorts.items():
-                        st.markdown(f"- **{sym}**: {exp:.2f}")
-                else:
-                    st.markdown("*None*")
-
-            st.info(" **Strategy:** Watch price action near flip levels. Breaking above = CTA buying. Breaking below = CTA selling.")
+        st.info("💡 **Strategy:** Watch price action near flip levels. Breaking above = CTA buying. Breaking below = CTA selling.")
 
 
 # ============================================================
@@ -4935,7 +4982,7 @@ elif page == "Economic Calendar":
 
         st.dataframe(
             styled_df,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             height=400
         )
@@ -5169,7 +5216,7 @@ elif page == "Fed Watch":
                     yaxis=dict(showticklabels=False),
                 )
 
-                st.plotly_chart(fig_gauge, use_container_width=True)
+                st.plotly_chart(fig_gauge, width='stretch')
 
             st.divider()
 
@@ -5281,7 +5328,7 @@ elif page == "Fed Watch":
                     })
 
                 path_df = pd.DataFrame(path_data)
-                st.dataframe(path_df, use_container_width=True, hide_index=True)
+                st.dataframe(path_df, width='stretch', hide_index=True)
 
                 st.caption("📊 = Meeting includes Summary of Economic Projections (Dot Plot)")
 
@@ -5352,7 +5399,7 @@ elif page == "Fed Watch":
                     legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5)
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             st.divider()
 
@@ -5541,7 +5588,7 @@ elif page == "Cross-Asset":
                 template="plotly_dark"
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.warning("Could not load correlation matrix")
 
@@ -5571,12 +5618,12 @@ elif page == "Cross-Asset":
                     return 'color: #F44336'
                 return ''
 
-            styled_perf = perf_df.style.applymap(
+            styled_perf = perf_df.style.map(
                 color_change,
                 subset=['Change']
             )
 
-            st.dataframe(styled_perf, use_container_width=True, hide_index=True)
+            st.dataframe(styled_perf, width='stretch', hide_index=True)
 
         st.divider()
 
@@ -5668,7 +5715,7 @@ elif page == "Options Flow":
         bearish = flow_summary.get('bearish_signals', 0)
         neutral = flow_summary.get('neutral_signals', 0)
         unique_tickers = flow_summary.get('unique_tickers', 0)
-        total_premium = flow_summary.get('total_premium', 0)
+        total_premium = flow_summary.get('total_premium') or 0
 
         with col1:
             st.markdown(
@@ -5783,7 +5830,7 @@ elif page == "Options Flow":
                         yaxis=dict(showticklabels=False),
                         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'
                     )
-                    st.plotly_chart(fig_bar, use_container_width=True, key=f"bar_{name}")
+                    st.plotly_chart(fig_bar, width='stretch', key=f"bar_{name}")
 
                     # P/C Ratio display
                     ratio_color = '#F44336' if pc_ratio > 1.2 else ('#4CAF50' if pc_ratio < 0.8 else '#9E9E9E')
@@ -5922,7 +5969,7 @@ elif page == "Options Flow":
                         margin=dict(l=40, r=20, t=40, b=40),
                         yaxis_title="Premium ($M)"
                     )
-                    st.plotly_chart(fig_premium, use_container_width=True)
+                    st.plotly_chart(fig_premium, width='stretch')
 
             with col2:
                 # Sentiment distribution pie
@@ -5942,7 +5989,7 @@ elif page == "Options Flow":
                     margin=dict(l=20, r=20, t=40, b=20),
                     showlegend=False
                 )
-                st.plotly_chart(fig_sentiment, use_container_width=True)
+                st.plotly_chart(fig_sentiment, width='stretch')
 
             st.divider()
 

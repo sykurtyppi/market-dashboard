@@ -16,7 +16,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from utils.data_status import DataResult, format_age_string
+from utils.data_status import DataResult, DataStatus, format_age_string
 
 
 # =============================================================================
@@ -403,17 +403,34 @@ def metric_status_caption(st_column, data_result: Optional[DataResult]):
     if not data_result.status:
         return
 
-    # Handle case where status might be a string instead of DataStatus enum
-    if hasattr(data_result.status, 'value'):
-        label = data_result.status.value.replace("_", " ").title()
+    status_value = data_result.status
+    status_enum = None
+    if isinstance(status_value, DataStatus):
+        status_enum = status_value
+    elif isinstance(status_value, str):
+        try:
+            status_enum = DataStatus(status_value.lower())
+        except ValueError:
+            status_enum = None
+
+    if status_enum:
+        label = status_enum.value.replace("_", " ").title()
+        emoji = {
+            DataStatus.OK: "✅",
+            DataStatus.STALE: "⚠️",
+            DataStatus.ESTIMATED: "📊",
+            DataStatus.UNAVAILABLE: "❌",
+            DataStatus.ERROR: "🚨",
+            DataStatus.PARTIAL: "⚡",
+        }.get(status_enum, "❓")
     else:
-        # If status is already a string, use it directly
-        label = str(data_result.status).replace("_", " ").title()
+        label = str(status_value).replace("_", " ").title()
+        emoji = "❓"
     age_note = ""
     if data_result.age_hours and data_result.age_hours > 0:
         age_note = f" ({format_age_string(data_result.age_hours)})"
 
-    st_column.caption(f"Status: {data_result.status_emoji} {label}{age_note}")
+    st_column.caption(f"Status: {emoji} {label}{age_note}")
 
 
 # =============================================================================

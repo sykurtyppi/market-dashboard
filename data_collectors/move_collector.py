@@ -46,10 +46,10 @@ class MOVECollector:
                 
                 if not move_data.empty:
                     self.logger.info(f"FRED: Fetched {len(move_data)} MOVE observations")
-                    df = pd.DataFrame({
-                        'date': pd.to_datetime(move_data.index).date,
-                        'move': move_data.values
-                    })
+                    series_col = move_data.columns[1] if len(move_data.columns) > 1 else "MOVE"
+                    df = move_data.rename(columns={series_col: 'move'}).copy()
+                    df['date'] = pd.to_datetime(df['date']).dt.date
+                    df['source'] = 'FRED'
                     return df
                 else:
                     self.logger.warning("FRED returned empty DataFrame for MOVE")
@@ -73,6 +73,7 @@ class MOVECollector:
                 'date': pd.to_datetime(hist.index).date,
                 'move': hist['Close'].values
             })
+            df['source'] = 'Yahoo'
             
             return df
             

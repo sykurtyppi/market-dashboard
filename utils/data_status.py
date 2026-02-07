@@ -182,6 +182,14 @@ class DataStatusTracker:
         errors: List[str] = None
     ):
         """Update status for a data source"""
+        if isinstance(status, str):
+            try:
+                status = DataStatus(status.lower())
+            except ValueError:
+                status = DataStatus.PARTIAL
+        if status is None:
+            status = DataStatus.UNAVAILABLE
+
         self.sources[source] = DataResult(
             data=data,
             status=status,

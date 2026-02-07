@@ -16,6 +16,7 @@ Phase 2: Fed Balance Sheet, MOVE Index, Repo/SOFR rates
 from datetime import datetime
 from pathlib import Path
 import sys
+import pandas as pd
 
 # --------------------------------------------------------------------------------------
 # Path setup – add project root to sys.path so imports work when run as a script
@@ -313,8 +314,20 @@ class MarketDataUpdater:
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_move_data"):
-                    self.db.save_move_data(move_snapshot)
-                    print("✓ MOVE data saved to database")
+                    move_df = move_snapshot.get('move_df')
+                    if move_df is not None and not move_df.empty:
+                        self.db.save_move_data(move_df)
+                        print("✓ MOVE data saved to database")
+                    else:
+                        # Fallback: save only latest observation
+                        move_df = pd.DataFrame([{
+                            'date': move_snapshot.get('latest_date'),
+                            'move': move_snapshot.get('move'),
+                            'percentile': move_snapshot.get('percentile'),
+                            'source': 'snapshot'
+                        }])
+                        self.db.save_move_data(move_df)
+                        print("✓ MOVE latest value saved to database")
             else:
                 print("⚠ No MOVE data available")
         except Exception as e:

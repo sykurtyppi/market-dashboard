@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 from io import StringIO
 from dotenv import load_dotenv
+import re
 
 # Try to import cot_reports library
 try:
@@ -132,6 +133,47 @@ class COTCollector:
         self._cache = {}
         self._cache_time = None
         self._cache_ttl = timedelta(hours=6)  # Cache for 6 hours (data is weekly)
+        self._quandl_disabled_until: Optional[datetime] = None
+
+    def _is_quandl_enabled(self) -> bool:
+        if self._quandl_disabled_until is None:
+            return True
+        return datetime.now() >= self._quandl_disabled_until
+
+    def _disable_quandl_for(self, hours: int, reason: str):
+        self._quandl_disabled_until = datetime.now() + timedelta(hours=hours)
+        self.logger.warning(f"Nasdaq Data Link disabled for {hours}h: {reason}")
+
+    @staticmethod
+    def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
+        df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+        return df
+
+    @staticmethod
+    def _find_column_by_slug(df: pd.DataFrame, slug: str) -> Optional[str]:
+        for col in df.columns:
+            normalized = re.sub(r'[^a-z0-9]', '', str(col).lower())
+            if normalized == slug:
+                return col
+        return None
+
+    def _normalize_cftc_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = self._normalize_columns(df)
+        slug_map = {
+            "cftccontractmarketcode": "CFTC_Contract_Market_Code",
+            "asofdateinformyymmdd": "As_of_Date_In_Form_YYMMDD",
+            "reportdateasyyyymmdd": "Report_Date_as_YYYY-MM-DD",
+            "noncommpositionslongall": "NonComm_Positions_Long_All",
+            "noncommpositionsshortall": "NonComm_Positions_Short_All",
+            "commpositionslongall": "Comm_Positions_Long_All",
+            "commpositionsshortall": "Comm_Positions_Short_All",
+            "openinterestall": "Open_Interest_All",
+        }
+        for slug, target in slug_map.items():
+            col = self._find_column_by_slug(df, slug)
+            if col and col != target:
+                df = df.rename(columns={col: target})
+        return df
 
     def fetch_cot_data(self, symbol: str, weeks_back: int = 52) -> Optional[pd.DataFrame]:
         """
@@ -158,7 +200,7 @@ class COTCollector:
                     return df
 
             # Method 2: Try Quandl/Nasdaq Data Link if API key provided
-            if self.api_key:
+            if self.api_key and self._is_quandl_enabled():
                 df = self._fetch_from_quandl(contract['quandl_code'], weeks_back)
                 if df is not None and not df.empty:
                     return df
@@ -314,6 +356,12 @@ class COTCollector:
             }
 
             response = requests.get(url, params=params, timeout=15)
+            if response.status_code in (401, 403):
+                self._disable_quandl_for(24, f"HTTP {response.status_code}")
+                return None
+            if response.status_code == 429:
+                self._disable_quandl_for(6, "Rate limited (429)")
+                return None
             response.raise_for_status()
 
             df = pd.read_csv(StringIO(response.text), parse_dates=['Date'])
@@ -353,8 +401,17 @@ class COTCollector:
                             if csv_files:
                                 with z.open(csv_files[0]) as f:
                                     df = pd.read_csv(f, low_memory=False)
+                                    df = self._normalize_cftc_columns(df)
                                     # Filter for our contract
-                                    df_filtered = df[df['CFTC_Contract_Market_Code'] == cftc_code]
+                                    code_col = self._find_column_by_slug(df, "cftccontractmarketcode")
+                                    if not code_col:
+                                        self.logger.warning(
+                                            f"CFTC CSV missing contract code column. Columns: {list(df.columns)[:6]}"
+                                        )
+                                        continue
+                                    codes = df[code_col].astype(str).str.strip()
+                                    target = str(cftc_code).lstrip('0')
+                                    df_filtered = df[codes.str.lstrip('0') == target]
                                     if not df_filtered.empty:
                                         all_data.append(df_filtered)
                 except Exception as e:

@@ -413,8 +413,11 @@ class DataValidator:
             result.data['vrp'] = vrp_val
 
         # Regime
+        regime_value = vrp.get('regime')
+        if isinstance(regime_value, str):
+            regime_value = regime_value.strip().upper()
         regime, regime_err = self._validate_string(
-            vrp.get('regime'), 'regime',
+            regime_value, 'regime',
             allowed_values=['LOW', 'NORMAL', 'ELEVATED', 'HIGH', 'EXTREME', None]
         )
         if regime_err:

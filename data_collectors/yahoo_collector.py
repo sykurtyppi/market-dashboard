@@ -11,6 +11,7 @@ from typing import Dict, Optional, Callable, Any
 import time
 import logging
 from functools import wraps
+from yfinance.exceptions import YFRateLimitError
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -84,8 +85,10 @@ def with_retry(func: Callable) -> Callable:
 
 class YahooCollector:
     """Collects market data from Yahoo Finance with robust error handling"""
+    _CACHE: Dict[str, Dict[str, Any]] = {}
+    _LAST_RATE_LIMIT_AT: Optional[float] = None
     
-    def __init__(self, retry_config: RetryConfig = None):
+    def __init__(self, retry_config: RetryConfig = None, cache_ttl_seconds: int = 300):
         """
         Initialize collector with optional custom retry configuration
         
@@ -98,17 +101,57 @@ class YahooCollector:
             max_backoff=10.0,
             exponential_base=2.0
         )
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self.stale_ttl_seconds = 3600  # allow stale for 1 hour on errors
+        self.rate_limit_cooldown_seconds = 180  # short cooldown after rate limit
+
+    def _get_cached(self, key: str, allow_stale: bool = False):
+        entry = self._CACHE.get(key)
+        if not entry:
+            return None
+        age = time.time() - entry["ts"]
+        if age <= self.cache_ttl_seconds:
+            return entry["value"]
+        if allow_stale and age <= self.stale_ttl_seconds:
+            return entry["value"]
+        return None
+
+    def _set_cached(self, key: str, value: Any):
+        if value is None:
+            return
+        self._CACHE[key] = {"ts": time.time(), "value": value}
+
+    def _rate_limited_recently(self) -> bool:
+        if self._LAST_RATE_LIMIT_AT is None:
+            return False
+        return (time.time() - self._LAST_RATE_LIMIT_AT) < self.rate_limit_cooldown_seconds
     
     @with_retry
     def get_vix(self) -> Optional[float]:
         """Get current VIX spot price"""
-        vix = yf.Ticker("^VIX")
-        data = vix.history(period="1d")
-        
-        if not data.empty:
-            return float(data['Close'].iloc[-1])
-        
-        raise ValueError("VIX data is empty")
+        cached = self._get_cached("vix")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("vix", allow_stale=True)
+            if stale is not None:
+                return stale
+
+        try:
+            vix = yf.Ticker("^VIX")
+            data = vix.history(period="1d")
+            
+            if not data.empty:
+                value = float(data['Close'].iloc[-1])
+                self._set_cached("vix", value)
+                return value
+            
+            raise ValueError("VIX data is empty")
+        except YFRateLimitError:
+            self._LAST_RATE_LIMIT_AT = time.time()
+            stale = self._get_cached("vix", allow_stale=True)
+            return stale
     
     @with_retry
     def get_vix_futures_proxy(self) -> Optional[float]:
@@ -117,22 +160,36 @@ class YahooCollector:
         VIXY = short-term VIX futures
         VXZ = mid-term VIX futures
         """
-        vixy = yf.Ticker("VIXY")  # Short-term VIX futures ETN
-        vxz = yf.Ticker("VXZ")    # Mid-term VIX futures ETN
-        
-        vixy_data = vixy.history(period="5d")
-        vxz_data = vxz.history(period="5d")
-        
-        if not vixy_data.empty and not vxz_data.empty:
-            vixy_price = float(vixy_data['Close'].iloc[-1])
-            vxz_price = float(vxz_data['Close'].iloc[-1])
+        cached = self._get_cached("vix_contango_proxy")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("vix_contango_proxy", allow_stale=True)
+            if stale is not None:
+                return stale
+
+        try:
+            vixy = yf.Ticker("VIXY")  # Short-term VIX futures ETN
+            vxz = yf.Ticker("VXZ")    # Mid-term VIX futures ETN
             
-            # Approximate contango as (mid-term / short-term - 1) * 100
-            contango = (vxz_price / vixy_price - 1) * 100
+            vixy_data = vixy.history(period="5d")
+            vxz_data = vxz.history(period="5d")
             
-            return contango
-        
-        raise ValueError("VIX ETF data is empty")
+            if not vixy_data.empty and not vxz_data.empty:
+                vixy_price = float(vixy_data['Close'].iloc[-1])
+                vxz_price = float(vxz_data['Close'].iloc[-1])
+                
+                # Approximate contango as (mid-term / short-term - 1) * 100
+                contango = (vxz_price / vixy_price - 1) * 100
+                self._set_cached("vix_contango_proxy", contango)
+                return contango
+            
+            raise ValueError("VIX ETF data is empty")
+        except YFRateLimitError:
+            self._LAST_RATE_LIMIT_AT = time.time()
+            stale = self._get_cached("vix_contango_proxy", allow_stale=True)
+            return stale
     
     @with_retry
     def get_market_breadth_proxy(self) -> Optional[float]:
@@ -156,21 +213,37 @@ class YahooCollector:
         advancing = 0
         total = 0
         
-        for ticker in sectors.keys():
-            try:
-                etf = yf.Ticker(ticker)
-                data = etf.history(period="2d")
-                
-                if len(data) >= 2:
-                    total += 1
-                    if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
-                        advancing += 1
-            except Exception as e:
-                logger.debug(f"Error fetching {ticker} for breadth: {e}")
-                continue
+        cached = self._get_cached("market_breadth_proxy")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("market_breadth_proxy", allow_stale=True)
+            if stale is not None:
+                return stale
+
+        try:
+            for ticker in sectors.keys():
+                try:
+                    etf = yf.Ticker(ticker)
+                    data = etf.history(period="2d")
+                    
+                    if len(data) >= 2:
+                        total += 1
+                        if data['Close'].iloc[-1] > data['Close'].iloc[-2]:
+                            advancing += 1
+                except Exception as e:
+                    logger.debug(f"Error fetching {ticker} for breadth: {e}")
+                    continue
+        except YFRateLimitError:
+            self._LAST_RATE_LIMIT_AT = time.time()
+            stale = self._get_cached("market_breadth_proxy", allow_stale=True)
+            return stale
         
         if total > 0:
-            return advancing / total
+            value = advancing / total
+            self._set_cached("market_breadth_proxy", value)
+            return value
         
         raise ValueError("No sector ETF data available for breadth calculation")
     
@@ -180,6 +253,15 @@ class YahooCollector:
         Get Put/Call ratio using SPY options volume (VXV is delisted)
         Returns ratio of put volume to call volume
         """
+        cached = self._get_cached("put_call_proxy")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("put_call_proxy", allow_stale=True)
+            if stale is not None:
+                return stale
+
         try:
             spy = yf.Ticker("SPY")
             
@@ -200,11 +282,16 @@ class YahooCollector:
             if call_volume > 0:
                 pc_ratio = put_volume / call_volume
                 logger.info(f"SPY P/C Ratio: {pc_ratio:.3f} (Puts: {put_volume:,.0f}, Calls: {call_volume:,.0f})")
+                self._set_cached("put_call_proxy", pc_ratio)
                 return pc_ratio
             else:
                 logger.warning("SPY call volume is zero")
                 return None
                 
+        except YFRateLimitError:
+            self._LAST_RATE_LIMIT_AT = time.time()
+            stale = self._get_cached("put_call_proxy", allow_stale=True)
+            return stale
         except Exception as e:
             logger.error(f"Error calculating SPY P/C ratio: {e}")
             return None
@@ -233,6 +320,15 @@ class YahooCollector:
         Returns:
             10Y yield as percentage (e.g., 4.25 for 4.25%)
         """
+        cached = self._get_cached("treasury_10y")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("treasury_10y", allow_stale=True)
+            if stale is not None:
+                return stale
+
         try:
             tnx = yf.Ticker("^TNX")
             data = tnx.history(period="5d")
@@ -241,11 +337,16 @@ class YahooCollector:
                 # Yahoo TNX is already in percentage form
                 yield_pct = float(data['Close'].iloc[-1])
                 logger.info(f"10Y Treasury (Yahoo ^TNX): {yield_pct:.2f}%")
+                self._set_cached("treasury_10y", yield_pct)
                 return yield_pct
 
             logger.warning("No 10Y Treasury data from Yahoo")
             return None
 
+        except YFRateLimitError:
+            self._LAST_RATE_LIMIT_AT = time.time()
+            stale = self._get_cached("treasury_10y", allow_stale=True)
+            return stale
         except Exception as e:
             logger.error(f"Error fetching 10Y Treasury: {e}")
             return None
@@ -266,6 +367,15 @@ class YahooCollector:
         Returns:
             Estimated HY spread as percentage (e.g., 3.5 for 350 bps)
         """
+        cached = self._get_cached("hy_spread_proxy")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("hy_spread_proxy", allow_stale=True)
+            if stale is not None:
+                return stale
+
         try:
             # HYG - iShares iBoxx High Yield Corporate Bond ETF
             hyg = yf.Ticker("HYG")
@@ -291,15 +401,22 @@ class YahooCollector:
                 # Sanity check - HY spread should be positive and reasonable
                 if 1.0 < spread < 15.0:
                     logger.info(f"HY Spread Proxy: {spread:.2f}% (HYG: {hyg_yield_pct:.2f}%, 10Y: {treasury_10y:.2f}%)")
-                    return round(spread, 2)
+                    spread = round(spread, 2)
+                    self._set_cached("hy_spread_proxy", spread)
+                    return spread
                 else:
                     logger.warning(f"HY spread estimate out of range: {spread:.2f}%")
                     # Return a reasonable estimate based on current market
+                    self._set_cached("hy_spread_proxy", 3.5)
                     return 3.5  # ~350 bps is typical "normal" spread
 
             logger.warning("Could not calculate HY spread proxy")
             return None
 
+        except YFRateLimitError:
+            self._LAST_RATE_LIMIT_AT = time.time()
+            stale = self._get_cached("hy_spread_proxy", allow_stale=True)
+            return stale
         except Exception as e:
             logger.error(f"Error calculating HY spread proxy: {e}")
             return None
@@ -318,6 +435,15 @@ class YahooCollector:
         Returns:
             Dict with prices, ratio, and performance metrics
         """
+        cached = self._get_cached("credit_etf_flows")
+        if cached is not None:
+            return cached
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("credit_etf_flows", allow_stale=True)
+            if stale is not None:
+                return stale
+
         hyg = yf.Ticker("HYG")
         lqd = yf.Ticker("LQD")
 
@@ -376,7 +502,7 @@ class YahooCollector:
             signal = "UNKNOWN"
             description = "Insufficient data"
 
-        return {
+        result = {
             'hyg_price': hyg_price,
             'lqd_price': lqd_price,
             'hyg_lqd_ratio': round(ratio, 4),
@@ -394,6 +520,8 @@ class YahooCollector:
             'description': description,
             'timestamp': datetime.now().isoformat()
         }
+        self._set_cached("credit_etf_flows", result)
+        return result
 
     def get_health_check(self) -> Dict:
         """
