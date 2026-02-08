@@ -260,7 +260,7 @@ METRIC_TOOLTIPS = {
     'move': "Treasury market implied vol. High = bond market stress.",
     'breadth': "% stocks advancing. >60% = healthy rally, <40% = weak participation.",
     'left_signal': "Credit spreads vs 330-day EMA. BUY when 35%+ below.",
-    'vix_contango': "VIX3M vs VIX. Positive = normal (bullish), negative = fear.",
+    'vix_contango': "(VIX3M - VIX) / VIX %. Typical: -15% to +10%. Positive = contango (calm), negative = backwardation (fear). ~prefix = estimated.",
     'mcclellan': "Breadth momentum oscillator. Positive = healthy internals.",
 }
 

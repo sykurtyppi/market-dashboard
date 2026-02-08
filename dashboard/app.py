@@ -1438,7 +1438,7 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
                 (DataStatus.ESTIMATED, 0.0) if is_estimated else status_from_timestamp(fresh_cboe.get("timestamp"))
             )
             status_tracker.update("vix_contango", contango_status, age_hours=contango_age or 0.0)
-            data_source_caption(col2, "Derived (VIX/VIX3M, Yahoo)", "delayed")
+            data_source_caption(col2, "Derived (VIX/VIX3M indices)", "delayed")
             metric_status_caption(col2, status_tracker.get_source("vix_contango"))
             if contango > 0:
                 st.caption("📈 Contango (bullish)")
@@ -1455,7 +1455,7 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
             else:
                 st.metric("VIX Contango", "N/A")
                 status_tracker.update("vix_contango", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
-                data_source_caption(col2, "Derived (VIX/VIX3M, Yahoo)", "delayed")
+                data_source_caption(col2, "Derived (VIX/VIX3M indices)", "delayed")
                 metric_status_caption(col2, status_tracker.get_source("vix_contango"))
 
     with col3:

@@ -169,40 +169,33 @@ class YahooCollector:
     @with_retry
     def get_vix_futures_proxy(self) -> Optional[float]:
         """
-        Calculate VIX term structure using VIX ETFs as proxy
-        VIXY = short-term VIX futures
-        VXZ = mid-term VIX futures
+        DEPRECATED: ETN-based VIX contango calculation is fundamentally flawed.
+
+        IMPORTANT: Do NOT use this for market analysis!
+        ETN prices (VIXY/VXZ) are NOT equivalent to VIX futures levels because:
+        1. Contango drag: Daily roll losses compound over time
+        2. Management fees: ~0.85%+ annually erode ETN value
+        3. Different decay rates: Short-term ETNs decay faster than mid-term
+
+        The ratio of ETN prices can show fake contango of 65%+ when real
+        VIX term structure contango is typically -5% to +10%.
+
+        For accurate VIX term structure, use:
+        - CBOECollector.get_real_contango() which uses VIX/VIX3M indices
+
+        This method is kept for backward compatibility but returns None
+        to prevent use of misleading data.
+
+        Returns:
+            None - intentionally disabled due to fundamental methodology flaw
         """
-        cached = self._get_cached("vix_contango_proxy")
-        if cached is not None:
-            return cached
-
-        if self._rate_limited_recently():
-            stale = self._get_cached("vix_contango_proxy", allow_stale=True)
-            if stale is not None:
-                return stale
-
-        try:
-            vixy = yf.Ticker("VIXY")  # Short-term VIX futures ETN
-            vxz = yf.Ticker("VXZ")    # Mid-term VIX futures ETN
-            
-            vixy_data = vixy.history(period="5d")
-            vxz_data = vxz.history(period="5d")
-            
-            if not vixy_data.empty and not vxz_data.empty:
-                vixy_price = float(vixy_data['Close'].iloc[-1])
-                vxz_price = float(vxz_data['Close'].iloc[-1])
-                
-                # Approximate contango as (mid-term / short-term - 1) * 100
-                contango = (vxz_price / vixy_price - 1) * 100
-                self._set_cached("vix_contango_proxy", contango)
-                return contango
-            
-            raise ValueError("VIX ETF data is empty")
-        except YFRateLimitError:
-            self._LAST_RATE_LIMIT_AT = time.time()
-            stale = self._get_cached("vix_contango_proxy", allow_stale=True)
-            return stale
+        logger.warning(
+            "get_vix_futures_proxy() is DEPRECATED: ETN-based calculation is "
+            "fundamentally flawed. Use CBOECollector.get_real_contango() instead."
+        )
+        # Return None to prevent use of misleading data
+        # The real VIX contango should come from VIX/VIX3M ratio in CBOECollector
+        return None
     
     @with_retry
     def get_market_breadth_proxy(self) -> Optional[float]:
@@ -311,10 +304,16 @@ class YahooCollector:
 
 
     def get_all_data(self) -> Dict:
-        """Get all Yahoo Finance data"""
+        """Get all Yahoo Finance data
+
+        Note: vix_contango_proxy is intentionally excluded - the ETN-based
+        calculation was fundamentally flawed. Use CBOECollector.get_real_contango()
+        for accurate VIX term structure data.
+        """
         return {
             'vix': self.get_vix(),
-            'vix_contango_proxy': self.get_vix_futures_proxy(),
+            # vix_contango_proxy removed - ETN-based calculation is flawed
+            # Real contango should come from CBOE VIX/VIX3M ratio
             'market_breadth_proxy': self.get_market_breadth_proxy(),
             'put_call_proxy': self.get_put_call_ratio_proxy(),
             'treasury_10y': self.get_treasury_10y(),

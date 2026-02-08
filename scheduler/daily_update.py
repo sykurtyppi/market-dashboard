@@ -200,8 +200,8 @@ class MarketDataUpdater:
 
         if yahoo_data.get("vix") is not None:
             logger.info(f"VIX (Yahoo): {yahoo_data['vix']:.2f}")
-        if yahoo_data.get("vix_contango_proxy") is not None:
-            logger.info(f"VIX Contango Proxy (Yahoo): {yahoo_data['vix_contango_proxy']:+.2f}%")
+        # Note: Yahoo vix_contango_proxy removed - ETN-based calculation was flawed
+        # Real contango comes from CBOE VIX/VIX3M ratio only
         if yahoo_data.get("market_breadth_proxy") is not None:
             logger.info(
                 f"Market Breadth Proxy (Yahoo): "
@@ -388,9 +388,9 @@ class MarketDataUpdater:
 
         # Choose best available sources (CBOE first, then Yahoo proxies)
         vix_spot = vix_spot_cboe or yahoo_data.get("vix")
-        vix_contango = vix_contango_cboe if vix_contango_cboe is not None else yahoo_data.get(
-            "vix_contango_proxy"
-        )
+        # VIX Contango: ONLY use CBOE data (VIX/VIX3M ratio)
+        # Yahoo ETN-based proxy was fundamentally flawed and has been removed
+        vix_contango = vix_contango_cboe  # No fallback - better to show N/A than wrong data
         # Get put/call ratios with proper separation
         pc_ratios = cboe_data.get("put_call_ratios", {})
         cboe_equity_pc = pc_ratios.get("cboe_equity_pc")  # Official CBOE PCCE

@@ -98,13 +98,47 @@ class CBOECollector:
                     logger.debug(f"Ticker {ticker_symbol} failed: {e}")
                     continue
 
-            # If all tickers fail, estimate from VIX (typically VIX3M ~= VIX * 0.7-0.9)
+            # If all tickers fail, estimate from VIX using regime-aware approach
+            # Historical VIX/VIX3M relationship varies by market regime:
+            #
+            # Calm markets (VIX < 15):   VIX3M typically 5-10% HIGHER (contango)
+            # Normal (VIX 15-20):        VIX3M typically 0-5% higher (mild contango)
+            # Elevated (VIX 20-30):      VIX3M roughly equal to VIX (flat)
+            # Crisis (VIX > 30):         VIX3M typically 5-15% LOWER (backwardation)
+            # Panic (VIX > 50):          VIX3M can be 15-25% LOWER (steep backwardation)
             vix = self.get_vix()
             if vix:
-                estimated_vix3m = vix * 0.85  # Conservative estimate
+                if vix < 15:
+                    # Calm market: contango, VIX3M > VIX
+                    multiplier = 1.07
+                    regime = "calm (contango)"
+                elif vix < 20:
+                    # Normal: mild contango
+                    multiplier = 1.03
+                    regime = "normal (mild contango)"
+                elif vix < 30:
+                    # Elevated: roughly flat
+                    multiplier = 0.98
+                    regime = "elevated (flat)"
+                elif vix < 50:
+                    # Crisis: backwardation, VIX3M < VIX
+                    multiplier = 0.90
+                    regime = "crisis (backwardation)"
+                else:
+                    # Panic: steep backwardation
+                    multiplier = 0.80
+                    regime = "panic (steep backwardation)"
+
+                estimated_vix3m = vix * multiplier
                 if track_estimation:
-                    self._mark_estimated('vix3m', 'Calculated as VIX × 0.85 (real VIX3M unavailable)')
-                logger.warning(f"VIX3M unavailable, using estimate: {estimated_vix3m:.2f}")
+                    self._mark_estimated(
+                        'vix3m',
+                        f'Estimated VIX × {multiplier:.2f} for {regime} regime (VIX={vix:.1f})'
+                    )
+                logger.warning(
+                    f"VIX3M unavailable, using regime-aware estimate: {estimated_vix3m:.2f} "
+                    f"(VIX={vix:.1f}, regime={regime})"
+                )
                 return estimated_vix3m
 
             logger.warning("No VIX3M data available from any source")
@@ -322,7 +356,13 @@ class CBOECollector:
         """
         Calculate REAL VIX contango using VIX/VIX3M ratio
 
-        Real contango should be single-digit percentages, not 65%!
+        This is the CORRECT methodology for VIX term structure:
+        - Uses actual VIX indices, not ETN prices
+        - Typical range: -15% (backwardation) to +10% (contango)
+        - NOT the 65%+ fake values from ETN price ratios
+
+        The previous ETN-based calculation (VIXY/VXZ) was fundamentally
+        flawed because ETN prices are eroded by contango drag and fees.
 
         Returns:
             Contango percentage or None
@@ -334,21 +374,43 @@ class CBOECollector:
 
             if vix and vix3m:
                 # Real contango: (VIX3M - VIX) / VIX * 100
+                # Positive = contango (normal, bullish)
+                # Negative = backwardation (fear, bearish)
                 contango = ((vix3m - vix) / vix) * 100
-                logger.info(f"Real VIX Contango: {contango:+.2f}%")
-                return contango
+                logger.info(f"Real VIX Contango: {contango:+.2f}% (VIX={vix:.2f}, VIX3M={vix3m:.2f})")
+                return round(contango, 2)
             elif vix:
-                # If VIX3M unavailable, estimate contango from VIX level
-                # Typically: VIX > 20 → slight backwardation, VIX < 15 → contango
-                if vix > 25:
-                    estimated_contango = -2.0  # Backwardation when fear high
-                elif vix > 20:
-                    estimated_contango = 0.0  # Flat
+                # If VIX3M unavailable but VIX is, estimate based on VIX regime
+                # Historical relationship based on empirical data:
+                if vix < 15:
+                    # Calm market: strong contango
+                    estimated_contango = 7.0
+                    regime = "calm"
+                elif vix < 20:
+                    # Normal: mild contango
+                    estimated_contango = 3.0
+                    regime = "normal"
+                elif vix < 25:
+                    # Elevated: roughly flat
+                    estimated_contango = -2.0
+                    regime = "elevated"
+                elif vix < 35:
+                    # Crisis: backwardation
+                    estimated_contango = -8.0
+                    regime = "crisis"
                 else:
-                    estimated_contango = 3.0  # Contango when calm
+                    # Panic: steep backwardation
+                    estimated_contango = -15.0
+                    regime = "panic"
 
-                self._mark_estimated('vix_contango', f'VIX-based estimate (VIX={vix:.1f})')
-                logger.warning(f"VIX3M unavailable, estimated contango: {estimated_contango:+.2f}%")
+                self._mark_estimated(
+                    'vix_contango',
+                    f'VIX-regime estimate for {regime} market (VIX={vix:.1f})'
+                )
+                logger.warning(
+                    f"VIX3M unavailable, estimated contango: {estimated_contango:+.2f}% "
+                    f"(VIX={vix:.1f}, regime={regime})"
+                )
                 return estimated_contango
 
             return None
