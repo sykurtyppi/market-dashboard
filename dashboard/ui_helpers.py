@@ -976,6 +976,103 @@ def calculate_composite_risk_score(snapshot: Dict, vrp_data: Dict = None) -> Dic
 
 
 # =============================================================================
+# TIMESTAMP DISPLAY HELPERS
+# =============================================================================
+
+def format_last_updated(timestamp: Optional[datetime] = None, prefix: str = "Last updated") -> str:
+    """
+    Format a timestamp for display as "Last updated: X min ago".
+
+    Args:
+        timestamp: The timestamp to format. If None, uses current time.
+        prefix: Text to show before the time (default: "Last updated")
+
+    Returns:
+        Formatted string like "Last updated: 5 min ago"
+    """
+    if timestamp is None:
+        return f"{prefix}: just now"
+
+    now = datetime.now()
+    if timestamp.tzinfo is not None:
+        # Make naive for comparison
+        timestamp = timestamp.replace(tzinfo=None)
+
+    delta = now - timestamp
+
+    if delta.total_seconds() < 60:
+        return f"{prefix}: just now"
+    elif delta.total_seconds() < 3600:
+        mins = int(delta.total_seconds() / 60)
+        return f"{prefix}: {mins} min ago"
+    elif delta.total_seconds() < 86400:
+        hours = int(delta.total_seconds() / 3600)
+        return f"{prefix}: {hours}h ago"
+    else:
+        days = int(delta.total_seconds() / 86400)
+        return f"{prefix}: {days}d ago"
+
+
+def section_header_with_timestamp(title: str, timestamp: Optional[datetime] = None,
+                                   help_text: Optional[str] = None) -> None:
+    """
+    Display a section header with an embedded timestamp.
+
+    Args:
+        title: Section title
+        timestamp: Last update timestamp
+        help_text: Optional help tooltip
+    """
+    import streamlit as st
+
+    time_str = format_last_updated(timestamp) if timestamp else ""
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if help_text:
+            st.subheader(title, help=help_text)
+        else:
+            st.subheader(title)
+    with col2:
+        if time_str:
+            st.caption(f"🕐 {time_str.replace('Last updated: ', '')}")
+
+
+def data_freshness_badge(timestamp: Optional[datetime], container=None) -> None:
+    """
+    Display a small freshness badge showing data age.
+
+    Args:
+        timestamp: Data timestamp
+        container: Streamlit container to use (defaults to st)
+    """
+    import streamlit as st
+
+    if container is None:
+        container = st
+
+    if timestamp is None:
+        container.caption("⚪ No timestamp")
+        return
+
+    now = datetime.now()
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.replace(tzinfo=None)
+
+    delta = now - timestamp
+    hours = delta.total_seconds() / 3600
+
+    if hours < 1:
+        container.caption(f"🟢 Fresh ({int(delta.total_seconds()/60)}m ago)")
+    elif hours < 4:
+        container.caption(f"🟡 Recent ({int(hours)}h ago)")
+    elif hours < 24:
+        container.caption(f"🟠 Stale ({int(hours)}h ago)")
+    else:
+        container.caption(f"🔴 Old ({int(hours/24)}d ago)")
+
+
+# =============================================================================
 # HISTORICAL COMPARISON
 # =============================================================================
 

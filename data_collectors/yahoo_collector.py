@@ -2,6 +2,8 @@
 Yahoo Finance Collector - IMPROVED VERSION v2
 Fetches VIX, market breadth, and supplementary options data with robust retry logic
 Now with proper config usage, logging, and narrower exception catching
+
+Includes centralized rate limiting via utils.retry_utils
 """
 
 import yfinance as yf
@@ -15,6 +17,13 @@ from yfinance.exceptions import YFRateLimitError
 
 # Set up logger
 logger = logging.getLogger(__name__)
+
+# Import centralized rate limiter
+try:
+    from utils.retry_utils import YAHOO_LIMITER
+except ImportError:
+    YAHOO_LIMITER = None
+    logger.debug("Centralized rate limiter not available, using built-in")
 
 class RetryConfig:
     """Configuration for retry behavior"""
@@ -137,6 +146,10 @@ class YahooCollector:
             stale = self._get_cached("vix", allow_stale=True)
             if stale is not None:
                 return stale
+
+        # Apply centralized rate limiting
+        if YAHOO_LIMITER:
+            YAHOO_LIMITER.wait()
 
         try:
             vix = yf.Ticker("^VIX")

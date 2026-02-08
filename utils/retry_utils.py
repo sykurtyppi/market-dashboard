@@ -2,11 +2,19 @@
 Retry utilities for robust API calls.
 
 Default parameters loaded from config/parameters.yaml
+
+Includes:
+- exponential_backoff_retry: Decorator for retrying failed API calls
+- simple_retry: Simple fixed-delay retry decorator
+- RateLimiter: Class for rate limiting API calls
+- rate_limit: Decorator for applying rate limits
 """
 import time
 import logging
+import threading
 from functools import wraps
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Dict
+from collections import defaultdict
 import requests
 
 from config import cfg
@@ -101,7 +109,7 @@ def exponential_backoff_retry(
 def simple_retry(max_attempts: int = 3, delay: float = 1.0):
     """
     Simple retry decorator with fixed delay.
-    
+
     Args:
         max_attempts: Number of attempts
         delay: Delay between attempts in seconds
@@ -120,3 +128,153 @@ def simple_retry(max_attempts: int = 3, delay: float = 1.0):
             return None
         return wrapper
     return decorator
+
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+
+class RateLimiter:
+    """
+    Token bucket rate limiter for API calls.
+
+    Provides thread-safe rate limiting with configurable requests per second.
+
+    Usage:
+        limiter = RateLimiter(requests_per_second=2)  # 2 requests/sec
+
+        @limiter.limit
+        def fetch_data():
+            return requests.get(url)
+
+        # Or manually:
+        limiter.wait()  # Blocks until rate limit allows
+        response = requests.get(url)
+    """
+
+    # Shared limiters by API name (thread-safe singleton pattern)
+    _instances: Dict[str, 'RateLimiter'] = {}
+    _lock = threading.Lock()
+
+    def __init__(self, requests_per_second: float = 1.0, burst: int = 1):
+        """
+        Initialize rate limiter.
+
+        Args:
+            requests_per_second: Maximum requests per second
+            burst: Maximum burst size (tokens available immediately)
+        """
+        self.rate = requests_per_second
+        self.burst = burst
+        self.tokens = float(burst)
+        self.last_update = time.monotonic()
+        self._lock = threading.Lock()
+
+    @classmethod
+    def get_limiter(cls, name: str, requests_per_second: float = 1.0, burst: int = 1) -> 'RateLimiter':
+        """
+        Get or create a named rate limiter (singleton per API).
+
+        Args:
+            name: API/service name (e.g., 'yahoo', 'fred', 'cboe')
+            requests_per_second: Rate limit
+            burst: Burst size
+
+        Returns:
+            RateLimiter instance
+        """
+        with cls._lock:
+            if name not in cls._instances:
+                cls._instances[name] = RateLimiter(requests_per_second, burst)
+                logger.debug(f"Created rate limiter '{name}': {requests_per_second} req/s, burst={burst}")
+            return cls._instances[name]
+
+    def _add_tokens(self):
+        """Add tokens based on elapsed time"""
+        now = time.monotonic()
+        elapsed = now - self.last_update
+        self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+        self.last_update = now
+
+    def wait(self):
+        """
+        Wait until a request is allowed.
+
+        Blocks the thread until the rate limit permits a request.
+        """
+        with self._lock:
+            self._add_tokens()
+
+            if self.tokens < 1:
+                # Calculate wait time
+                wait_time = (1 - self.tokens) / self.rate
+                logger.debug(f"Rate limited, waiting {wait_time:.2f}s")
+                time.sleep(wait_time)
+                self._add_tokens()
+
+            self.tokens -= 1
+
+    def try_acquire(self) -> bool:
+        """
+        Try to acquire permission for a request without blocking.
+
+        Returns:
+            True if request is allowed, False if rate limited
+        """
+        with self._lock:
+            self._add_tokens()
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return True
+            return False
+
+    def limit(self, func: Callable) -> Callable:
+        """
+        Decorator to rate limit a function.
+
+        Usage:
+            limiter = RateLimiter(requests_per_second=2)
+
+            @limiter.limit
+            def fetch_data():
+                return requests.get(url)
+        """
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            self.wait()
+            return func(*args, **kwargs)
+        return wrapper
+
+
+def rate_limit(api_name: str, requests_per_second: float = 1.0, burst: int = 1):
+    """
+    Decorator for rate limiting function calls.
+
+    Uses a shared rate limiter per API name, so all calls to the same API
+    share the rate limit even across different functions.
+
+    Args:
+        api_name: Name of the API (e.g., 'yahoo', 'fred')
+        requests_per_second: Maximum requests per second
+        burst: Maximum burst size
+
+    Usage:
+        @rate_limit('yahoo', requests_per_second=2)
+        def fetch_yahoo_data(ticker):
+            return yf.Ticker(ticker).history(period='5d')
+    """
+    def decorator(func: Callable) -> Callable:
+        limiter = RateLimiter.get_limiter(api_name, requests_per_second, burst)
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            limiter.wait()
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+# Pre-configured rate limiters for common APIs
+YAHOO_LIMITER = RateLimiter.get_limiter('yahoo', requests_per_second=2.0, burst=5)
+FRED_LIMITER = RateLimiter.get_limiter('fred', requests_per_second=5.0, burst=10)
+CBOE_LIMITER = RateLimiter.get_limiter('cboe', requests_per_second=1.0, burst=3)

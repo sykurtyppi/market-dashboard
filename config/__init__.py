@@ -120,6 +120,10 @@ class Config:
                     'buy_alert_threshold': 110,
                     'normal_min': 80,
                 },
+                'vix_term': {
+                    'contango_steep_threshold': 0.05,
+                    'backwardation_threshold': 0.0,
+                },
             },
             'credit': {
                 'left_strategy': {
@@ -134,6 +138,29 @@ class Config:
                     'supportive_threshold': 0.8,
                     'draining_threshold': -0.8,
                 }
+            },
+            'options': {
+                'equity_put_call': {
+                    'bearish_threshold': 1.0,
+                    'bullish_threshold': 0.7,
+                    'extreme_fear': 1.2,
+                    'extreme_greed': 0.6,
+                },
+                'total_put_call': {
+                    'extreme_bearish': 1.1,
+                    'bearish': 0.90,
+                    'neutral_low': 0.80,
+                    'bullish': 0.70,
+                },
+                'vix_percentile': {
+                    'lookback_days': 252,
+                },
+            },
+            'repo': {
+                'spread': {
+                    'tight_max_bps': 5,
+                    'normal_max_bps': 15,
+                },
             },
             'data_collection': {
                 'lookback_days': {

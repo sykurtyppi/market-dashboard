@@ -286,6 +286,29 @@ display:
     default_lookback_days: 90
 
 # ----------------------------------------------------------------------------
+# OPTIONS & PUT/CALL ANALYSIS
+# ----------------------------------------------------------------------------
+options:
+  # Equity Put/Call Ratio Thresholds
+  # Source: CBOE equity-only put/call ratio interpretation
+  equity_put_call:
+    bearish_threshold: 1.0      # > 1.0 = bearish/protective sentiment
+    bullish_threshold: 0.7      # < 0.7 = bullish sentiment
+    extreme_fear: 1.2           # Extreme fear/hedging
+    extreme_greed: 0.6          # Extreme complacency
+
+  # Total Put/Call Ratio Thresholds
+  total_put_call:
+    extreme_bearish: 1.1
+    bearish: 0.90
+    neutral_low: 0.80
+    bullish: 0.70
+
+  # VIX Percentile Configuration
+  vix_percentile:
+    lookback_days: 252          # 1 year lookback for percentile
+
+# ----------------------------------------------------------------------------
 # TECHNICAL INDICATORS
 # ----------------------------------------------------------------------------
 indicators:

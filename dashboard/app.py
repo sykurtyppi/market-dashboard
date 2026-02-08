@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 load_dotenv()
 
+# Load centralized configuration
+from config import cfg, get_lookback
+
 # -------------------------------------------------------------------
 # STREAMLIT CLOUD SECRETS SUPPORT
 # Sync st.secrets to os.environ so collectors can use os.getenv()
@@ -138,6 +141,10 @@ try:
         HISTORICAL_PERIODS,
         data_source_caption,
         metric_status_caption,
+        # Timestamp helpers
+        format_last_updated,
+        section_header_with_timestamp,
+        data_freshness_badge,
     )
 
 except ImportError as e:
@@ -681,6 +688,7 @@ with st.sidebar:
             "Cross-Asset",             # Phase 4 - Correlations & Regime
             "Options Flow",            # Phase 4 - Unusual activity scanner
             "Settings",
+            "System Health",           # Health check and diagnostics
         ],
     )
 
@@ -1061,7 +1069,17 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
     breadth_status, breadth_age = status_from_timestamp(breadth_ts)
     
     # ========== REGIME SUMMARY BANNER ==========
-    st.markdown("###  Market Regime Summary")
+    # Display header with last update timestamp
+    snapshot_date = snapshot.get("date")
+    if snapshot_date:
+        if isinstance(snapshot_date, str):
+            try:
+                snapshot_date = datetime.fromisoformat(snapshot_date.replace('Z', '+00:00'))
+            except:
+                snapshot_date = None
+        section_header_with_timestamp(" Market Regime Summary", snapshot_date)
+    else:
+        st.markdown("###  Market Regime Summary")
     
     # Get VRP data for volatility regime
     vrp_data = components["db"].get_latest_vrp()
@@ -1471,10 +1489,12 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
                 st.caption("📈 Live Data")
             metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
 
-            # Interpretation
-            if equity_pc > 1.0:
+            # Interpretation (thresholds from config)
+            pc_bearish = cfg.get('options.equity_put_call.bearish_threshold', 1.0)
+            pc_bullish = cfg.get('options.equity_put_call.bullish_threshold', 0.7)
+            if equity_pc > pc_bearish:
                 st.caption("🔴 Bearish (high P/C)")
-            elif equity_pc < 0.7:
+            elif equity_pc < pc_bullish:
                 st.caption("🟢 Bullish (low P/C)")
             else:
                 st.caption("🟡 Neutral range")
@@ -1497,9 +1517,9 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
                 metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
                 st.caption(f"✏️ Manual ({manual_pcce_date or 'Today'})")
 
-                if manual_pcce_value > 1.0:
+                if manual_pcce_value > pc_bearish:
                     st.caption("🔴 Bearish (high P/C)")
-                elif manual_pcce_value < 0.7:
+                elif manual_pcce_value < pc_bullish:
                     st.caption("🟢 Bullish (low P/C)")
                 else:
                     st.caption("🟡 Neutral range")
@@ -1568,22 +1588,27 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
 
     with col2:
         vvix = fresh_cboe.get("vvix") if fresh_cboe else None
+        # VVIX thresholds from config
+        vvix_strong_buy = cfg.get('volatility.vvix.strong_buy_threshold', 120)
+        vvix_buy_alert = cfg.get('volatility.vvix.buy_alert_threshold', 110)
+        vvix_normal_min = cfg.get('volatility.vvix.normal_min', 80)
+
         if vvix is not None:
-            if vvix >= 120:
+            if vvix >= vvix_strong_buy:
                 st.metric("🎯 VVIX", f"{vvix:.1f}", delta="BUY", help=get_tooltip('vvix'))
                 vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
                 status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
                 data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
                 metric_status_caption(col2, status_tracker.get_source("vvix"))
                 st.caption("🟢 Historic buy zone")
-            elif vvix >= 110:
+            elif vvix >= vvix_buy_alert:
                 st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
                 vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
                 status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
                 data_source_caption(col2, "Yahoo Finance (^VVIX)", "delayed")
                 metric_status_caption(col2, status_tracker.get_source("vvix"))
                 st.caption("🟡 Elevated")
-            elif vvix >= 80:
+            elif vvix >= vvix_normal_min:
                 st.metric("VVIX", f"{vvix:.1f}", help=get_tooltip('vvix'))
                 vvix_status, vvix_age = status_from_timestamp(fresh_cboe.get("timestamp"))
                 status_tracker.update("vvix", vvix_status, age_hours=vvix_age or 0.0)
@@ -1663,7 +1688,8 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
             status_tracker.update("term_slope", slope_status, age_hours=slope_age or 0.0)
             data_source_caption(col5, "Derived (VIX vs VIX3M)", "varies")
             metric_status_caption(col5, status_tracker.get_source("term_slope"))
-            if slope_per_day > 0.05:
+            contango_steep = cfg.get('volatility.vix_term.contango_steep_threshold', 0.05)
+            if slope_per_day > contango_steep:
                 st.caption("🟢 Steep contango")
             elif slope_per_day > 0:
                 st.caption("Normal")
@@ -1914,17 +1940,23 @@ elif page == "Sentiment":
 # CREDIT & LIQUIDITY  (Phase 1 + Phase 2 combined)
 # ============================================================
 elif page == "Credit & Liquidity":
-    st.markdown(
-        "<h1 class='main-header'> Credit Spreads & Liquidity</h1>",
-        unsafe_allow_html=True,
-    )
-    
+    # Get latest data timestamp
+    _snapshot = components["db"].get_latest_snapshot()
+    _snapshot_ts = _snapshot.get("date") if _snapshot else None
+    if isinstance(_snapshot_ts, str):
+        try:
+            _snapshot_ts = datetime.fromisoformat(_snapshot_ts.replace('Z', '+00:00'))
+        except:
+            _snapshot_ts = None
+
+    section_header_with_timestamp("💳 Credit Spreads & Liquidity", _snapshot_ts)
+
     st.markdown("""
-    **Credit spreads** measure the risk premium for corporate debt, while **macro liquidity** 
+    **Credit spreads** measure the risk premium for corporate debt, while **macro liquidity**
     (RRP, TGA, Fed balance sheet) shows the plumbing behind market moves. Together they paint
     the complete credit picture.
     """)
-    
+
     st.divider()
     
     try:
@@ -2410,13 +2442,13 @@ elif page == "Credit & Liquidity":
 # VOLATILITY & VRP
 # ============================================================
 elif page == "Volatility & VRP":
-    st.header("Volatility Risk Premium Analysis")
-    
+    section_header_with_timestamp("📊 Volatility Risk Premium Analysis", datetime.now())
+
     st.markdown("""
-    **Volatility Risk Premium (VRP)** measures the difference between implied volatility (VIX) 
+    **Volatility Risk Premium (VRP)** measures the difference between implied volatility (VIX)
     and realized volatility. A positive VRP indicates options are expensive relative to actual market moves.
     """)
-    
+
     st.divider()
 
         # ============================================
@@ -6420,6 +6452,206 @@ elif page == "Settings":
     
     **Version:** 2.0 | **Last Updated:** December 2024
     """)
+
+# ============================================================
+# SYSTEM HEALTH CHECK
+# ============================================================
+elif page == "System Health":
+    st.markdown("<h1 class='main-header'>🏥 System Health Check</h1>", unsafe_allow_html=True)
+
+    st.markdown("""
+    Monitor the status of all data collectors and API connections.
+    Use this page to diagnose issues with data fetching.
+    """)
+
+    st.divider()
+
+    # --- API Key Status ---
+    st.subheader("🔑 API Key Status")
+
+    from utils.secrets_helper import get_secret
+
+    api_keys = {
+        'FRED_API_KEY': {'name': 'FRED (Federal Reserve)', 'required': True},
+        'NASDAQ_DATA_LINK_KEY': {'name': 'Nasdaq Data Link', 'required': False},
+        'ALPHA_VANTAGE_API_KEY': {'name': 'Alpha Vantage', 'required': False},
+        'POLYGON_API_KEY': {'name': 'Polygon.io', 'required': False},
+        'FINRA_API_KEY': {'name': 'FINRA', 'required': False},
+    }
+
+    api_cols = st.columns(len(api_keys))
+    for i, (key, info) in enumerate(api_keys.items()):
+        with api_cols[i]:
+            value = get_secret(key)
+            if value:
+                st.metric(info['name'], "✅ Set")
+            elif info['required']:
+                st.metric(info['name'], "❌ Missing", delta="Required", delta_color="inverse")
+            else:
+                st.metric(info['name'], "⚪ Not set", delta="Optional")
+
+    st.divider()
+
+    # --- Collector Health Check ---
+    st.subheader("📡 Data Collector Status")
+
+    if st.button("🔄 Run Health Check", type="primary"):
+        with st.spinner("Testing all collectors..."):
+            health_results = []
+
+            # Test CBOE Collector
+            try:
+                cboe = components.get("cboe")
+                if cboe:
+                    vix = cboe.get_vix()
+                    if vix is not None:
+                        health_results.append(("CBOE (VIX)", "✅ Working", f"VIX: {vix:.2f}", "success"))
+                    else:
+                        health_results.append(("CBOE (VIX)", "⚠️ No Data", "VIX returned None", "warning"))
+                else:
+                    health_results.append(("CBOE (VIX)", "❌ Not Loaded", "Collector not initialized", "error"))
+            except Exception as e:
+                health_results.append(("CBOE (VIX)", "❌ Error", str(e)[:50], "error"))
+
+            # Test Yahoo Finance
+            try:
+                yahoo = components.get("yahoo")
+                if yahoo:
+                    spy_data = yahoo.get_spy_price()
+                    if spy_data is not None:
+                        health_results.append(("Yahoo Finance", "✅ Working", f"SPY: ${spy_data:.2f}", "success"))
+                    else:
+                        health_results.append(("Yahoo Finance", "⚠️ Partial", "Some data unavailable", "warning"))
+                else:
+                    health_results.append(("Yahoo Finance", "❌ Not Loaded", "Collector not initialized", "error"))
+            except Exception as e:
+                health_results.append(("Yahoo Finance", "❌ Error", str(e)[:50], "error"))
+
+            # Test FRED (if key exists)
+            fred_key = get_secret('FRED_API_KEY')
+            if fred_key:
+                try:
+                    fed_bs = components.get("fed_bs")
+                    if fed_bs and not getattr(fed_bs, '_disabled', False):
+                        snapshot = fed_bs.get_full_snapshot()
+                        if snapshot and 'total_assets' in snapshot:
+                            health_results.append(("FRED API", "✅ Working", f"Fed BS: ${snapshot['total_assets']/1e6:.1f}T", "success"))
+                        else:
+                            health_results.append(("FRED API", "⚠️ Partial", "Some data missing", "warning"))
+                    else:
+                        health_results.append(("FRED API", "⚠️ Disabled", "API key issue", "warning"))
+                except Exception as e:
+                    health_results.append(("FRED API", "❌ Error", str(e)[:50], "error"))
+            else:
+                health_results.append(("FRED API", "⚪ Skipped", "No API key", "info"))
+
+            # Test Fear & Greed
+            try:
+                fg = components.get("fear_greed")
+                if fg:
+                    fg_data = fg.get_fear_greed()
+                    if fg_data and 'score' in fg_data:
+                        health_results.append(("CNN Fear & Greed", "✅ Working", f"Score: {fg_data['score']}", "success"))
+                    else:
+                        health_results.append(("CNN Fear & Greed", "⚠️ No Data", "Score unavailable", "warning"))
+                else:
+                    health_results.append(("CNN Fear & Greed", "❌ Not Loaded", "Collector not initialized", "error"))
+            except Exception as e:
+                health_results.append(("CNN Fear & Greed", "❌ Error", str(e)[:50], "error"))
+
+            # Test Database
+            try:
+                db = components.get("db")
+                if db:
+                    snapshot = db.get_latest_snapshot()
+                    if snapshot:
+                        snapshot_date = snapshot.get('date', 'Unknown')
+                        health_results.append(("Database", "✅ Working", f"Last: {snapshot_date}", "success"))
+                    else:
+                        health_results.append(("Database", "⚠️ Empty", "No snapshots", "warning"))
+                else:
+                    health_results.append(("Database", "❌ Not Loaded", "DB not initialized", "error"))
+            except Exception as e:
+                health_results.append(("Database", "❌ Error", str(e)[:50], "error"))
+
+            # Display results as table
+            st.markdown("### Health Check Results")
+
+            for name, status, details, status_type in health_results:
+                if status_type == "success":
+                    st.success(f"**{name}**: {status} - {details}")
+                elif status_type == "warning":
+                    st.warning(f"**{name}**: {status} - {details}")
+                elif status_type == "error":
+                    st.error(f"**{name}**: {status} - {details}")
+                else:
+                    st.info(f"**{name}**: {status} - {details}")
+
+            # Summary
+            success_count = sum(1 for r in health_results if r[3] == "success")
+            warning_count = sum(1 for r in health_results if r[3] == "warning")
+            error_count = sum(1 for r in health_results if r[3] == "error")
+
+            st.divider()
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Working", success_count, delta="collectors")
+            with col2:
+                st.metric("Warnings", warning_count)
+            with col3:
+                st.metric("Errors", error_count, delta_color="inverse" if error_count > 0 else "off")
+
+    st.divider()
+
+    # --- Cache Status ---
+    st.subheader("💾 Cache & Session Status")
+
+    cache_info = {
+        "Streamlit Cache": len(st.session_state) if hasattr(st, 'session_state') else 0,
+        "Database Path": components.get("db").db_path if components.get("db") else "N/A",
+    }
+
+    for key, value in cache_info.items():
+        st.text(f"{key}: {value}")
+
+    # Clear cache button
+    if st.button("🗑️ Clear All Caches"):
+        st.cache_data.clear()
+        st.success("✅ All caches cleared! Page will refresh.")
+        st.rerun()
+
+    st.divider()
+
+    # --- Rate Limiter Status ---
+    st.subheader("⏱️ Rate Limiter Status")
+
+    try:
+        from utils.retry_utils import RateLimiter
+        limiters = RateLimiter._instances
+
+        if limiters:
+            for name, limiter in limiters.items():
+                st.text(f"{name}: {limiter.rate} req/s, burst={limiter.burst}, tokens={limiter.tokens:.1f}")
+        else:
+            st.info("No rate limiters active")
+    except ImportError:
+        st.info("Rate limiter module not available")
+
+    st.divider()
+
+    # --- Config Status ---
+    st.subheader("⚙️ Configuration Status")
+
+    try:
+        st.json({
+            "VVIX Strong Buy": cfg.get('volatility.vvix.strong_buy_threshold', 'N/A'),
+            "VRP Lookback Days": cfg.get('volatility.vrp.lookback_days', 'N/A'),
+            "Put/Call Bearish": cfg.get('options.equity_put_call.bearish_threshold', 'N/A'),
+            "Retry Max Attempts": cfg.get('data_collection.retry.max_retries', 'N/A'),
+        })
+    except Exception as e:
+        st.error(f"Could not load config: {e}")
+
 
 # FOOTER
 # -------------------------------------------------------------------
