@@ -364,25 +364,33 @@ class CBOECollector:
         This is the actual CBOE-published ratio covering ALL equity options
         (options on individual stocks like AAPL, TSLA, NVDA, etc.)
 
-        Note: CBOE P/C indices are not available on free data sources.
-        This method attempts web scraping from CBOE daily statistics page.
-        For reliable data, users should enter manual PCCE from their
-        trading platforms (ThinkorSwim, TradingView, etc.)
+        IMPORTANT: CBOE moved their P/C ratio data to paid DataShop in 2019.
+        Free CSV files at cdn.cboe.com only contain data through 2019.
+
+        Data sources tried:
+        1. CBOE daily statistics page scrape (usually blocked)
+        2. Yahoo Finance ^PCCE ticker (does not exist)
+
+        For reliable CBOE PCCE data, users should:
+        - Enter manual PCCE from trading platforms (ThinkorSwim, TradingView)
+        - Or subscribe to CBOE DataShop (paid)
 
         Returns:
             CBOE Equity P/C ratio or None
         """
         try:
-            # Try CBOE website scrape (may be blocked)
+            # Try CBOE website scrape (usually returns None - page uses JS)
             cboe_data = self._scrape_cboe_put_call()
             if cboe_data and cboe_data.get('equity_pc'):
                 value = cboe_data['equity_pc']
                 logger.info(f"CBOE Equity P/C (scraped): {value:.3f}")
                 return value
 
-            # CBOE P/C indices not available on Yahoo Finance
-            # ^PCCE, ^CPCE, etc. do not return valid data
-            logger.debug("CBOE PCCE not available - use manual input or SPY proxy")
+            # Note: CBOE P/C indices not available on free sources
+            # - ^PCCE, ^CPCE do not exist on Yahoo Finance
+            # - cdn.cboe.com CSVs ended in 2019
+            # - Current data requires CBOE DataShop subscription
+            logger.debug("CBOE PCCE not available via free sources - use manual input")
             return None
 
         except Exception as e:
@@ -391,15 +399,17 @@ class CBOECollector:
 
     def get_spy_put_call_ratio(self) -> Optional[Dict]:
         """
-        Get SPY-specific put/call ratio from options chain.
+        Get SPY-specific put/call ratios from options chain.
 
-        This measures positioning in SPY specifically - useful for
-        tracking institutional hedging on the S&P 500 ETF.
+        Provides BOTH:
+        - Volume-based P/C (daily sentiment, comparable to CBOE methodology)
+        - Open Interest P/C (positioning/inventory)
 
-        NOT the same as CBOE Equity P/C (which covers all stocks).
+        SPY is NOT the same as CBOE Equity P/C (which covers all stocks),
+        but it's the best free proxy for market-wide options sentiment.
 
         Returns:
-            Dict with ratio, put_oi, call_oi, source info
+            Dict with volume_ratio, oi_ratio, put/call volumes and OI
         """
         try:
             spy = yf.Ticker("SPY")
@@ -413,22 +423,43 @@ class CBOECollector:
             front_month = options_dates[0]
             opt_chain = spy.option_chain(front_month)
 
-            # Calculate from open interest
-            put_oi = int(opt_chain.puts['openInterest'].sum())
-            call_oi = int(opt_chain.calls['openInterest'].sum())
+            # Calculate from VOLUME (matches CBOE methodology)
+            put_vol = int(opt_chain.puts['volume'].fillna(0).sum())
+            call_vol = int(opt_chain.calls['volume'].fillna(0).sum())
 
+            # Calculate from OPEN INTEREST (positioning/inventory)
+            put_oi = int(opt_chain.puts['openInterest'].fillna(0).sum())
+            call_oi = int(opt_chain.calls['openInterest'].fillna(0).sum())
+
+            result = {
+                'expiry': front_month,
+                'source': 'SPY_OPTIONS'
+            }
+
+            # Volume-based ratio (primary - matches CBOE methodology)
+            if call_vol > 0:
+                vol_ratio = put_vol / call_vol
+                result['volume_ratio'] = vol_ratio
+                result['put_volume'] = put_vol
+                result['call_volume'] = call_vol
+                logger.info(f"SPY P/C (Volume): {vol_ratio:.3f} (Puts: {put_vol:,}, Calls: {call_vol:,})")
+            else:
+                result['volume_ratio'] = None
+
+            # OI-based ratio (secondary - positioning view)
             if call_oi > 0:
-                pc_ratio = put_oi / call_oi
-                logger.info(f"SPY P/C (OI): {pc_ratio:.3f} (Puts: {put_oi:,}, Calls: {call_oi:,})")
-                return {
-                    'ratio': pc_ratio,
-                    'put_oi': put_oi,
-                    'call_oi': call_oi,
-                    'expiry': front_month,
-                    'source': 'SPY_OPTIONS_OI'
-                }
+                oi_ratio = put_oi / call_oi
+                result['oi_ratio'] = oi_ratio
+                result['put_oi'] = put_oi
+                result['call_oi'] = call_oi
+                logger.info(f"SPY P/C (OI): {oi_ratio:.3f} (Puts: {put_oi:,}, Calls: {call_oi:,})")
+            else:
+                result['oi_ratio'] = None
 
-            return None
+            # Set 'ratio' to volume-based (CBOE-comparable) or fallback to OI
+            result['ratio'] = result.get('volume_ratio') or result.get('oi_ratio')
+
+            return result if result.get('ratio') else None
 
         except Exception as e:
             logger.debug(f"SPY options chain failed: {e}")
@@ -516,9 +547,14 @@ class CBOECollector:
         try:
             result = {
                 'cboe_equity_pc': None,
-                'spy_pc': None,
+                # SPY metrics (volume = daily sentiment, OI = positioning)
+                'spy_pc': None,           # Primary: volume-based (CBOE-comparable)
+                'spy_pc_oi': None,        # Secondary: OI-based (positioning)
+                'spy_put_volume': None,
+                'spy_call_volume': None,
                 'spy_put_oi': None,
                 'spy_call_oi': None,
+                # Aggregates
                 'total_pc': None,
                 'equity_pc': None,  # Best available
                 'index_pc': None,
@@ -528,6 +564,7 @@ class CBOECollector:
             }
 
             # 1. Get official CBOE PCCE (best source for macro sentiment)
+            # Note: Rarely available - CBOE moved data to paid DataShop
             cboe_pcce = self.get_cboe_equity_put_call()
             if cboe_pcce is not None:
                 result['cboe_equity_pc'] = cboe_pcce
@@ -535,19 +572,25 @@ class CBOECollector:
                 result['source'] = 'CBOE_PCCE'
                 logger.info(f"Using official CBOE PCCE: {cboe_pcce:.3f}")
 
-            # 2. Get SPY-specific P/C (always useful for hedging insight)
+            # 2. Get SPY-specific P/C (primary free data source)
             spy_data = self.get_spy_put_call_ratio()
             if spy_data:
-                result['spy_pc'] = spy_data.get('ratio')
+                # Volume-based ratio (matches CBOE methodology)
+                result['spy_pc'] = spy_data.get('volume_ratio') or spy_data.get('ratio')
+                result['spy_put_volume'] = spy_data.get('put_volume')
+                result['spy_call_volume'] = spy_data.get('call_volume')
+
+                # OI-based ratio (positioning view)
+                result['spy_pc_oi'] = spy_data.get('oi_ratio')
                 result['spy_put_oi'] = spy_data.get('put_oi')
                 result['spy_call_oi'] = spy_data.get('call_oi')
 
-                # If no CBOE data, use SPY as fallback for equity_pc
-                if result['equity_pc'] is None:
-                    result['equity_pc'] = spy_data.get('ratio')
-                    result['source'] = 'SPY_OPTIONS'
+                # If no CBOE data, use SPY volume as fallback for equity_pc
+                if result['equity_pc'] is None and result['spy_pc'] is not None:
+                    result['equity_pc'] = result['spy_pc']
+                    result['source'] = 'SPY_VOLUME'  # Explicitly note it's volume-based
                     result['is_estimated'] = True
-                    self._mark_estimated('equity_put_call', 'Using SPY OI (CBOE PCCE unavailable)')
+                    self._mark_estimated('equity_put_call', 'Using SPY Volume (CBOE PCCE unavailable)')
 
             # 3. Get total P/C estimate
             result['total_pc'] = self.get_total_put_call_ratio()

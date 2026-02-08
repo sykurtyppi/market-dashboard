@@ -1722,39 +1722,75 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
 
     # SPY Put/Call - Institutional Hedging Gauge (separate from CBOE PCCE)
     pc_ratios = fresh_cboe.get("put_call_ratios", {})
-    spy_pc = pc_ratios.get("spy_pc")
+    spy_pc_vol = pc_ratios.get("spy_pc")  # Volume-based (CBOE-comparable)
+    spy_pc_oi = pc_ratios.get("spy_pc_oi")  # OI-based (positioning)
+    spy_put_vol = pc_ratios.get("spy_put_volume")
+    spy_call_vol = pc_ratios.get("spy_call_volume")
     spy_put_oi = pc_ratios.get("spy_put_oi")
     spy_call_oi = pc_ratios.get("spy_call_oi")
 
-    if spy_pc is not None:
-        st.subheader("SPY Options Positioning")
-        spy_cols = st.columns([2, 1, 1])
-        with spy_cols[0]:
-            st.metric(
-                "SPY Put/Call",
-                f"{spy_pc:.3f}",
-                help="SPY-specific put/call ratio (open interest). Tracks institutional hedging on S&P 500 ETF."
-            )
-            spy_status, spy_age = status_from_timestamp(fresh_cboe.get("timestamp"))
-            status_tracker.update("spy_put_call", spy_status, age_hours=spy_age or 0.0)
-            data_source_caption(spy_cols[0], "Yahoo Finance (SPY options)", "delayed")
+    if spy_pc_vol is not None or spy_pc_oi is not None:
+        st.subheader("SPY Options Flow")
+        st.caption("*SPY options data - best free proxy for market sentiment (not identical to CBOE PCCE)*")
 
-            # SPY typically runs higher than CBOE PCCE due to institutional hedging
-            if spy_pc > 1.5:
-                st.caption("🔴 Heavy hedging")
-            elif spy_pc > 1.2:
-                st.caption("🟡 Elevated puts")
-            elif spy_pc > 0.8:
-                st.caption("Normal positioning")
+        # Show both volume and OI metrics
+        spy_cols = st.columns(4)
+
+        with spy_cols[0]:
+            if spy_pc_vol is not None:
+                st.metric(
+                    "P/C (Volume)",
+                    f"{spy_pc_vol:.3f}",
+                    help="Daily volume ratio - comparable to CBOE methodology"
+                )
+                # Volume-based interpretation
+                if spy_pc_vol > 1.2:
+                    st.caption("🔴 Heavy put buying")
+                elif spy_pc_vol > 0.9:
+                    st.caption("🟡 Elevated puts")
+                elif spy_pc_vol > 0.6:
+                    st.caption("Normal")
+                else:
+                    st.caption("🟢 Call-heavy day")
             else:
-                st.caption("🟢 Bullish bias")
+                st.metric("P/C (Volume)", "N/A")
 
         with spy_cols[1]:
-            if spy_put_oi:
-                st.metric("Put OI", f"{spy_put_oi:,}")
+            if spy_pc_oi is not None:
+                st.metric(
+                    "P/C (OI)",
+                    f"{spy_pc_oi:.3f}",
+                    help="Open interest ratio - positioning/inventory view"
+                )
+                # OI-based interpretation (typically higher than volume)
+                if spy_pc_oi > 1.5:
+                    st.caption("🔴 Heavy hedging")
+                elif spy_pc_oi > 1.0:
+                    st.caption("🟡 Put-heavy")
+                elif spy_pc_oi > 0.7:
+                    st.caption("Normal")
+                else:
+                    st.caption("🟢 Bullish positioning")
+            else:
+                st.metric("P/C (OI)", "N/A")
+
         with spy_cols[2]:
-            if spy_call_oi:
+            if spy_put_vol and spy_call_vol:
+                st.metric("Put Vol", f"{spy_put_vol:,}")
+                st.metric("Call Vol", f"{spy_call_vol:,}")
+            elif spy_put_oi:
+                st.metric("Put OI", f"{spy_put_oi:,}")
+
+        with spy_cols[3]:
+            if spy_put_vol and spy_call_vol:
+                st.metric("Put OI", f"{spy_put_oi:,}" if spy_put_oi else "N/A")
+                st.metric("Call OI", f"{spy_call_oi:,}" if spy_call_oi else "N/A")
+            elif spy_call_oi:
                 st.metric("Call OI", f"{spy_call_oi:,}")
+
+        spy_status, spy_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+        status_tracker.update("spy_put_call", spy_status, age_hours=spy_age or 0.0)
+        data_source_caption(st, "Yahoo Finance (SPY front-month options)", "delayed")
 
     st.divider()
     signal = snapshot.get("left_signal")
