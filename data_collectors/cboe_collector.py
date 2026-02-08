@@ -357,58 +357,121 @@ class CBOECollector:
             logger.error(f"Error calculating contango: {e}")
             return None
     
-    def get_equity_put_call_ratio(self) -> Optional[float]:
+    def get_cboe_equity_put_call(self) -> Optional[float]:
         """
-        Get equity-only put/call ratio
+        Get official CBOE Equity Put/Call Ratio (PCCE).
 
-        Note: Real CBOE data requires scraping or paid API.
-        This uses a proxy calculation from options activity.
+        This is the actual CBOE-published ratio covering ALL equity options
+        (options on individual stocks like AAPL, TSLA, NVDA, etc.)
+
+        Note: CBOE P/C indices are not available on free data sources.
+        This method attempts web scraping from CBOE daily statistics page.
+        For reliable data, users should enter manual PCCE from their
+        trading platforms (ThinkorSwim, TradingView, etc.)
 
         Returns:
-            Equity P/C ratio or None
+            CBOE Equity P/C ratio or None
         """
         try:
-            # Try to get from CBOE website (may require parsing)
-            # For now, use SPY options as equity proxy
+            # Try CBOE website scrape (may be blocked)
+            cboe_data = self._scrape_cboe_put_call()
+            if cboe_data and cboe_data.get('equity_pc'):
+                value = cboe_data['equity_pc']
+                logger.info(f"CBOE Equity P/C (scraped): {value:.3f}")
+                return value
+
+            # CBOE P/C indices not available on Yahoo Finance
+            # ^PCCE, ^CPCE, etc. do not return valid data
+            logger.debug("CBOE PCCE not available - use manual input or SPY proxy")
+            return None
+
+        except Exception as e:
+            logger.debug(f"CBOE PCCE fetch failed: {e}")
+            return None
+
+    def get_spy_put_call_ratio(self) -> Optional[Dict]:
+        """
+        Get SPY-specific put/call ratio from options chain.
+
+        This measures positioning in SPY specifically - useful for
+        tracking institutional hedging on the S&P 500 ETF.
+
+        NOT the same as CBOE Equity P/C (which covers all stocks).
+
+        Returns:
+            Dict with ratio, put_oi, call_oi, source info
+        """
+        try:
             spy = yf.Ticker("SPY")
+            options_dates = spy.options
 
-            # Get options chain
-            try:
-                options_dates = spy.options
-                if options_dates:
-                    # Get front month
-                    front_month = options_dates[0]
-                    opt_chain = spy.option_chain(front_month)
+            if not options_dates:
+                logger.warning("No SPY options dates available")
+                return None
 
-                    # Calculate put/call ratio from open interest
-                    put_oi = opt_chain.puts['openInterest'].sum()
-                    call_oi = opt_chain.calls['openInterest'].sum()
+            # Get front month options
+            front_month = options_dates[0]
+            opt_chain = spy.option_chain(front_month)
 
-                    if call_oi > 0:
-                        pc_ratio = put_oi / call_oi
-                        logger.info(f"Equity P/C (SPY proxy): {pc_ratio:.3f}")
-                        return pc_ratio
-            except Exception as e:
-                logger.debug(f"Options chain method failed: {e}")
+            # Calculate from open interest
+            put_oi = int(opt_chain.puts['openInterest'].sum())
+            call_oi = int(opt_chain.calls['openInterest'].sum())
 
-            # Fallback: Use VIX/VIX3M as fear proxy
-            vix = self.get_vix()
-            vix3m = self.get_vix3m(track_estimation=False)
-
-            if vix and vix3m:
-                # When VIX > VIX3M, fear is high (P/C should be high)
-                ratio = vix / vix3m
-                # Map to typical P/C range (0.7-1.5)
-                estimated_pc = 0.5 + (ratio * 0.7)
-                self._mark_estimated('equity_put_call', 'Derived from VIX/VIX3M ratio (real P/C unavailable)')
-                logger.info(f"Equity P/C (VIX/VIX3M proxy): {estimated_pc:.3f}")
-                return estimated_pc
+            if call_oi > 0:
+                pc_ratio = put_oi / call_oi
+                logger.info(f"SPY P/C (OI): {pc_ratio:.3f} (Puts: {put_oi:,}, Calls: {call_oi:,})")
+                return {
+                    'ratio': pc_ratio,
+                    'put_oi': put_oi,
+                    'call_oi': call_oi,
+                    'expiry': front_month,
+                    'source': 'SPY_OPTIONS_OI'
+                }
 
             return None
 
         except Exception as e:
-            logger.error(f"Error getting equity P/C: {e}")
+            logger.debug(f"SPY options chain failed: {e}")
             return None
+
+    def get_equity_put_call_ratio(self) -> Optional[float]:
+        """
+        Get equity put/call ratio with fallback chain.
+
+        Priority:
+        1. Official CBOE PCCE (^PCCE ticker)
+        2. SPY options OI as proxy
+        3. VIX/VIX3M estimation (last resort)
+
+        Returns:
+            Equity P/C ratio or None
+        """
+        # Try official CBOE PCCE first
+        pcce = self.get_cboe_equity_put_call()
+        if pcce is not None:
+            return pcce
+
+        # Fall back to SPY options
+        spy_data = self.get_spy_put_call_ratio()
+        if spy_data and spy_data.get('ratio'):
+            self._mark_estimated('equity_put_call', 'Using SPY OI as proxy (CBOE PCCE unavailable)')
+            return spy_data['ratio']
+
+        # Last resort: VIX proxy
+        try:
+            vix = self.get_vix()
+            vix3m = self.get_vix3m(track_estimation=False)
+
+            if vix and vix3m:
+                ratio = vix / vix3m
+                estimated_pc = 0.5 + (ratio * 0.7)
+                self._mark_estimated('equity_put_call', 'Derived from VIX/VIX3M ratio (real P/C unavailable)')
+                logger.info(f"Equity P/C (VIX/VIX3M proxy): {estimated_pc:.3f}")
+                return estimated_pc
+        except Exception as e:
+            logger.debug(f"VIX proxy calculation failed: {e}")
+
+        return None
     
     def get_total_put_call_ratio(self) -> Optional[float]:
         """
@@ -438,49 +501,71 @@ class CBOECollector:
     
     def get_put_call_ratios(self) -> Optional[Dict]:
         """
-        Get all put/call ratios
+        Get all put/call ratios with proper sourcing.
 
-        Priority:
-        1. CBOE official data (scraped)
-        2. SPY options chain (from Yahoo Finance)
-        3. VIX/VIX3M proxy estimate
+        Returns dict with:
+        - cboe_equity_pc: Official CBOE PCCE (all equity options)
+        - spy_pc: SPY-specific put/call (institutional hedging gauge)
+        - total_pc: Estimated total market P/C
+        - equity_pc: Best available equity P/C (CBOE > SPY > VIX proxy)
+        - source: Where equity_pc came from
 
-        Returns:
-            Dict with equity_pc, total_pc, source, and metadata
+        This provides both the official macro gauge (CBOE PCCE) and
+        a tradable micro gauge (SPY positioning).
         """
         try:
-            # Try to get CBOE official P/C first (if available)
-            cboe_pc = self._scrape_cboe_put_call()
+            result = {
+                'cboe_equity_pc': None,
+                'spy_pc': None,
+                'spy_put_oi': None,
+                'spy_call_oi': None,
+                'total_pc': None,
+                'equity_pc': None,  # Best available
+                'index_pc': None,
+                'source': None,
+                'is_estimated': False,
+                'timestamp': datetime.now().isoformat()
+            }
 
-            if cboe_pc and cboe_pc.get('equity_pc'):
-                result = {
-                    'equity_pc': cboe_pc.get('equity_pc'),
-                    'total_pc': cboe_pc.get('total_pc'),
-                    'index_pc': cboe_pc.get('index_pc'),
-                    'source': 'CBOE',
-                    'is_estimated': False,
-                    'timestamp': datetime.now().isoformat()
-                }
-            else:
-                # Fall back to computed values (SPY options or VIX proxy)
-                equity_pc = self.get_equity_put_call_ratio()
-                total_pc = self.get_total_put_call_ratio()
+            # 1. Get official CBOE PCCE (best source for macro sentiment)
+            cboe_pcce = self.get_cboe_equity_put_call()
+            if cboe_pcce is not None:
+                result['cboe_equity_pc'] = cboe_pcce
+                result['equity_pc'] = cboe_pcce
+                result['source'] = 'CBOE_PCCE'
+                logger.info(f"Using official CBOE PCCE: {cboe_pcce:.3f}")
 
-                # Determine source based on whether we used SPY options or VIX proxy
-                # The get_equity_put_call_ratio tries SPY first, then falls back to VIX
-                is_estimated = any(e.get('field') == 'equity_put_call' for e in self.estimated_fields)
+            # 2. Get SPY-specific P/C (always useful for hedging insight)
+            spy_data = self.get_spy_put_call_ratio()
+            if spy_data:
+                result['spy_pc'] = spy_data.get('ratio')
+                result['spy_put_oi'] = spy_data.get('put_oi')
+                result['spy_call_oi'] = spy_data.get('call_oi')
 
-                result = {
-                    'equity_pc': equity_pc,
-                    'total_pc': total_pc,
-                    'index_pc': None,
-                    'source': 'VIX_PROXY' if is_estimated else 'SPY_OPTIONS',
-                    'is_estimated': is_estimated,
-                    'timestamp': datetime.now().isoformat()
-                }
+                # If no CBOE data, use SPY as fallback for equity_pc
+                if result['equity_pc'] is None:
+                    result['equity_pc'] = spy_data.get('ratio')
+                    result['source'] = 'SPY_OPTIONS'
+                    result['is_estimated'] = True
+                    self._mark_estimated('equity_put_call', 'Using SPY OI (CBOE PCCE unavailable)')
 
-            # Add sentiment interpretation
-            pc = result['equity_pc'] or result['total_pc']
+            # 3. Get total P/C estimate
+            result['total_pc'] = self.get_total_put_call_ratio()
+
+            # 4. Last resort: VIX proxy if nothing else available
+            if result['equity_pc'] is None:
+                vix = self.get_vix()
+                vix3m = self.get_vix3m(track_estimation=False)
+                if vix and vix3m:
+                    ratio = vix / vix3m
+                    estimated_pc = 0.5 + (ratio * 0.7)
+                    result['equity_pc'] = estimated_pc
+                    result['source'] = 'VIX_PROXY'
+                    result['is_estimated'] = True
+                    self._mark_estimated('equity_put_call', 'Derived from VIX/VIX3M ratio')
+
+            # Add sentiment interpretation based on best available
+            pc = result['cboe_equity_pc'] or result['equity_pc']
             if pc:
                 result['sentiment'] = self._interpret_put_call(pc)
 

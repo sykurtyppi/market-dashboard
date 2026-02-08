@@ -174,6 +174,11 @@ class DatabaseManager:
         'vvix': 'REAL',
         'vvix_signal': 'TEXT',
         'skew': 'REAL',
+        # Put/Call ratios (added for proper separation of CBOE PCCE vs SPY)
+        'cboe_equity_pc': 'REAL',  # Official CBOE PCCE (all equity options)
+        'spy_put_call': 'REAL',    # SPY-specific P/C (institutional hedging)
+        'spy_put_oi': 'INTEGER',   # SPY put open interest
+        'spy_call_oi': 'INTEGER',  # SPY call open interest
     }
     VALID_SQL_TYPES = {'REAL', 'TEXT', 'INTEGER', 'BLOB', 'NULL'}
 
@@ -284,8 +289,9 @@ class DatabaseManager:
                 INSERT OR REPLACE INTO daily_snapshots
                 (date, credit_spread_hy, credit_spread_ig, treasury_10y, fed_funds,
                  vix_spot, vix9d, vvix, vvix_signal, skew, vrp, vix_contango, put_call_ratio,
+                 cboe_equity_pc, spy_put_call, spy_put_oi, spy_call_oi,
                  fear_greed_score, market_breadth, left_signal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 validated.get('date'),
                 validated.get('credit_spread_hy'),
@@ -299,7 +305,11 @@ class DatabaseManager:
                 validated.get('skew'),
                 validated.get('vrp'),
                 validated.get('vix_contango'),
-                validated.get('put_call_ratio'),
+                validated.get('put_call_ratio'),  # Legacy field (best available)
+                validated.get('cboe_equity_pc'),  # Official CBOE PCCE
+                validated.get('spy_put_call'),    # SPY-specific P/C
+                validated.get('spy_put_oi'),      # SPY put open interest
+                validated.get('spy_call_oi'),     # SPY call open interest
                 validated.get('fear_greed_score'),
                 validated.get('market_breadth'),
                 validated.get('left_signal')

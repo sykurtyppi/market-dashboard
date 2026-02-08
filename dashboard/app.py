@@ -1459,84 +1459,103 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
                 metric_status_caption(col2, status_tracker.get_source("vix_contango"))
 
     with col3:
-        # Get put/call ratio - prioritize live data over manual
+        # Get put/call ratios - SPY P/C is primary (free data), CBOE PCCE requires manual input
         pc_ratios = fresh_cboe.get("put_call_ratios", {})
-        equity_pc = pc_ratios.get("equity_pc")
+        spy_pc = pc_ratios.get("spy_pc")  # SPY-specific P/C (primary)
+        cboe_pcce = pc_ratios.get("cboe_equity_pc")  # Official CBOE Equity P/C (rare)
+        equity_pc = pc_ratios.get("equity_pc")  # Best available
         pc_source = pc_ratios.get("source", "")
 
-        # Determine the source and display appropriately
-        if equity_pc is not None:
-            st.metric("Equity Put/Call", f"{equity_pc:.3f}")
+        # Thresholds from config (SPY typically runs higher than CBOE PCCE)
+        pc_bearish = cfg.get('options.equity_put_call.bearish_threshold', 1.0)
+        pc_bullish = cfg.get('options.equity_put_call.bullish_threshold', 0.7)
 
-            # Show source
-            if pc_source == "CBOE":
-                pc_status, pc_age = status_from_timestamp(fresh_cboe.get("timestamp"))
-                status_tracker.update("equity_put_call", pc_status, age_hours=pc_age or 0.0)
-                data_source_caption(col3, "CBOE", "delayed")
-                st.caption("📊 CBOE Live")
-            elif pc_source == "SPY_OPTIONS":
-                pc_status, pc_age = status_from_timestamp(fresh_cboe.get("timestamp"))
-                status_tracker.update("equity_put_call", pc_status, age_hours=pc_age or 0.0)
-                data_source_caption(col3, "Yahoo Finance (SPY options)", "delayed")
-                st.caption("📈 SPY Options OI")
-            elif pc_source == "VIX_PROXY":
-                status_tracker.update("equity_put_call", DataStatus.ESTIMATED, age_hours=0.0)
-                data_source_caption(col3, "Derived (VIX/VIX3M)", "delayed")
-                st.caption("📉 VIX/VIX3M Proxy")
-            else:
-                status_tracker.update("equity_put_call", DataStatus.PARTIAL, age_hours=0.0)
-                data_source_caption(col3, "Unknown source", "unknown")
-                st.caption("📈 Live Data")
-            metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
+        # Check for manual PCCE override first
+        load_dotenv()
+        manual_pcce = os.getenv('MANUAL_PCCE', '0.0')
+        manual_pcce_date = os.getenv('MANUAL_PCCE_DATE', '')
+        try:
+            manual_pcce_value = float(manual_pcce) if manual_pcce else 0.0
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Invalid manual PCCE value '{manual_pcce}': {e}")
+            manual_pcce_value = 0.0
 
-            # Interpretation (thresholds from config)
-            pc_bearish = cfg.get('options.equity_put_call.bearish_threshold', 1.0)
-            pc_bullish = cfg.get('options.equity_put_call.bullish_threshold', 0.7)
-            if equity_pc > pc_bearish:
-                st.caption("🔴 Bearish (high P/C)")
-            elif equity_pc < pc_bullish:
-                st.caption("🟢 Bullish (low P/C)")
+        # Priority: Manual PCCE > CBOE PCCE > SPY P/C > VIX Proxy > Cached
+        if manual_pcce_value > 0:
+            # User has entered manual CBOE PCCE
+            st.metric("CBOE Equity P/C", f"{manual_pcce_value:.3f}",
+                      help="Manual PCCE from trading platform (all equity options)")
+            status_tracker.update("cboe_equity_pc", DataStatus.FRESH, age_hours=0.0)
+            data_source_caption(col3, "Manual input", "user-provided")
+            st.caption(f"✏️ Manual ({manual_pcce_date or 'Today'})")
+
+            if manual_pcce_value > pc_bearish:
+                st.caption("🔴 Bearish sentiment")
+            elif manual_pcce_value < pc_bullish:
+                st.caption("🟢 Bullish sentiment")
             else:
                 st.caption("🟡 Neutral range")
-        else:
-            # Fallback to manual or cached
-            load_dotenv()
-            manual_pcce = os.getenv('MANUAL_PCCE', '0.0')
-            manual_pcce_date = os.getenv('MANUAL_PCCE_DATE', '')
 
-            try:
-                manual_pcce_value = float(manual_pcce) if manual_pcce else 0.0
-            except (ValueError, TypeError) as e:
-                logger.debug(f"Invalid manual PCCE value '{manual_pcce}': {e}")
-                manual_pcce_value = 0.0
+        elif cboe_pcce is not None:
+            # Rare: Official CBOE PCCE available
+            st.metric("CBOE Equity P/C", f"{cboe_pcce:.3f}",
+                      help="Official CBOE ratio for ALL equity options")
+            pc_status, pc_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+            status_tracker.update("cboe_equity_pc", pc_status, age_hours=pc_age or 0.0)
+            data_source_caption(col3, "CBOE (scraped)", "delayed")
+            st.caption("📊 Official CBOE PCCE")
 
-            if manual_pcce_value > 0:
-                st.metric("Equity Put/Call", f"{manual_pcce_value:.3f}")
-                status_tracker.update("equity_put_call", DataStatus.ESTIMATED, age_hours=0.0)
-                data_source_caption(col3, "Manual input", "user-provided")
-                metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
-                st.caption(f"✏️ Manual ({manual_pcce_date or 'Today'})")
-
-                if manual_pcce_value > pc_bearish:
-                    st.caption("🔴 Bearish (high P/C)")
-                elif manual_pcce_value < pc_bullish:
-                    st.caption("🟢 Bullish (low P/C)")
-                else:
-                    st.caption("🟡 Neutral range")
+            if cboe_pcce > pc_bearish:
+                st.caption("🔴 Bearish sentiment")
+            elif cboe_pcce < pc_bullish:
+                st.caption("🟢 Bullish sentiment")
             else:
-                pc = snapshot.get("put_call_ratio")
-                if pc is not None:
-                    st.metric("Equity Put/Call", f"{pc:.3f}")
-                    status_tracker.update("equity_put_call", snapshot_status, age_hours=snapshot_age_hours or 0.0)
-                    data_source_caption(col3, "Local DB snapshot", "varies")
-                    metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
-                    st.caption("📦 Cached data")
-                else:
-                    st.metric("Equity Put/Call", "N/A")
-                    status_tracker.update("equity_put_call", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
-                    data_source_caption(col3, "Unknown source", "unknown")
-                    metric_status_caption(col3, status_tracker.get_source("equity_put_call"))
-                    st.caption("Data unavailable")
+                st.caption("🟡 Neutral range")
+
+        elif spy_pc is not None:
+            # Primary free data: SPY Put/Call (clearly labeled as SPY, not CBOE)
+            st.metric("SPY Put/Call", f"{spy_pc:.3f}",
+                      help="SPY options open interest ratio - institutional hedging gauge")
+            pc_status, pc_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+            status_tracker.update("spy_put_call", pc_status, age_hours=pc_age or 0.0)
+            data_source_caption(col3, "Yahoo Finance (SPY options)", "delayed")
+            st.caption("📈 SPY Options OI")
+
+            # SPY thresholds (typically runs higher than CBOE PCCE)
+            if spy_pc > 1.2:
+                st.caption("🔴 Heavy hedging")
+            elif spy_pc < 0.8:
+                st.caption("🟢 Bullish bias")
+            else:
+                st.caption("🟡 Normal range")
+
+        elif equity_pc is not None and pc_source == "VIX_PROXY":
+            # VIX proxy estimation (least reliable)
+            st.metric("Est. Equity P/C", f"{equity_pc:.3f}",
+                      help="Estimated from VIX term structure (proxy)")
+            status_tracker.update("equity_put_call", DataStatus.ESTIMATED, age_hours=0.0)
+            data_source_caption(col3, "VIX/VIX3M estimate", "delayed")
+            st.caption("📉 VIX proxy estimate")
+
+            if equity_pc > pc_bearish:
+                st.caption("🔴 Bearish")
+            elif equity_pc < pc_bullish:
+                st.caption("🟢 Bullish")
+            else:
+                st.caption("🟡 Neutral")
+        else:
+            # Fallback to cached data
+            pc = snapshot.get("put_call_ratio") or snapshot.get("spy_put_call")
+            if pc is not None:
+                st.metric("Put/Call", f"{pc:.3f}")
+                status_tracker.update("equity_put_call", snapshot_status, age_hours=snapshot_age_hours or 0.0)
+                data_source_caption(col3, "Local DB snapshot", "varies")
+                st.caption("📦 Cached data")
+            else:
+                st.metric("Put/Call", "N/A")
+                status_tracker.update("equity_put_call", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
+                data_source_caption(col3, "Unknown source", "unknown")
+                st.caption("Data unavailable")
 
     with col4:
         breadth = snapshot.get("market_breadth")
@@ -1700,7 +1719,43 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
             status_tracker.update("term_slope", DataStatus.UNAVAILABLE, age_hours=snapshot_age_hours or 0.0)
             data_source_caption(col5, "Derived (VIX vs VIX3M)", "varies")
             metric_status_caption(col5, status_tracker.get_source("term_slope"))
-    
+
+    # SPY Put/Call - Institutional Hedging Gauge (separate from CBOE PCCE)
+    pc_ratios = fresh_cboe.get("put_call_ratios", {})
+    spy_pc = pc_ratios.get("spy_pc")
+    spy_put_oi = pc_ratios.get("spy_put_oi")
+    spy_call_oi = pc_ratios.get("spy_call_oi")
+
+    if spy_pc is not None:
+        st.subheader("SPY Options Positioning")
+        spy_cols = st.columns([2, 1, 1])
+        with spy_cols[0]:
+            st.metric(
+                "SPY Put/Call",
+                f"{spy_pc:.3f}",
+                help="SPY-specific put/call ratio (open interest). Tracks institutional hedging on S&P 500 ETF."
+            )
+            spy_status, spy_age = status_from_timestamp(fresh_cboe.get("timestamp"))
+            status_tracker.update("spy_put_call", spy_status, age_hours=spy_age or 0.0)
+            data_source_caption(spy_cols[0], "Yahoo Finance (SPY options)", "delayed")
+
+            # SPY typically runs higher than CBOE PCCE due to institutional hedging
+            if spy_pc > 1.5:
+                st.caption("🔴 Heavy hedging")
+            elif spy_pc > 1.2:
+                st.caption("🟡 Elevated puts")
+            elif spy_pc > 0.8:
+                st.caption("Normal positioning")
+            else:
+                st.caption("🟢 Bullish bias")
+
+        with spy_cols[1]:
+            if spy_put_oi:
+                st.metric("Put OI", f"{spy_put_oi:,}")
+        with spy_cols[2]:
+            if spy_call_oi:
+                st.metric("Call OI", f"{spy_call_oi:,}")
+
     st.divider()
     signal = snapshot.get("left_signal")
     if signal:

@@ -391,11 +391,15 @@ class MarketDataUpdater:
         vix_contango = vix_contango_cboe if vix_contango_cboe is not None else yahoo_data.get(
             "vix_contango_proxy"
         )
-        put_call_ratio = (
-            total_pc_cboe
-            if total_pc_cboe is not None
-            else yahoo_data.get("put_call_proxy")
-        )
+        # Get put/call ratios with proper separation
+        pc_ratios = cboe_data.get("put_call_ratios", {})
+        cboe_equity_pc = pc_ratios.get("cboe_equity_pc")  # Official CBOE PCCE
+        spy_put_call = pc_ratios.get("spy_pc")            # SPY-specific P/C
+        spy_put_oi = pc_ratios.get("spy_put_oi")
+        spy_call_oi = pc_ratios.get("spy_call_oi")
+
+        # Best available for legacy put_call_ratio field
+        put_call_ratio = cboe_equity_pc or spy_put_call or total_pc_cboe or yahoo_data.get("put_call_proxy")
         market_breadth = (
             nyse_breadth_ratio
             if nyse_breadth_ratio is not None
@@ -452,7 +456,11 @@ class MarketDataUpdater:
             "skew": skew,
             "vrp": vrp_analysis.get("vrp") if vrp_analysis else None,
             # Phase 1: Sentiment & Breadth
-            "put_call_ratio": put_call_ratio,
+            "put_call_ratio": put_call_ratio,  # Best available (legacy)
+            "cboe_equity_pc": cboe_equity_pc,  # Official CBOE PCCE
+            "spy_put_call": spy_put_call,      # SPY-specific P/C
+            "spy_put_oi": spy_put_oi,          # SPY put open interest
+            "spy_call_oi": spy_call_oi,        # SPY call open interest
             "fear_greed_score": fear_greed_data.get("score"),
             "market_breadth": market_breadth,
             "left_signal": left_signal_data.get("signal"),
