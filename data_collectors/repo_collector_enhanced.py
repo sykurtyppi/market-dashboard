@@ -138,11 +138,14 @@ class RepoCollector:
                 df = df.merge(rrp_df, on="date", how="left")
                 df["rrp_on"] = df["rrp_on"].ffill()
             
-            # Calculate SOFR z-score
+            # Calculate SOFR z-score (with division by zero protection)
             if len(df) > 252:
-                df["sofr_z_score"] = (
-                    df["sofr"] - df["sofr"].rolling(252).mean()
-                ) / df["sofr"].rolling(252).std()
+                rolling_mean = df["sofr"].rolling(252).mean()
+                rolling_std = df["sofr"].rolling(252).std()
+                # Avoid division by zero - replace zero std with NaN
+                rolling_std = rolling_std.replace(0, pd.NA)
+                df["sofr_z_score"] = (df["sofr"] - rolling_mean) / rolling_std
+                df["sofr_z_score"] = df["sofr_z_score"].fillna(0.0)
             else:
                 df["sofr_z_score"] = 0.0
             

@@ -51,10 +51,14 @@ class FedBalanceSheetCollector:
             api_key: FRED API key (falls back to env FRED_API_KEY)
         """
         self.api_key = api_key or os.getenv("FRED_API_KEY")
+        self.logger = logging.getLogger(__name__)
+        self._disabled = False
         if not self.api_key:
-            raise ValueError(
-                "FRED_API_KEY not found. Set it in .env or pass explicitly."
+            self.logger.warning(
+                "FRED_API_KEY not found. Fed balance sheet data will be unavailable. "
+                "Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
             )
+            self._disabled = True
 
     @exponential_backoff_retry(max_retries=3, base_delay=2.0)
     def _fetch_series(
@@ -65,6 +69,10 @@ class FedBalanceSheetCollector:
         """
         Fetch a FRED series and return DataFrame with columns: date, value
         """
+        # Return empty DataFrame if API key not configured
+        if self._disabled:
+            return pd.DataFrame(columns=["date", "value"])
+
         if start_date is None:
             # Default: 3 years of history
             start = datetime.today() - timedelta(days=365*3)

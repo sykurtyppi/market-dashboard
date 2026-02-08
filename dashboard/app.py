@@ -402,8 +402,8 @@ def get_vix_term_structure():
                         "Days": 1,
                         "VIX Level": vix1d
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"VIX1D fetch failed (non-critical): {e}")
 
         # VIX9D - 9-day implied volatility
         try:
@@ -414,8 +414,8 @@ def get_vix_term_structure():
                     "Days": 9,
                     "VIX Level": float(vix9d)
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"VIX9D fetch failed (non-critical): {e}")
 
         # VIX (30-day)
         if vix_spot is not None:
@@ -434,8 +434,8 @@ def get_vix_term_structure():
                     "Days": 90,
                     "VIX Level": float(vix3m)
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"VIX3M fetch failed (non-critical): {e}")
 
         # VIX6M - 6-month implied volatility
         try:
@@ -449,8 +449,8 @@ def get_vix_term_structure():
                         "Days": 180,
                         "VIX Level": vix6m
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"VIX6M fetch failed (non-critical): {e}")
 
         # VIX1Y - 1-year implied volatility
         try:
@@ -464,8 +464,8 @@ def get_vix_term_structure():
                         "Days": 365,
                         "VIX Level": vix1y
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"VIX1Y fetch failed (non-critical): {e}")
 
         if not term_points:
             return pd.DataFrame()
@@ -569,7 +569,8 @@ def get_sector_comparison_chart(period: str = "1y") -> pd.DataFrame:
             if not hist.empty:
                 normalized = (hist["Close"] / hist["Close"].iloc[0]) * 100
                 all_data[name] = normalized
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to fetch {ticker} for credit ETF comparison: {e}")
             continue
 
     if all_data:
@@ -1485,7 +1486,8 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
 
             try:
                 manual_pcce_value = float(manual_pcce) if manual_pcce else 0.0
-            except Exception:
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Invalid manual PCCE value '{manual_pcce}': {e}")
                 manual_pcce_value = 0.0
 
             if manual_pcce_value > 0:
@@ -3835,7 +3837,8 @@ elif page == "Treasury Stress (MOVE)":
         # Get VIX history
         try:
             vix_df = components["market"].get_vix_history(lookback_days=365)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"VIX history fetch failed: {e}")
             vix_df = pd.DataFrame()
         
         if move_df is not None and not move_df.empty and not vix_df.empty:
@@ -4815,7 +4818,9 @@ elif page == "Institutional Flow":
             with col4:
                 signal = insider_summary.get('signal', 'NEUTRAL')
                 color = insider_summary.get('color', '#9E9E9E')
-                st.markdown(f"<h3 style='color:{color}'>{signal}</h3>", unsafe_allow_html=True)
+                # Add emoji for accessibility (not color-only)
+                signal_emoji = {"BULLISH": "🟢", "BEARISH": "🔴", "NEUTRAL": "🟡"}.get(signal, "⚪")
+                st.markdown(f"<h3 style='color:{color}'>{signal_emoji} {signal}</h3>", unsafe_allow_html=True)
 
             # Notable transactions
             notable = inst_collectors['insider'].get_notable_transactions()

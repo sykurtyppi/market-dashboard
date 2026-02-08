@@ -108,9 +108,9 @@ class TreasuryAuctionCollector:
         if 'issue_date' in df.columns:
             df['issue_date'] = pd.to_datetime(df['issue_date'])
 
-        # Calculate bidder percentages
+        # Calculate bidder percentages (with division by zero protection)
         if 'total_accepted' in df.columns and df['total_accepted'].notna().any():
-            total = df['total_accepted']
+            total = df['total_accepted'].replace(0, pd.NA)  # Avoid division by zero
             if 'direct_bidder_accepted' in df.columns:
                 df['direct_pct'] = (df['direct_bidder_accepted'] / total * 100).round(1)
             if 'indirect_bidder_accepted' in df.columns:

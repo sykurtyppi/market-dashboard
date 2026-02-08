@@ -97,9 +97,10 @@ class MOVECollector:
             
             latest = df.iloc[-1]
             move_value = float(latest['move'])
-            
-            # Calculate percentile
-            percentile = (df['move'] < move_value).sum() / len(df) * 100
+
+            # Calculate percentile (with division by zero protection)
+            df_len = len(df)
+            percentile = (df['move'] < move_value).sum() / df_len * 100 if df_len > 0 else 50.0
             
             # Classify stress level using config thresholds
             move_cfg = cfg.treasury.move

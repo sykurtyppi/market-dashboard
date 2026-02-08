@@ -168,6 +168,15 @@ class DatabaseManager:
             # Run migrations for existing databases
             self._run_migrations(conn)
 
+    # Allowlist of valid column names and types for migrations (prevents SQL injection)
+    VALID_MIGRATION_COLUMNS = {
+        'vix9d': 'REAL',
+        'vvix': 'REAL',
+        'vvix_signal': 'TEXT',
+        'skew': 'REAL',
+    }
+    VALID_SQL_TYPES = {'REAL', 'TEXT', 'INTEGER', 'BLOB', 'NULL'}
+
     def _run_migrations(self, conn):
         """Add missing columns to existing tables (safe migrations)"""
         cursor = conn.cursor()
@@ -176,18 +185,16 @@ class DatabaseManager:
         cursor.execute("PRAGMA table_info(daily_snapshots)")
         existing_columns = {row[1] for row in cursor.fetchall()}
 
-        # Columns that should exist (with their types)
-        required_columns = {
-            'vix9d': 'REAL',
-            'vvix': 'REAL',
-            'vvix_signal': 'TEXT',
-            'skew': 'REAL',
-        }
+        # Add missing columns using allowlisted values only
+        for col_name, col_type in self.VALID_MIGRATION_COLUMNS.items():
+            # Validate column type is in allowlist (defense in depth)
+            if col_type not in self.VALID_SQL_TYPES:
+                logger.warning(f"Invalid column type '{col_type}' for '{col_name}' - skipping")
+                continue
 
-        # Add missing columns
-        for col_name, col_type in required_columns.items():
             if col_name not in existing_columns:
                 try:
+                    # Safe because col_name and col_type come from class constants
                     cursor.execute(f"ALTER TABLE daily_snapshots ADD COLUMN {col_name} {col_type}")
                     logger.info(f"Added missing column '{col_name}' to daily_snapshots")
                 except sqlite3.OperationalError as e:

@@ -63,10 +63,14 @@ class LiquidityCollector:
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("FRED_API_KEY")
+        self.logger = logging.getLogger(__name__)
+        self._disabled = False
         if not self.api_key:
-            raise ValueError(
-                "FRED_API_KEY not found. Please set it in your environment or .env file."
+            self.logger.warning(
+                "FRED_API_KEY not found. Liquidity data will be unavailable. "
+                "Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
             )
+            self._disabled = True
 
     # ---------- Internal helpers ----------
 
@@ -88,6 +92,10 @@ class LiquidityCollector:
         end_date : str, optional
             'YYYY-MM-DD'. If None, defaults to today.
         """
+        # Return empty DataFrame if API key not configured
+        if self._disabled:
+            return pd.DataFrame(columns=["date", series_id])
+
         if end_date is None:
             end_date = datetime.today().strftime("%Y-%m-%d")
         if start_date is None:
