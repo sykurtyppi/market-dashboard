@@ -47,7 +47,71 @@ class CBOECollector:
             'reason': reason
         })
         logger.warning(f"ESTIMATED DATA: {field_name} - {reason}")
-    
+
+    def _interpolate_vix3m_multiplier(self, vix: float) -> tuple:
+        """
+        Compute VIX3M/VIX multiplier using smooth piecewise linear interpolation.
+
+        Avoids step function artifacts at regime boundaries by interpolating
+        between anchor points based on empirical VIX/VIX3M relationship.
+
+        Anchor points (VIX → multiplier):
+            VIX=10  → 1.08  (strong contango, calm markets)
+            VIX=15  → 1.05  (moderate contango)
+            VIX=20  → 1.01  (mild contango, normal)
+            VIX=25  → 0.97  (flat to slight backwardation)
+            VIX=35  → 0.90  (backwardation, crisis)
+            VIX=50  → 0.82  (steep backwardation, panic)
+            VIX=80  → 0.75  (extreme panic, asymptote)
+
+        Args:
+            vix: Current VIX level
+
+        Returns:
+            Tuple of (multiplier, regime_label)
+        """
+        # Anchor points: (vix_level, multiplier)
+        # Based on historical VIX/VIX3M relationship
+        anchors = [
+            (10, 1.08),   # Strong contango
+            (15, 1.05),   # Moderate contango
+            (20, 1.01),   # Mild contango
+            (25, 0.97),   # Flat/slight backwardation
+            (35, 0.90),   # Backwardation
+            (50, 0.82),   # Steep backwardation
+            (80, 0.75),   # Extreme (asymptote)
+        ]
+
+        # Handle edge cases
+        if vix <= anchors[0][0]:
+            multiplier = anchors[0][1]
+        elif vix >= anchors[-1][0]:
+            multiplier = anchors[-1][1]
+        else:
+            # Find the two anchor points to interpolate between
+            for i in range(len(anchors) - 1):
+                v1, m1 = anchors[i]
+                v2, m2 = anchors[i + 1]
+                if v1 <= vix <= v2:
+                    # Linear interpolation: m = m1 + (m2-m1) * (vix-v1)/(v2-v1)
+                    t = (vix - v1) / (v2 - v1)
+                    multiplier = m1 + (m2 - m1) * t
+                    break
+
+        # Determine regime label based on multiplier
+        if multiplier >= 1.04:
+            regime = "contango"
+        elif multiplier >= 1.00:
+            regime = "mild contango"
+        elif multiplier >= 0.96:
+            regime = "flat"
+        elif multiplier >= 0.88:
+            regime = "backwardation"
+        else:
+            regime = "steep backwardation"
+
+        return round(multiplier, 4), regime
+
     def get_vix(self) -> Optional[float]:
         """
         Get current VIX spot price from Yahoo Finance
@@ -98,46 +162,30 @@ class CBOECollector:
                     logger.debug(f"Ticker {ticker_symbol} failed: {e}")
                     continue
 
-            # If all tickers fail, estimate from VIX using regime-aware approach
+            # If all tickers fail, estimate from VIX using smooth interpolation
             # Historical VIX/VIX3M relationship varies by market regime:
             #
-            # Calm markets (VIX < 15):   VIX3M typically 5-10% HIGHER (contango)
-            # Normal (VIX 15-20):        VIX3M typically 0-5% higher (mild contango)
-            # Elevated (VIX 20-30):      VIX3M roughly equal to VIX (flat)
-            # Crisis (VIX > 30):         VIX3M typically 5-15% LOWER (backwardation)
-            # Panic (VIX > 50):          VIX3M can be 15-25% LOWER (steep backwardation)
+            # Calm markets (VIX < 12):   VIX3M typically 7-10% HIGHER (strong contango)
+            # Normal (VIX ~18):          VIX3M typically 2-3% higher (mild contango)
+            # Elevated (VIX ~25):        VIX3M roughly flat to slightly below
+            # Crisis (VIX ~35):          VIX3M typically 8-12% LOWER (backwardation)
+            # Panic (VIX > 50):          VIX3M can be 15-20% LOWER (steep backwardation)
+            #
+            # Using piecewise linear interpolation to avoid step function artifacts
+            # at regime boundaries (e.g., VIX crossing 15, 20, 30, etc.)
             vix = self.get_vix()
             if vix:
-                if vix < 15:
-                    # Calm market: contango, VIX3M > VIX
-                    multiplier = 1.07
-                    regime = "calm (contango)"
-                elif vix < 20:
-                    # Normal: mild contango
-                    multiplier = 1.03
-                    regime = "normal (mild contango)"
-                elif vix < 30:
-                    # Elevated: roughly flat
-                    multiplier = 0.98
-                    regime = "elevated (flat)"
-                elif vix < 50:
-                    # Crisis: backwardation, VIX3M < VIX
-                    multiplier = 0.90
-                    regime = "crisis (backwardation)"
-                else:
-                    # Panic: steep backwardation
-                    multiplier = 0.80
-                    regime = "panic (steep backwardation)"
+                multiplier, regime = self._interpolate_vix3m_multiplier(vix)
 
                 estimated_vix3m = vix * multiplier
                 if track_estimation:
                     self._mark_estimated(
                         'vix3m',
-                        f'Estimated VIX × {multiplier:.2f} for {regime} regime (VIX={vix:.1f})'
+                        f'Estimated VIX × {multiplier:.3f} for {regime} (VIX={vix:.1f})'
                     )
                 logger.warning(
-                    f"VIX3M unavailable, using regime-aware estimate: {estimated_vix3m:.2f} "
-                    f"(VIX={vix:.1f}, regime={regime})"
+                    f"VIX3M unavailable, using smooth estimate: {estimated_vix3m:.2f} "
+                    f"(VIX={vix:.1f}, multiplier={multiplier:.3f}, regime={regime})"
                 )
                 return estimated_vix3m
 
@@ -380,44 +428,86 @@ class CBOECollector:
                 logger.info(f"Real VIX Contango: {contango:+.2f}% (VIX={vix:.2f}, VIX3M={vix3m:.2f})")
                 return round(contango, 2)
             elif vix:
-                # If VIX3M unavailable but VIX is, estimate based on VIX regime
-                # Historical relationship based on empirical data:
-                if vix < 15:
-                    # Calm market: strong contango
-                    estimated_contango = 7.0
-                    regime = "calm"
-                elif vix < 20:
-                    # Normal: mild contango
-                    estimated_contango = 3.0
-                    regime = "normal"
-                elif vix < 25:
-                    # Elevated: roughly flat
-                    estimated_contango = -2.0
-                    regime = "elevated"
-                elif vix < 35:
-                    # Crisis: backwardation
-                    estimated_contango = -8.0
-                    regime = "crisis"
-                else:
-                    # Panic: steep backwardation
-                    estimated_contango = -15.0
-                    regime = "panic"
+                # If VIX3M unavailable, derive contango from smooth multiplier
+                # This uses the same anchor points as _interpolate_vix3m_multiplier
+                multiplier, regime = self._interpolate_vix3m_multiplier(vix)
+                # contango = (multiplier - 1) * 100
+                estimated_contango = (multiplier - 1) * 100
 
                 self._mark_estimated(
                     'vix_contango',
-                    f'VIX-regime estimate for {regime} market (VIX={vix:.1f})'
+                    f'Smooth estimate for {regime} (VIX={vix:.1f})'
                 )
                 logger.warning(
                     f"VIX3M unavailable, estimated contango: {estimated_contango:+.2f}% "
                     f"(VIX={vix:.1f}, regime={regime})"
                 )
-                return estimated_contango
+                return round(estimated_contango, 2)
 
             return None
 
         except Exception as e:
             logger.error(f"Error calculating contango: {e}")
             return None
+
+    def get_term_structure_regime(self) -> Optional[Dict]:
+        """
+        Get VIX term structure regime classification.
+
+        Returns both the contango percentage AND a regime label for
+        cleaner interpretation in trading logic and UI display.
+
+        Regimes:
+            STRONG_CONTANGO:    contango > 5%   (very bullish, calm market)
+            MILD_CONTANGO:      0% < contango <= 5%  (bullish, normal)
+            FLAT:               -3% <= contango <= 0%  (neutral)
+            BACKWARDATION:      -10% <= contango < -3%  (bearish, elevated fear)
+            CRISIS_BACKWARDATION: contango < -10%  (extreme fear, capitulation)
+
+        Returns:
+            Dict with contango_pct, regime, signal, color, description
+        """
+        contango = self.get_real_contango()
+        vix = self.get_vix()
+
+        if contango is None:
+            return None
+
+        if contango > 5:
+            regime = "STRONG_CONTANGO"
+            signal = "BULLISH"
+            color = "#00CC00"
+            description = "Strong contango - vanna/charm tailwinds favor longs"
+        elif contango > 0:
+            regime = "MILD_CONTANGO"
+            signal = "MILDLY_BULLISH"
+            color = "#90EE90"
+            description = "Mild contango - normal market, supportive flows"
+        elif contango >= -3:
+            regime = "FLAT"
+            signal = "NEUTRAL"
+            color = "#FFD700"
+            description = "Flat term structure - no strong directional bias"
+        elif contango >= -10:
+            regime = "BACKWARDATION"
+            signal = "BEARISH"
+            color = "#FFA500"
+            description = "Backwardation - elevated near-term fear, hedging pressure"
+        else:
+            regime = "CRISIS_BACKWARDATION"
+            signal = "EXTREME_FEAR"
+            color = "#FF4444"
+            description = "Steep backwardation - crisis conditions, potential capitulation"
+
+        return {
+            'contango_pct': contango,
+            'regime': regime,
+            'signal': signal,
+            'color': color,
+            'description': description,
+            'vix': vix,
+            'is_estimated': any(e['field'] == 'vix_contango' for e in self.estimated_fields)
+        }
     
     def get_cboe_equity_put_call(self) -> Optional[float]:
         """
