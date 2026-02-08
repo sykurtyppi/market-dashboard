@@ -16,7 +16,16 @@ Phase 2: Fed Balance Sheet, MOVE Index, Repo/SOFR rates
 from datetime import datetime
 from pathlib import Path
 import sys
+import logging
 import pandas as pd
+
+# Configure logging for scheduled tasks
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------------------
 # Path setup – add project root to sys.path so imports work when run as a script
@@ -52,7 +61,7 @@ class MarketDataUpdater:
         try:
             self.fred = FREDCollector()
         except ValueError as e:
-            print(f"⚠️ FRED collector disabled: {e}")
+            logger.warning(f"FRED collector disabled: {e}")
             self.fred = None
 
         self.fear_greed = FearGreedCollector()
@@ -63,14 +72,16 @@ class MarketDataUpdater:
         # Phase 2 collectors - also optional
         try:
             self.fed_bs = FedBalanceSheetCollector()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Fed Balance Sheet collector disabled: {e}")
             self.fed_bs = None
 
         self.move = MOVECollector()
 
         try:
             self.repo = RepoCollector()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Repo collector disabled: {e}")
             self.repo = None
 
         # DB & processors
@@ -96,31 +107,31 @@ class MarketDataUpdater:
     # ------------------------------------------------------------------
     def run_full_update(self):
         """Run the complete market data update pipeline."""
-        print("\n" + "=" * 80)
-        print(f"MARKET DATA UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 80)
+        logger.info("=" * 60)
+        logger.info(f"MARKET DATA UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 60)
 
         # ------------------------------------------------------------------
         # 1. FRED data (optional - requires API key)
         # ------------------------------------------------------------------
         fred_data = None
         if self.fred:
-            print("\n📊 Fetching FRED data...")
+            logger.info("Fetching FRED data...")
             fred_data = self.fred.get_all_indicators()
 
             if fred_data:
-                print(f"✓ Fetched {len(fred_data)} FRED indicator series")
+                logger.info(f"Fetched {len(fred_data)} FRED indicator series")
                 self.db.save_indicators_batch(fred_data)
-                print("✓ Saved FRED indicators to database")
+                logger.info("Saved FRED indicators to database")
             else:
-                print("⚠️ No FRED data returned")
+                logger.warning("No FRED data returned")
         else:
-            print("\n⚠️ Skipping FRED data (no API key configured)")
+            logger.warning("Skipping FRED data (no API key configured)")
 
         # ------------------------------------------------------------------
         # 2. LEFT strategy signal (uses HY credit spreads from FRED)
         # ------------------------------------------------------------------
-        print("\n📈 Calculating LEFT strategy signal...")
+        logger.info("Calculating LEFT strategy signal...")
 
         left_signal_data = {"signal": "NEUTRAL"}
         try:
@@ -130,9 +141,9 @@ class MarketDataUpdater:
                 )
 
                 if left_signal_data.get("signal") != "INSUFFICIENT_DATA":
-                    print(f"✓ LEFT Signal: {left_signal_data['signal']}")
-                    print(f"  Strength: {left_signal_data['strength']:.1f}/100")
-                    print(f"  Distance from EMA: {left_signal_data['pct_from_ema']:+.2f}%")
+                    logger.info(f"LEFT Signal: {left_signal_data['signal']}")
+                    logger.info(f"  Strength: {left_signal_data['strength']:.1f}/100")
+                    logger.info(f"  Distance from EMA: {left_signal_data['pct_from_ema']:+.2f}%")
 
                     self.db.save_signal(
                         "LEFT",
@@ -141,33 +152,33 @@ class MarketDataUpdater:
                         left_signal_data,
                     )
                 else:
-                    print(f"⚠ {left_signal_data.get('reason', 'Insufficient data')}")
+                    logger.warning(f"{left_signal_data.get('reason', 'Insufficient data')}")
                     left_signal_data = {"signal": "NEUTRAL"}
             else:
-                print("⚠ No credit_spread_hy data available for LEFT signal")
+                logger.warning("No credit_spread_hy data available for LEFT signal")
         except Exception as e:
-            print(f"✗ Error calculating LEFT signal: {e}")
+            logger.error(f"Error calculating LEFT signal: {e}")
             left_signal_data = {"signal": "NEUTRAL"}
 
         # ------------------------------------------------------------------
         # 3. Fear & Greed Index
         # ------------------------------------------------------------------
-        print("\n😱 Fetching Fear & Greed Index...")
+        logger.info("Fetching Fear & Greed Index...")
         fear_greed_data = self.fear_greed.get_fear_greed_score() or {}
 
         if "score" in fear_greed_data and fear_greed_data["score"] is not None:
-            print(
-                f"✓ Fear & Greed Score: "
+            logger.info(
+                f"Fear & Greed Score: "
                 f"{fear_greed_data['score']:.0f} ({fear_greed_data.get('rating', '')})"
             )
         else:
-            print("✗ Failed to fetch Fear & Greed data")
+            logger.error("Failed to fetch Fear & Greed data")
             fear_greed_data = {"score": None}
 
         # ------------------------------------------------------------------
         # 4. CBOE data (VIX, contango, put/call, etc.)
         # ------------------------------------------------------------------
-        print("\n📉 Fetching CBOE volatility & options data...")
+        logger.info("Fetching CBOE volatility & options data...")
         cboe_data = self.cboe.get_all_data() or {}
 
         vix_spot_cboe = cboe_data.get("vix_spot")
@@ -175,34 +186,34 @@ class MarketDataUpdater:
         total_pc_cboe = cboe_data.get("put_call_ratios", {}).get("total_pc")
 
         if vix_spot_cboe:
-            print(f"✓ VIX Spot (CBOE): {vix_spot_cboe:.2f}")
+            logger.info(f"VIX Spot (CBOE): {vix_spot_cboe:.2f}")
             if vix_contango_cboe is not None:
-                print(f"  VIX Contango (CBOE): {vix_contango_cboe:+.2f}%")
+                logger.info(f"  VIX Contango (CBOE): {vix_contango_cboe:+.2f}%")
         else:
-            print("⚠ VIX spot from CBOE unavailable")
+            logger.warning("VIX spot from CBOE unavailable")
 
         # ------------------------------------------------------------------
         # 5. Yahoo Finance data (fallbacks/proxies)
         # ------------------------------------------------------------------
-        print("\n🛰  Fetching Yahoo Finance proxies...")
+        logger.info("Fetching Yahoo Finance proxies...")
         yahoo_data = self.yahoo.get_all_data() or {}
 
         if yahoo_data.get("vix") is not None:
-            print(f"✓ VIX (Yahoo): {yahoo_data['vix']:.2f}")
+            logger.info(f"VIX (Yahoo): {yahoo_data['vix']:.2f}")
         if yahoo_data.get("vix_contango_proxy") is not None:
-            print(f"✓ VIX Contango Proxy (Yahoo): {yahoo_data['vix_contango_proxy']:+.2f}%")
+            logger.info(f"VIX Contango Proxy (Yahoo): {yahoo_data['vix_contango_proxy']:+.2f}%")
         if yahoo_data.get("market_breadth_proxy") is not None:
-            print(
-                f"✓ Market Breadth Proxy (Yahoo): "
+            logger.info(
+                f"Market Breadth Proxy (Yahoo): "
                 f"{yahoo_data['market_breadth_proxy']*100:.1f}% advancing"
             )
         if yahoo_data.get("put_call_proxy") is not None:
-            print(f"✓ Put/Call Proxy (Yahoo): {yahoo_data['put_call_proxy']:.3f}")
+            logger.info(f"Put/Call Proxy (Yahoo): {yahoo_data['put_call_proxy']:.3f}")
 
         # ------------------------------------------------------------------
         # 6. Market breadth (NYSE breadth collector)
         # ------------------------------------------------------------------
-        print("\n📊 Fetching NYSE market breadth...")
+        logger.info("Fetching NYSE market breadth...")
         nyse_breadth_ratio = None
         try:
             breadth_df = self.breadth.get_breadth_history(days=90)
@@ -210,38 +221,38 @@ class MarketDataUpdater:
                 self.db.save_breadth_data(breadth_df)
                 latest_breadth = breadth_df.iloc[-1]['breadth_pct']
                 nyse_breadth_ratio = latest_breadth / 100.0  # Convert to ratio
-                print(f"✓ NYSE Breadth: {latest_breadth:.1f}% advancing")
-                print(f"✓ Saved {len(breadth_df)} days of breadth data")
+                logger.info(f"NYSE Breadth: {latest_breadth:.1f}% advancing")
+                logger.info(f"Saved {len(breadth_df)} days of breadth data")
             else:
-                print("⚠ No breadth data available")
+                logger.warning("No breadth data available")
         except Exception as e:
-            print(f"⚠ Breadth calculation failed: {e}")
+            logger.warning(f"Breadth calculation failed: {e}")
 
         # ------------------------------------------------------------------
         # 7. VRP (Volatility Risk Premium) analysis
         # ------------------------------------------------------------------
-        print("\n🔍 Calculating Volatility Risk Premium (VRP)...")
+        logger.info("Calculating Volatility Risk Premium (VRP)...")
 
         # Prefer CBOE VIX; fall back to Yahoo VIX if needed
         vix_for_vrp = vix_spot_cboe or yahoo_data.get("vix")
         vrp_analysis = None
 
         if vix_for_vrp is None:
-            print("✗ No VIX value available for VRP calculation")
+            logger.error("No VIX value available for VRP calculation")
         else:
             vrp_analysis = self.vrp_analyzer.get_complete_analysis(vix=vix_for_vrp)
 
             if "error" in vrp_analysis:
-                print(f"✗ VRP analysis failed: {vrp_analysis['error']}")
+                logger.error(f"VRP analysis failed: {vrp_analysis['error']}")
                 vrp_analysis = None
             else:
-                print(
-                    f"✓ VRP: {vrp_analysis['vrp']:+.2f} | "
+                logger.info(
+                    f"VRP: {vrp_analysis['vrp']:+.2f} | "
                     f"Realized Vol (21d): {vrp_analysis['realized_vol']:.2f} | "
                     f"Regime: {vrp_analysis['regime']} "
                     f"({vrp_analysis['vix_range']})"
                 )
-                print(
+                logger.info(
                     f"  Expected 6M SPX return for this regime: "
                     f"{vrp_analysis['expected_6m_return']:.1f}%"
                 )
@@ -262,44 +273,44 @@ class MarketDataUpdater:
                         "vix_spot_vrp", today, vrp_analysis["vix"], series_id="^VIX"
                     )
                 except Exception as e:
-                    print(f"⚠ Failed to save VRP indicators: {e}")
+                    logger.warning(f"Failed to save VRP indicators: {e}")
 
                 # If DatabaseManager has a dedicated helper, use it as well
                 if hasattr(self.db, "save_vrp_data"):
                     try:
                         self.db.save_vrp_data(vrp_analysis)
-                        print("✓ VRP snapshot saved via save_vrp_data()")
+                        logger.info("VRP snapshot saved via save_vrp_data()")
                     except Exception as e:
-                        print(f"⚠ save_vrp_data() failed: {e}")
+                        logger.warning(f"save_vrp_data() failed: {e}")
 
         # ------------------------------------------------------------------
         # 8. PHASE 2: Fed Balance Sheet (for Net Liquidity)
         # ------------------------------------------------------------------
-        print("\n🏦 Fetching Fed Balance Sheet data (Phase 2)...")
+        logger.info("Fetching Fed Balance Sheet data (Phase 2)...")
         fed_bs_data = None
         try:
             if not self.fed_bs:
-                print("⚠️ Fed Balance Sheet collector not available (requires FRED API)")
+                logger.warning("Fed Balance Sheet collector not available (requires FRED API)")
                 raise Exception("Collector not initialized")
             fed_bs_data = self.fed_bs.get_balance_sheet_df()
             if fed_bs_data is not None and not fed_bs_data.empty:
                 latest_assets = fed_bs_data['total_assets'].iloc[-1] / 1e6  # Convert to trillions
-                print(f"✓ Fed Total Assets: ${latest_assets:.2f}T")
-                print(f"✓ Fetched {len(fed_bs_data)} observations")
+                logger.info(f"Fed Total Assets: ${latest_assets:.2f}T")
+                logger.info(f"Fetched {len(fed_bs_data)} observations")
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_fed_balance_sheet"):
                     self.db.save_fed_balance_sheet(fed_bs_data)
-                    print("✓ Fed Balance Sheet saved to database")
+                    logger.info("Fed Balance Sheet saved to database")
             else:
-                print("⚠ No Fed Balance Sheet data available")
+                logger.warning("No Fed Balance Sheet data available")
         except Exception as e:
-            print(f"✗ Fed Balance Sheet fetch failed: {e}")
+            logger.error(f"Fed Balance Sheet fetch failed: {e}")
 
         # ------------------------------------------------------------------
         # 9. PHASE 2: MOVE Index (Treasury Volatility)
         # ------------------------------------------------------------------
-        print("\n📈 Fetching MOVE Index data (Phase 2)...")
+        logger.info("Fetching MOVE Index data (Phase 2)...")
         move_data = None
         move_value = None
         try:
@@ -309,15 +320,15 @@ class MarketDataUpdater:
                 stress_level = move_snapshot.get('stress_level', 'UNKNOWN')
                 percentile = move_snapshot.get('percentile', 0)
 
-                print(f"✓ MOVE Index: {move_value:.1f}")
-                print(f"  Stress Level: {stress_level} ({percentile:.0f}th percentile)")
+                logger.info(f"MOVE Index: {move_value:.1f}")
+                logger.info(f"  Stress Level: {stress_level} ({percentile:.0f}th percentile)")
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_move_data"):
                     move_df = move_snapshot.get('move_df')
                     if move_df is not None and not move_df.empty:
                         self.db.save_move_data(move_df)
-                        print("✓ MOVE data saved to database")
+                        logger.info("MOVE data saved to database")
                     else:
                         # Fallback: save only latest observation
                         move_df = pd.DataFrame([{
@@ -327,22 +338,22 @@ class MarketDataUpdater:
                             'source': 'snapshot'
                         }])
                         self.db.save_move_data(move_df)
-                        print("✓ MOVE latest value saved to database")
+                        logger.info("MOVE latest value saved to database")
             else:
-                print("⚠ No MOVE data available")
+                logger.warning("No MOVE data available")
         except Exception as e:
-            print(f"✗ MOVE Index fetch failed: {e}")
+            logger.error(f"MOVE Index fetch failed: {e}")
 
         # ------------------------------------------------------------------
         # 10. PHASE 2: Repo Market Data (SOFR, IORB, RRP)
         # ------------------------------------------------------------------
-        print("\n💵 Fetching Repo Market data (Phase 2)...")
+        logger.info("Fetching Repo Market data (Phase 2)...")
         repo_data = None
         sofr_value = None
         rrp_value = None
         try:
             if not self.repo:
-                print("⚠️ Repo collector not available (requires FRED API)")
+                logger.warning("Repo collector not available (requires FRED API)")
                 raise Exception("Collector not initialized")
             repo_df = self.repo.get_repo_history(days_back=90)
             if repo_df is not None and not repo_df.empty:
@@ -353,27 +364,27 @@ class MarketDataUpdater:
                 spread = latest.get('sofr_iorb_spread')
 
                 if sofr_value is not None:
-                    print(f"✓ SOFR: {sofr_value:.2f}%")
+                    logger.info(f"SOFR: {sofr_value:.2f}%")
                 if iorb_value is not None:
-                    print(f"  IORB: {iorb_value:.2f}%")
+                    logger.info(f"  IORB: {iorb_value:.2f}%")
                 if spread is not None:
-                    print(f"  SOFR-IORB Spread: {spread:+.2f} bps")
+                    logger.info(f"  SOFR-IORB Spread: {spread:+.2f} bps")
                 if rrp_value is not None:
-                    print(f"  RRP Volume: ${rrp_value:.0f}B")
+                    logger.info(f"  RRP Volume: ${rrp_value:.0f}B")
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_repo_data"):
                     self.db.save_repo_data(repo_df)
-                    print("✓ Repo data saved to database")
+                    logger.info("Repo data saved to database")
             else:
-                print("⚠ No Repo market data available")
+                logger.warning("No Repo market data available")
         except Exception as e:
-            print(f"✗ Repo data fetch failed: {e}")
+            logger.error(f"Repo data fetch failed: {e}")
 
         # ------------------------------------------------------------------
         # 11. Build and save daily dashboard snapshot
         # ------------------------------------------------------------------
-        print("\n💾 Saving daily snapshot for dashboard...")
+        logger.info("Saving daily snapshot for dashboard...")
 
         # Choose best available sources (CBOE first, then Yahoo proxies)
         vix_spot = vix_spot_cboe or yahoo_data.get("vix")
@@ -400,9 +411,9 @@ class MarketDataUpdater:
 
         # Log VVIX buy signal if active
         if vvix_signal == 'STRONG BUY':
-            print(f"🟢 VVIX BUY SIGNAL ACTIVE! VVIX at {vvix:.1f} - Historic turning point")
+            logger.info(f"VVIX BUY SIGNAL ACTIVE! VVIX at {vvix:.1f} - Historic turning point")
         elif vvix_signal == 'BUY ALERT':
-            print(f"🟡 VVIX elevated at {vvix:.1f} - Watch for 120+ spike")
+            logger.info(f"VVIX elevated at {vvix:.1f} - Watch for 120+ spike")
 
         # Get fallback values from Yahoo if FRED unavailable
         fred_hy_spread = self._safe_get_latest_fred(fred_data, "credit_spread_hy")
@@ -416,13 +427,13 @@ class MarketDataUpdater:
             yahoo_treasury = yahoo_data.get("treasury_10y")
             if yahoo_treasury is not None:
                 treasury_10y_final = yahoo_treasury
-                print(f"  📊 Using Yahoo fallback for 10Y Treasury: {treasury_10y_final:.2f}%")
+                logger.info(f"Using Yahoo fallback for 10Y Treasury: {treasury_10y_final:.2f}%")
 
         if hy_spread_final is None:
             yahoo_hy = yahoo_data.get("hy_spread_proxy")
             if yahoo_hy is not None:
                 hy_spread_final = yahoo_hy
-                print(f"  📊 Using Yahoo fallback for HY Spread: {hy_spread_final:.2f}%")
+                logger.info(f"Using Yahoo fallback for HY Spread: {hy_spread_final:.2f}%")
 
         snapshot = {
             # Core identifiers
@@ -453,11 +464,11 @@ class MarketDataUpdater:
         }
 
         self.db.save_daily_snapshot(snapshot)
-        print("✓ Daily snapshot saved to database")
+        logger.info("Daily snapshot saved to database")
 
-        print("\n" + "=" * 80)
-        print("✓ UPDATE COMPLETE")
-        print("=" * 80 + "\n")
+        logger.info("=" * 60)
+        logger.info("UPDATE COMPLETE")
+        logger.info("=" * 60)
 
 
 if __name__ == "__main__":

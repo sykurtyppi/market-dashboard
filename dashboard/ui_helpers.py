@@ -818,7 +818,8 @@ def get_historical_export_data(db_manager, days: int = 90) -> pd.DataFrame:
                 hist = db_manager.get_indicator_history(indicator, days=days)
                 if not hist.empty:
                     all_data[indicator] = hist['value']
-            except:
+            except Exception as e:
+                logger.debug(f"Could not fetch {indicator} history: {e}")
                 continue
 
         if all_data:

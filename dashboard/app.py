@@ -1075,7 +1075,7 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
         if isinstance(snapshot_date, str):
             try:
                 snapshot_date = datetime.fromisoformat(snapshot_date.replace('Z', '+00:00'))
-            except:
+            except (ValueError, TypeError):
                 snapshot_date = None
         section_header_with_timestamp(" Market Regime Summary", snapshot_date)
     else:
@@ -1946,7 +1946,7 @@ elif page == "Credit & Liquidity":
     if isinstance(_snapshot_ts, str):
         try:
             _snapshot_ts = datetime.fromisoformat(_snapshot_ts.replace('Z', '+00:00'))
-        except:
+        except (ValueError, TypeError):
             _snapshot_ts = None
 
     section_header_with_timestamp("💳 Credit Spreads & Liquidity", _snapshot_ts)

@@ -271,8 +271,8 @@ class COTCollector:
             try:
                 if os.path.exists('annual.txt'):
                     os.remove('annual.txt')
-            except:
-                pass
+            except OSError as e:
+                self.logger.debug(f"Could not remove temp file annual.txt: {e}")
 
     def _process_cot_library_data(self, df: pd.DataFrame, weeks_back: int) -> pd.DataFrame:
         """Process data from cot_reports library into standardized format."""

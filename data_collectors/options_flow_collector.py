@@ -401,7 +401,8 @@ class OptionsFlowCollector:
                 return hist['Close'].iloc[-1]
 
             return None
-        except:
+        except Exception as e:
+            self.logger.debug(f"Could not get stock price for {ticker}: {e}")
             return None
 
     def _find_unusual_contracts(
