@@ -11,6 +11,29 @@ This is THE most important macro liquidity indicator.
 Net Liquidity (proper formula) = Fed BS - TGA - RRP
 
 ENHANCED: Now includes balance_sheet_df and all dashboard-required keys
+
+DATA FREQUENCY NOTE:
+    FRED Fed balance sheet data is released WEEKLY (every Wednesday).
+    This affects "monthly pace" calculations:
+
+    APPROXIMATION USED:
+        4 weekly periods ≈ 1 month
+
+        Actual: 4 weeks = 28 days
+        Calendar month avg: 30.44 days
+        Error: ~8% underestimate of monthly pace
+
+    WHY THIS IS ACCEPTABLE:
+        1. Fed's own QT reports use weekly data intervals
+        2. The 8% error is consistent and doesn't affect trend direction
+        3. More sophisticated interpolation would add noise without improving signal
+        4. Dashboard users care about magnitude and direction, not exact precision
+
+    ALTERNATIVE (not implemented):
+        Could use calendar-month resampling, but this would:
+        - Create artificial end-of-month spikes
+        - Lose intra-month granularity
+        - Add complexity without meaningful improvement
 """
 
 import os
@@ -179,11 +202,26 @@ class FedBalanceSheetCollector:
     def calculate_qt_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Calculate QT (Quantitative Tightening) metrics from balance sheet data.
-        
+
         Adds columns:
         - qt_cumulative: Cumulative change since QT peak (millions USD)
-        - qt_monthly_pace: 30-day rolling change (millions USD)
+        - qt_monthly_pace: ~30-day rolling change (millions USD)
         - qt_pace_billions_month: Monthly pace in billions/month
+        - qt_pace_is_approximate: Flag indicating the 4-week approximation
+
+        METHODOLOGY NOTE (Monthly Pace):
+            Fed balance sheet data is weekly. We use 4-period diff as a
+            "monthly" pace approximation:
+
+            4 weeks = 28 days (not exactly 1 calendar month = ~30.44 days)
+
+            This ~8% underestimate is acceptable because:
+            1. It matches Fed's own weekly reporting cadence
+            2. Error is consistent (doesn't distort trends)
+            3. Calendar-month resampling would add artificial boundary effects
+
+            For precise calendar-month analysis, use the raw DataFrame
+            and resample with `df.resample('ME').last()`.
         """
         if df.empty or 'total_assets' not in df.columns:
             return df
@@ -200,12 +238,15 @@ class FedBalanceSheetCollector:
         # Cumulative QT since peak
         df["qt_cumulative"] = df["total_assets"] - peak_value
 
-        # Monthly pace (30-day change)
-        # Weekly data: 4 periods ≈ 1 month
+        # Monthly pace approximation (4 weekly periods ≈ 28 days ≈ 1 month)
+        # See module docstring for detailed methodology justification
         df["qt_monthly_pace"] = df["total_assets"].diff(periods=4)
-        
+
         # Convert to billions/month for readability
         df["qt_pace_billions_month"] = df["qt_monthly_pace"] / 1000.0
+
+        # Flag that this is an approximation (4 weeks ≠ calendar month)
+        df["qt_pace_is_approximate"] = True
 
         return df
 

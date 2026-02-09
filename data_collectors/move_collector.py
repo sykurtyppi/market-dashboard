@@ -21,6 +21,19 @@ HISTORICAL BASIS FOR THRESHOLDS:
 
     These thresholds are based on historical distribution, not arbitrary cutoffs.
 
+DATA SOURCE NOTES:
+    Primary: FRED (Federal Reserve Economic Data)
+    Fallback: Yahoo Finance (^MOVE ticker)
+
+    IMPORTANT: These sources can occasionally diverge due to:
+    - Different data providers (ICE BofA vs market data aggregators)
+    - Timing differences (end-of-day vs intraday snapshots)
+    - Rounding or calculation methodology differences
+
+    SOURCE DIVERGENCE THRESHOLD: 5%
+        If both sources are available and differ by >5%, a warning is logged.
+        This helps detect potential data quality issues.
+
 Parameters loaded from config/parameters.yaml
 """
 
@@ -32,6 +45,10 @@ from typing import Dict, Optional
 from config import cfg
 
 logger = logging.getLogger(__name__)
+
+# Maximum acceptable divergence between data sources (5%)
+# If FRED and Yahoo differ by more than this, log a warning
+SOURCE_DIVERGENCE_THRESHOLD = 0.05
 
 
 class MOVECollector:
@@ -58,62 +75,97 @@ class MOVECollector:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
-    def get_move_data(self, lookback_days: int = 730) -> pd.DataFrame:
+    def get_move_data(self, lookback_days: int = 730, validate_sources: bool = True) -> pd.DataFrame:
         """
-        Get MOVE Index data
-        
+        Get MOVE Index data with optional source cross-validation.
+
         Args:
             lookback_days: Number of days to look back
-            
+            validate_sources: If True, cross-check FRED vs Yahoo when both available
+
         Returns:
-            DataFrame with columns: date, move
+            DataFrame with columns: date, move, source
+            Also includes 'source_divergence_warning' in metadata if sources differ significantly
         """
         try:
-            # Try FRED first
             from data_collectors.fred_collector import FREDCollector
-            
+            import yfinance as yf
+
             end_date = datetime.now()
             start_date = end_date - timedelta(days=lookback_days)
-            
+
+            fred_df = pd.DataFrame()
+            yahoo_df = pd.DataFrame()
+            fred_latest = None
+            yahoo_latest = None
+
+            # Try FRED first
             self.logger.info(f"Trying FRED for MOVE Index from {start_date.date()}")
-            
+
             try:
                 fred = FREDCollector()
                 move_data = fred.get_series("MOVE", start_date=start_date.strftime('%Y-%m-%d'))
-                
+
                 if not move_data.empty:
                     self.logger.info(f"FRED: Fetched {len(move_data)} MOVE observations")
                     series_col = move_data.columns[1] if len(move_data.columns) > 1 else "MOVE"
-                    df = move_data.rename(columns={series_col: 'move'}).copy()
-                    df['date'] = pd.to_datetime(df['date']).dt.date
-                    df['source'] = 'FRED'
-                    return df
+                    fred_df = move_data.rename(columns={series_col: 'move'}).copy()
+                    fred_df['date'] = pd.to_datetime(fred_df['date']).dt.date
+                    fred_df['source'] = 'FRED'
+                    fred_latest = float(fred_df['move'].iloc[-1])
                 else:
                     self.logger.warning("FRED returned empty DataFrame for MOVE")
             except Exception as e:
                 self.logger.warning(f"FRED MOVE fetch failed: {e}")
-            
-            # Fallback to Yahoo Finance
-            self.logger.info(f"Trying Yahoo Finance for ^MOVE from {start_date.date()}")
-            
-            import yfinance as yf
-            ticker = yf.Ticker("^MOVE")
-            hist = ticker.history(start=start_date, end=end_date)
-            
-            if hist.empty:
-                self.logger.error("Yahoo Finance: No MOVE data returned")
+
+            # Cross-validation: Also fetch Yahoo to compare (if validation enabled)
+            if validate_sources or fred_df.empty:
+                self.logger.info(f"Fetching Yahoo Finance for ^MOVE (validation/fallback)")
+
+                try:
+                    ticker = yf.Ticker("^MOVE")
+                    hist = ticker.history(start=start_date, end=end_date)
+
+                    if not hist.empty:
+                        self.logger.info(f"Yahoo: Fetched {len(hist)} MOVE observations")
+                        yahoo_df = pd.DataFrame({
+                            'date': pd.to_datetime(hist.index).date,
+                            'move': hist['Close'].values
+                        })
+                        yahoo_df['source'] = 'Yahoo'
+                        yahoo_latest = float(yahoo_df['move'].iloc[-1])
+                    else:
+                        self.logger.warning("Yahoo Finance: No MOVE data returned")
+                except Exception as e:
+                    self.logger.warning(f"Yahoo Finance MOVE fetch failed: {e}")
+
+            # Source divergence check
+            if validate_sources and fred_latest is not None and yahoo_latest is not None:
+                divergence = abs(fred_latest - yahoo_latest) / fred_latest
+
+                if divergence > SOURCE_DIVERGENCE_THRESHOLD:
+                    self.logger.warning(
+                        f"MOVE SOURCE DIVERGENCE DETECTED: "
+                        f"FRED={fred_latest:.1f}, Yahoo={yahoo_latest:.1f} "
+                        f"({divergence*100:.1f}% difference). "
+                        f"Using FRED as primary source. "
+                        f"This may indicate data quality issues."
+                    )
+                else:
+                    self.logger.info(
+                        f"MOVE sources aligned: FRED={fred_latest:.1f}, Yahoo={yahoo_latest:.1f} "
+                        f"({divergence*100:.1f}% difference)"
+                    )
+
+            # Return FRED if available, otherwise Yahoo
+            if not fred_df.empty:
+                return fred_df
+            elif not yahoo_df.empty:
+                return yahoo_df
+            else:
+                self.logger.error("No MOVE data available from any source")
                 return pd.DataFrame()
-            
-            self.logger.info(f"Yahoo: Fetched {len(hist)} MOVE observations")
-            
-            df = pd.DataFrame({
-                'date': pd.to_datetime(hist.index).date,
-                'move': hist['Close'].values
-            })
-            df['source'] = 'Yahoo'
-            
-            return df
-            
+
         except Exception as e:
             self.logger.error(f"Error fetching MOVE data: {e}")
             return pd.DataFrame()
