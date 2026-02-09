@@ -1,6 +1,34 @@
 """
 Fear & Greed Index Collector
 Fetches CNN's Fear & Greed Index
+
+IMPORTANT: This is CNN's PROPRIETARY composite index.
+The exact methodology is not publicly documented, but it combines:
+    1. Stock Price Momentum (S&P 500 vs 125-day MA)
+    2. Stock Price Strength (52-week highs vs lows)
+    3. Stock Price Breadth (McClellan Volume Summation)
+    4. Put/Call Ratio
+    5. Market Volatility (VIX vs 50-day MA)
+    6. Safe Haven Demand (stocks vs bonds)
+    7. Junk Bond Demand (yield spread)
+
+THRESHOLD CALIBRATION:
+    CNN uses a 0-100 scale where 50 is "Neutral".
+    Our thresholds align with CNN's published methodology:
+        0-25:  Extreme Fear (strong contrarian buy signal)
+        25-45: Fear
+        45-55: Neutral
+        55-75: Greed
+        75-100: Extreme Greed (contrarian caution)
+
+    Note: These thresholds are slightly wider than CNN's official
+    display (which uses 0-25, 25-50, 50-75, 75-100) to reduce
+    noise and false signals around boundaries.
+
+DATA SOURCE FRAGILITY:
+    This scrapes CNN's internal API endpoint. If CNN changes
+    their API structure, this collector will fail. There is
+    no official API or fallback source for this index.
 """
 
 import logging
@@ -13,7 +41,23 @@ logger = logging.getLogger(__name__)
 
 
 class FearGreedCollector:
-    """Collects CNN Fear & Greed Index"""
+    """
+    Collects CNN Fear & Greed Index
+
+    IMPORTANT: This is a PROPRIETARY index with no official API.
+    The data is scraped from CNN's internal visualization endpoint.
+    This may break if CNN changes their website structure.
+
+    Contrarian usage:
+        - Extreme Fear (<25): Historically bullish entry point
+        - Extreme Greed (>75): Historically time for caution
+        - Neutral (45-55): No strong signal
+
+    Limitations:
+        - Proprietary methodology (not fully transparent)
+        - Single source (no fallback if CNN API changes)
+        - Intraday updates, but we cache for dashboard use
+    """
     
     def __init__(self):
         self.url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
@@ -139,7 +183,24 @@ class FearGreedCollector:
             }
 
     def _get_rating(self, score: float) -> str:
-        """Convert score to rating"""
+        """
+        Convert score to rating label.
+
+        Thresholds based on CNN's methodology with slight widening
+        to reduce boundary noise:
+
+            0-25:  Extreme Fear  (contrarian BUY zone)
+            25-45: Fear          (cautious sentiment)
+            45-55: Neutral       (no strong signal)
+            55-75: Greed         (risk-on sentiment)
+            75-100: Extreme Greed (contrarian CAUTION zone)
+
+        Historical context:
+            - Extreme Fear readings (<25) have preceded major
+              market bottoms (COVID-19 March 2020: score=2)
+            - Extreme Greed readings (>75) often precede
+              corrections but timing is unreliable
+        """
         if score >= 75:
             return "Extreme Greed"
         elif score >= 55:

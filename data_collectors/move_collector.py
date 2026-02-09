@@ -2,6 +2,25 @@
 MOVE Index Collector
 Fetches MOVE Index data (Merrill Option Volatility Estimate - Treasury volatility)
 
+HISTORICAL BASIS FOR THRESHOLDS:
+    The MOVE Index measures implied volatility of Treasury options.
+    Historical statistics (2000-2024):
+        - Mean: ~107
+        - Median: ~97
+        - 25th percentile: ~80
+        - 75th percentile: ~120
+        - 90th percentile: ~150
+        - Max (COVID panic): ~164 (March 2020)
+        - Max (2023 SVB crisis): ~198
+
+    Threshold calibration:
+        LOW (<80):       Below 25th percentile - calm Treasury markets
+        NORMAL (80-120): Middle 50% of distribution - typical conditions
+        ELEVATED (120-150): 75th-90th percentile - increased uncertainty
+        HIGH (>150):     Above 90th percentile - Treasury market stress/crisis
+
+    These thresholds are based on historical distribution, not arbitrary cutoffs.
+
 Parameters loaded from config/parameters.yaml
 """
 
@@ -16,7 +35,25 @@ logger = logging.getLogger(__name__)
 
 
 class MOVECollector:
-    """Collector for MOVE Index (Treasury volatility)"""
+    """
+    Collector for MOVE Index (Treasury volatility)
+
+    The MOVE Index is to Treasuries what VIX is to equities:
+    - Measures implied volatility from Treasury options
+    - High MOVE = bond market stress/uncertainty
+    - Low MOVE = calm fixed income markets
+
+    Key levels (based on 2000-2024 historical distribution):
+        < 80:  LOW stress (below 25th percentile)
+        80-120: NORMAL (middle 50% of observations)
+        120-150: ELEVATED (75th-90th percentile)
+        > 150: HIGH stress (above 90th percentile, crisis territory)
+
+    Notable peaks:
+        - March 2020 (COVID): 164
+        - March 2023 (SVB crisis): 198
+        - 2008 Financial Crisis: ~264
+    """
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)

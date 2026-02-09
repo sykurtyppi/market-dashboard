@@ -1,6 +1,11 @@
 """
 Enhanced Repo Market Data Collector with IORB
 Collects SOFR, IORB, and calculates key spreads
+
+Data Quality Notes:
+- IORB changes infrequently (only on Fed policy changes) - forward-filled values are flagged
+- RRP volume is daily but may have gaps on holidays - forward-filled values are flagged
+- SOFR z-score requires 252+ days of history; insufficient data is explicitly flagged
 """
 
 import logging
@@ -13,6 +18,10 @@ import pandas as pd
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+# Minimum data points required for meaningful z-score calculation
+MIN_ZSCORE_OBSERVATIONS = 60  # ~3 months minimum, 252 ideal
 
 
 class RepoCollector:
@@ -128,26 +137,52 @@ class RepoCollector:
             
             if not iorb_df.empty:
                 df = df.merge(iorb_df, on="date", how="left")
-                # Forward fill IORB (it changes infrequently)
+                # Track which IORB values are actual vs forward-filled
+                # IORB changes only on Fed policy decisions (infrequent)
+                df["iorb_is_actual"] = df["iorb"].notna()
                 df["iorb"] = df["iorb"].ffill()
-                
+
                 # Calculate SOFR-IORB spread (KEY LIQUIDITY INDICATOR)
                 df["sofr_iorb_spread"] = df["sofr"] - df["iorb"]
-            
+
             if not rrp_df.empty:
                 df = df.merge(rrp_df, on="date", how="left")
+                # Track which RRP values are actual vs forward-filled
+                df["rrp_is_actual"] = df["rrp_on"].notna()
                 df["rrp_on"] = df["rrp_on"].ffill()
-            
-            # Calculate SOFR z-score (with division by zero protection)
-            if len(df) > 252:
-                rolling_mean = df["sofr"].rolling(252).mean()
-                rolling_std = df["sofr"].rolling(252).std()
-                # Avoid division by zero - replace zero std with NaN
-                rolling_std = rolling_std.replace(0, pd.NA)
-                df["sofr_z_score"] = (df["sofr"] - rolling_mean) / rolling_std
-                df["sofr_z_score"] = df["sofr_z_score"].fillna(0.0)
+
+            # Calculate SOFR z-score with proper data quality handling
+            # CRITICAL: Don't mask insufficient data as "normal" (0.0)
+            df["sofr_z_score"] = np.nan  # Default to NaN (unknown)
+            df["sofr_z_score_quality"] = "INSUFFICIENT_DATA"
+
+            if len(df) >= MIN_ZSCORE_OBSERVATIONS:
+                # Use adaptive window: 252 days if available, otherwise use available data
+                window = min(252, len(df) - 1)
+
+                rolling_mean = df["sofr"].rolling(window).mean()
+                rolling_std = df["sofr"].rolling(window).std()
+
+                # Calculate z-score where we have valid std (non-zero)
+                valid_std_mask = (rolling_std > 0.001)  # Minimum std threshold
+
+                df.loc[valid_std_mask, "sofr_z_score"] = (
+                    (df.loc[valid_std_mask, "sofr"] - rolling_mean[valid_std_mask])
+                    / rolling_std[valid_std_mask]
+                )
+
+                # Update quality flags
+                df.loc[valid_std_mask, "sofr_z_score_quality"] = "OK"
+                df.loc[~valid_std_mask & rolling_mean.notna(), "sofr_z_score_quality"] = "LOW_VARIANCE"
+
+                # Log data quality status
+                valid_count = valid_std_mask.sum()
+                self.logger.info(f"SOFR z-score: {valid_count}/{len(df)} valid observations (window={window})")
             else:
-                df["sofr_z_score"] = 0.0
+                self.logger.warning(
+                    f"SOFR z-score: Insufficient data ({len(df)} obs, need {MIN_ZSCORE_OBSERVATIONS}+). "
+                    "Z-scores will be NaN, not falsely reported as 0.0"
+                )
             
             df = df.sort_values("date").reset_index(drop=True)
             
@@ -175,12 +210,25 @@ class RepoCollector:
             
             latest = repo_df.iloc[-1]
             
+            # Get z-score with proper handling of NaN (insufficient data)
+            sofr_z = latest.get("sofr_z_score")
+            sofr_z_value = float(sofr_z) if pd.notna(sofr_z) else None
+            sofr_z_quality = latest.get("sofr_z_score_quality", "UNKNOWN")
+
             snapshot = {
                 "date": latest["date"],
                 "sofr": float(latest["sofr"]),
-                "sofr_z_score": float(latest.get("sofr_z_score", 0.0)),
-                "rrp_volume": float(latest.get("rrp_on", 0.0)),
+                "sofr_z_score": sofr_z_value,  # None if insufficient data (not falsely 0.0)
+                "sofr_z_score_quality": sofr_z_quality,
+                "rrp_volume": float(latest.get("rrp_on", 0.0)) if pd.notna(latest.get("rrp_on")) else None,
+                "rrp_is_actual": bool(latest.get("rrp_is_actual", True)),
                 "repo_df": repo_df,
+                # Data quality metadata
+                "data_quality": {
+                    "sofr_z_score_status": sofr_z_quality,
+                    "total_observations": len(repo_df),
+                    "min_required_for_zscore": MIN_ZSCORE_OBSERVATIONS,
+                }
             }
             
             # Add IORB data if available

@@ -3,6 +3,20 @@ LEFT Strategy implementation
 Based on credit spreads and 330-day EMA
 
 Source: Larry McMillan's "Buy at Extreme Lows" research
+
+Methodology:
+    The strategy compares current credit spread to its 330-day EMA.
+    The RATIO = current_spread / ema_330
+
+    When spreads are LOW relative to EMA (ratio < 1.0):
+        - Credit conditions are TIGHT (favorable)
+        - Risk appetite is HIGH
+        - Bullish for equities
+
+    When spreads are HIGH relative to EMA (ratio > 1.0):
+        - Credit conditions are LOOSE/stressed
+        - Risk appetite is LOW
+        - Bearish for equities
 """
 
 import logging
@@ -19,10 +33,31 @@ class LEFTStrategy:
     """
     LEFT Strategy: Leveraged ETF Trading based on credit spreads
 
-    Entry: Credit spreads fall 35% below 330-day EMA (ratio <= 0.65)
-    Exit: Credit spreads rise 40% above 330-day EMA (ratio >= 1.40)
+    RATIO DEFINITION:
+        ratio = current_spread / ema_330
+
+        ratio = 0.65 means spread is 35% BELOW its EMA (spread is LOW = bullish)
+        ratio = 1.00 means spread equals its EMA (neutral)
+        ratio = 1.40 means spread is 40% ABOVE its EMA (spread is HIGH = bearish)
+
+    SIGNAL LOGIC:
+        BUY when ratio <= 0.65:
+            Credit spreads have compressed 35%+ below average
+            → Credit markets are calm/tight → bullish for equities
+
+        SELL when ratio >= 1.40:
+            Credit spreads have widened 40%+ above average
+            → Credit stress elevated → bearish for equities
+
+    NOTE: This is CONTRARIAN to credit spread direction:
+        - Low spreads (ratio << 1.0) = BUY signal (market complacent but supportive)
+        - High spreads (ratio >> 1.0) = SELL signal (market stressed)
 
     Parameters loaded from config/parameters.yaml
+
+    Historical Basis (330-day EMA):
+        330 trading days ≈ 15.7 calendar months ≈ 1.3 years
+        This captures a full credit cycle while smoothing seasonal noise.
     """
 
     def __init__(

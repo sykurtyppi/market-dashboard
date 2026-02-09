@@ -1,6 +1,20 @@
 """
-S&P 500 Advance-Decline Line Calculator
-Calculates real breadth from actual stock data using Yahoo Finance
+S&P 500 Breadth PROXY Calculator
+
+IMPORTANT: This is a PROXY measurement using 100 representative stocks,
+NOT the true S&P 500 Advance-Decline Line which requires all 500 constituents.
+
+Why this matters:
+- True A/D Line measures participation across ALL 500 stocks
+- This proxy samples ~20% of the index, biased toward larger caps
+- During narrow rallies (mega-cap led), this proxy may show false breadth
+- Use for directional guidance, not precise breadth measurement
+
+For true S&P 500 breadth:
+- Subscribe to NYSE market data (A/D Line, cumulative A/D)
+- Or use $NYAD index from data providers
+
+Limitations documented per data quality audit.
 """
 
 import pandas as pd
@@ -14,10 +28,36 @@ logger = logging.getLogger(__name__)
 
 class SP500ADLineCalculator:
     """
-    Calculate true S&P 500 breadth metrics from stock data
-    Uses 100-stock representative sample for speed + accuracy
+    PROXY breadth calculator using 100-stock sample.
+
+    WARNING: This is NOT true S&P 500 breadth!
+    - Uses 100 representative stocks (20% sample)
+    - Biased toward mega-caps and liquid names
+    - May diverge from true A/D Line during narrow rallies
+
+    For true breadth, use NYSE $NYAD or professional data feeds.
+
+    The 100-stock sample provides:
+    - Faster calculation (~10x speed vs 500 stocks)
+    - Good directional correlation with true breadth
+    - Adequate for regime detection (risk-on/risk-off)
+
+    NOT suitable for:
+    - Precise breadth thrust signals
+    - Exact A/D ratio calculations
+    - Professional breadth divergence analysis
     """
-    
+
+    # Scaling factor: Sample represents ~20% of S&P 500
+    # To estimate true S&P 500 breadth, multiply by 5x
+    SAMPLE_SIZE = 100
+    INDEX_SIZE = 500
+    SCALE_FACTOR = INDEX_SIZE / SAMPLE_SIZE  # 5.0
+
+    # Flag to indicate this is proxy data
+    IS_PROXY = True
+    PROXY_DISCLAIMER = "100-stock proxy (not true S&P 500 breadth)"
+
     # 100 stocks across all sectors, market caps, and styles
     REPRESENTATIVE_STOCKS = [
         # Mega caps (20 stocks)
@@ -182,7 +222,14 @@ class SP500ADLineCalculator:
             'breadth_pct': float(latest['breadth_pct']),
             'ad_line': float(latest['ad_line']),
             'week_change': float(latest['ad_line'] - prev_week['ad_line']),
-            'trend': 'Improving' if latest['ad_line'] > prev_week['ad_line'] else 'Weakening'
+            'trend': 'Improving' if latest['ad_line'] > prev_week['ad_line'] else 'Weakening',
+            # Proxy metadata - important for data quality transparency
+            'is_proxy': self.IS_PROXY,
+            'sample_size': self.SAMPLE_SIZE,
+            'disclaimer': self.PROXY_DISCLAIMER,
+            # Estimated true S&P 500 values (scaled up from sample)
+            'estimated_sp500_advancing': int(latest['advancing'] * self.SCALE_FACTOR),
+            'estimated_sp500_declining': int(latest['declining'] * self.SCALE_FACTOR),
         }
     
     def get_breadth_history(self, days=60):
