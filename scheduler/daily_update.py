@@ -292,7 +292,20 @@ class MarketDataUpdater:
             if not self.fed_bs:
                 logger.warning("Fed Balance Sheet collector not available (requires FRED API)")
                 raise Exception("Collector not initialized")
-            fed_bs_data = self.fed_bs.get_balance_sheet_df()
+            # Backward/forward-compatible fetch path:
+            # some collector versions expose get_balance_sheet_df(), others expose
+            # get_balance_sheet_history() + calculate_qt_metrics().
+            if hasattr(self.fed_bs, "get_balance_sheet_df"):
+                fed_bs_data = self.fed_bs.get_balance_sheet_df()
+            else:
+                fed_bs_history = self.fed_bs.get_balance_sheet_history(lookback_days=730)
+                if fed_bs_history is not None and not fed_bs_history.empty:
+                    if hasattr(self.fed_bs, "calculate_qt_metrics"):
+                        fed_bs_data = self.fed_bs.calculate_qt_metrics(fed_bs_history)
+                    else:
+                        fed_bs_data = fed_bs_history
+                else:
+                    fed_bs_data = fed_bs_history
             if fed_bs_data is not None and not fed_bs_data.empty:
                 latest_assets = fed_bs_data['total_assets'].iloc[-1] / 1e6  # Convert to trillions
                 logger.info(f"Fed Total Assets: ${latest_assets:.2f}T")
