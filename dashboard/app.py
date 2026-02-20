@@ -939,7 +939,8 @@ with st.sidebar:
         "Data notice: This product uses the FRED® API but is not endorsed or certified by "
         "the Federal Reserve Bank of St. Louis. Market data sources may be delayed."
     )
-    st.caption("Created by Tristan Alejandro. Not financial advice.")
+    st.caption("Created by Tristan Alejandro / Not financial advice.")
+    st.caption("Source code: [github.com/sykurtyppi/market-dashboard](https://github.com/sykurtyppi/market-dashboard)")
 
 # -------------------------------------------------------------------
 # MAIN TITLE
