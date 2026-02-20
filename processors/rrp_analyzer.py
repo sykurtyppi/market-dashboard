@@ -155,12 +155,12 @@ class RRPAnalyzer:
         
         # Phase-specific interpretation
         if phase == "CRITICAL":
-            lines.append("🚨 CRITICAL: RRP nearly exhausted - Fed likely to pause/end QT soon")
+            lines.append(" CRITICAL: RRP nearly exhausted - Fed likely to pause/end QT soon")
             lines.append("Liquidity buffer GONE - any further QT hits bank reserves directly")
             if changes['30d_rate'] < 0:
                 days_to_zero = abs(current_rrp / changes['30d_rate']) if changes['30d_rate'] != 0 else 999
                 if days_to_zero < 60:
-                    lines.append(f"⏰ Estimated {int(days_to_zero)} days until RRP reaches zero")
+                    lines.append(f" Estimated {int(days_to_zero)} days until RRP reaches zero")
         
         elif phase == "LATE_STAGE":
             lines.append("⚠️ LATE STAGE: RRP running low - Fed watching closely")
@@ -170,16 +170,16 @@ class RRPAnalyzer:
                 lines.append(f"~{int(days_to_critical)} days until critical level at current drain rate")
         
         elif phase == "DRAINING":
-            lines.append("📉 DRAINING: Money flowing from RRP back to banks = BULLISH")
+            lines.append(" DRAINING: Money flowing from RRP back to banks = BULLISH")
             lines.append(f"Draining ${abs(changes['30d']):.1f}B over past 30 days")
             lines.append("This liquidity release has supported the 2023-2024 rally")
         
         elif phase == "STABLE":
-            lines.append("➡️ STABLE: RRP relatively unchanged")
+            lines.append(" STABLE: RRP relatively unchanged")
             lines.append("Liquidity conditions steady")
         
         elif phase == "BUILDING":
-            lines.append("📈 BUILDING: Money parking at RRP (rare in 2024-2025)")
+            lines.append(" BUILDING: Money parking at RRP (rare in 2024-2025)")
             lines.append("Flight to safety or technical factors")
         
         # Add rate of change context if available
@@ -196,10 +196,10 @@ class RRPAnalyzer:
              RRP hitting zero = transition risk (Fed must act)
         """
         if phase == "CRITICAL":
-            return "⚠️ TRANSITION RISK: Fed must pause/end QT → likely BULLISH (signals QE restart approaching)"
+            return " TRANSITION RISK: Fed must pause/end QT → likely BULLISH (signals QE restart approaching)"
         
         elif phase == "LATE_STAGE":
-            return "📊 MODERATELY BULLISH: Continued drain supports markets, but watching for Fed action"
+            return " MODERATELY BULLISH: Continued drain supports markets, but watching for Fed action"
         
         elif phase == "DRAINING":
             if changes['30d'] < -50:  # Fast drain
@@ -208,7 +208,7 @@ class RRPAnalyzer:
                 return "✅ MILDLY BULLISH: Steady RRP drain = gradual liquidity improvement"
         
         elif phase == "STABLE":
-            return "➡️ NEUTRAL: No major liquidity shifts from RRP"
+            return " NEUTRAL: No major liquidity shifts from RRP"
         
         elif phase == "BUILDING":
             return "⚠️ CAUTION: RRP building = money leaving system (defensive positioning?)"

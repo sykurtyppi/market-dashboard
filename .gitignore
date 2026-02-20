@@ -21,6 +21,11 @@ config/config.yaml
 
 # Databases
 *.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+data/
 
 # Generated reports
 reports/*.pdf
@@ -35,6 +40,8 @@ reports/*.pdf
 *.broken
 *.yourversion
 *~
+dashboard/app.py.local_backup_*
+.minimax/
 
 # Test files in wrong locations
 test_*.py

@@ -327,7 +327,7 @@ class HealthCheckSystem:
         emoji_map = {
             HealthStatus.HEALTHY: "✅",
             HealthStatus.STALE: "⚠️",
-            HealthStatus.DEGRADED: "🔶",
+            HealthStatus.DEGRADED: "Degraded",
             HealthStatus.DOWN: "❌",
             HealthStatus.UNKNOWN: "❓"
         }

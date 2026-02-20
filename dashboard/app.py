@@ -3089,7 +3089,7 @@ elif page == "Sectors & VIX":
                 ],
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
             # Show summary metrics
             col1, col2, col3 = st.columns(3)

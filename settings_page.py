@@ -102,7 +102,7 @@ class SettingsManager:
 def render_settings_page():
     """Render the settings page in Streamlit"""
     
-    st.title("⚙️ Dashboard Settings")
+    st.title(" Dashboard Settings")
     st.markdown("Configure your API keys and data sources here.")
     
     settings = SettingsManager()
@@ -151,7 +151,7 @@ def render_settings_page():
     st.markdown("---")
 
     # Nasdaq Data Link Section (for COT data)
-    st.header("📊 Nasdaq Data Link (COT Positioning)")
+    st.header(" Nasdaq Data Link (COT Positioning)")
     st.markdown("""
     **Get your free API key:** [https://data.nasdaq.com](https://data.nasdaq.com) → Sign up → Account Settings
 
@@ -283,16 +283,26 @@ def render_settings_page():
     
     # Manual PCCE Input Section
     st.header("📊 Manual Data Overrides")
+
     st.markdown("""
-    **CBOE Equity Put/Call Ratio (PCCE)**
-    
-    Real CBOE data requires a subscription. Enter today's PCCE value from your trading platform:
-    - ThinkorSwim: $PCCE
-    - TradingView: CBOE:PCCE
-    - Your charts: PCCE ticker
-    
-    This will override the estimated value on the Overview page.
+    ### CBOE Put/Call Ratios
+
+    **Why manual entry?** CBOE moved their P/C ratio data to paid DataShop in 2019.
+    Free APIs no longer provide accurate market-wide put/call ratios.
+
+    **Quick lookup on TradingView:**
+    | Symbol | Description | Typical Range |
+    |--------|-------------|---------------|
+    | `PCCE` | **Equity P/C** (stocks only) | 0.5 - 1.0 |
+    | `PCC` | Total P/C (CBOE all options) | 0.7 - 1.2 |
+    | `PC` | Total P/C (all exchanges) | 0.6 - 1.0 |
+    | `CPCS` | S&P 500 P/C (SPX options) | 0.4 - 0.8 |
+
+    **⚠️ Without manual entry, the dashboard uses SPY options as a proxy (~1.1-1.3),
+    which is MUCH higher than the actual PCCE (~0.6-0.8) due to institutional hedging.**
     """)
+
+    st.info("💡 **Tip**: Open TradingView, search `PCCE`, and enter today's value below.")
     
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -340,12 +350,12 @@ def render_settings_page():
             st.success("Override cleared - will use estimated value")
             st.rerun()
     else:
-        st.caption("No manual override set - using estimated P/C from VIX/VXV")
+        st.warning("⚠️ **No manual PCCE set** - Dashboard shows SPY proxy (~1.1-1.3), not actual PCCE (~0.6-0.8). Enter today's value from TradingView for accurate sentiment readings.")
     
     st.markdown("---")
 
     # Market Breadth Settings
-    st.header("📊 Market Breadth Settings")
+    st.header(" Market Breadth Settings")
     st.markdown("""
     **Stock Sample Size for Breadth Calculation**
 
@@ -378,7 +388,7 @@ def render_settings_page():
         """)
     with col2:
         st.markdown("""
-        **🎯 Full Mode (500 stocks)**
+        ** Full Mode (500 stocks)**
         - ~3-5 minutes refresh time
         - True S&P 500 breadth calculation
         - No scaling needed
@@ -398,7 +408,7 @@ def render_settings_page():
     st.markdown("---")
 
     # Current Status
-    st.header("🔌 API Status")
+    st.header(" API Status")
     
     col1, col2, col3 = st.columns(3)
     

@@ -142,10 +142,10 @@ elif page == "Repo Market (SOFR)":
         """)
     
     tab1, tab2, tab3, tab4 = st.tabs([
-        "📈 SOFR vs IORB", 
-        "📊 SOFR-IORB Spread", 
-        "📉 Z-Score & Stress", 
-        "💵 RRP Volume"
+        " SOFR vs IORB", 
+        " SOFR-IORB Spread", 
+        " Z-Score & Stress", 
+        " RRP Volume"
     ])
     
     with tab1:
