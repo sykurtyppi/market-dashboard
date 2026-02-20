@@ -10,9 +10,14 @@ import requests
 from bs4 import BeautifulSoup
 from typing import Dict, Optional
 import logging
+import time
+import json
+import threading
+from pathlib import Path
 from utils.validators import validate_vix, validate_ratio
 import pandas as pd
 from datetime import datetime
+from yfinance.exceptions import YFRateLimitError
 
 from config import cfg
 
@@ -30,6 +35,12 @@ class CBOECollector:
     Tracks which values are estimated vs real data.
     Access via self.estimated_fields after calling get_all_data()
     """
+    _CACHE: Dict[str, Dict[str, object]] = {}
+    _MISS_CACHE: Dict[str, float] = {}
+    _CACHE_LOCK = threading.Lock()
+    _LKG_LOCK = threading.Lock()
+    _LAST_RATE_LIMIT_AT: Optional[float] = None
+    _LKG_PATH = Path(__file__).resolve().parents[1] / "data" / "cache" / "cboe_lkg.json"
 
     def __init__(self):
         """Initialize CBOE collector"""
@@ -39,9 +50,94 @@ class CBOECollector:
         })
         # Track which fields contain estimated (not real) data
         self.estimated_fields = []
+        self.cache_ttl_seconds = 120
+        self.stale_ttl_seconds = 3600
+        self.persistent_ttl_seconds = 86400
+        self.rate_limit_cooldown_seconds = 180
+
+    def _load_lkg_store(self) -> Dict[str, object]:
+        try:
+            if not self._LKG_PATH.exists():
+                return {}
+            with self._LKG_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.debug(f"Could not read CBOE LKG store: {e}")
+            return {}
+
+    def _save_lkg_store(self, store: Dict[str, object]):
+        try:
+            self._LKG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._LKG_PATH.with_suffix(".tmp")
+            with tmp_path.open("w", encoding="utf-8") as f:
+                json.dump(store, f)
+            tmp_path.replace(self._LKG_PATH)
+        except Exception as e:
+            logger.debug(f"Could not write CBOE LKG store: {e}")
+
+    def _get_persisted(self, key: str, allow_stale: bool = False):
+        ttl = self.persistent_ttl_seconds if allow_stale else self.cache_ttl_seconds
+        with self._LKG_LOCK:
+            store = self._load_lkg_store()
+            entry = store.get(key)
+            if not isinstance(entry, dict):
+                return None
+            ts = entry.get("ts")
+            value = entry.get("value")
+            try:
+                age = time.time() - float(ts)
+            except (TypeError, ValueError):
+                return None
+            if age <= ttl:
+                return value
+            return None
+
+    def _get_cached(self, key: str, allow_stale: bool = False):
+        with self._CACHE_LOCK:
+            entry = self._CACHE.get(key)
+        if not entry:
+            return self._get_persisted(key, allow_stale=allow_stale)
+        age = time.time() - float(entry["ts"])
+        if age <= self.cache_ttl_seconds:
+            return entry["value"]
+        if allow_stale and age <= self.stale_ttl_seconds:
+            return entry["value"]
+        return self._get_persisted(key, allow_stale=allow_stale)
+
+    def _set_cached(self, key: str, value):
+        if value is None:
+            return
+        ts = time.time()
+        with self._CACHE_LOCK:
+            self._CACHE[key] = {"ts": ts, "value": value}
+            self._MISS_CACHE.pop(key, None)
+        with self._LKG_LOCK:
+            store = self._load_lkg_store()
+            store[key] = {"ts": ts, "value": value}
+            self._save_lkg_store(store)
+
+    def _mark_fetch_miss(self, key: str):
+        with self._CACHE_LOCK:
+            self._MISS_CACHE[key] = time.time()
+
+    def _is_fetch_miss_recent(self, key: str, cooldown_seconds: int = 60) -> bool:
+        with self._CACHE_LOCK:
+            ts = self._MISS_CACHE.get(key)
+        if ts is None:
+            return False
+        return (time.time() - ts) < cooldown_seconds
+
+    def _rate_limited_recently(self) -> bool:
+        last_rate_limit_at = type(self)._LAST_RATE_LIMIT_AT
+        if last_rate_limit_at is None:
+            return False
+        return (time.time() - last_rate_limit_at) < self.rate_limit_cooldown_seconds
 
     def _mark_estimated(self, field_name: str, reason: str):
         """Mark a field as containing estimated data"""
+        if any(e.get("field") == field_name for e in self.estimated_fields):
+            return
         self.estimated_fields.append({
             'field': field_name,
             'reason': reason
@@ -119,21 +215,47 @@ class CBOECollector:
         Returns:
             VIX value or None
         """
+        cached = self._get_cached("vix")
+        if cached is not None:
+            return float(cached)
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("vix", allow_stale=True)
+            if stale is not None:
+                return float(stale)
+
+        if self._is_fetch_miss_recent("vix"):
+            stale = self._get_cached("vix", allow_stale=True)
+            return float(stale) if stale is not None else None
+
         try:
             vix = yf.Ticker("^VIX")
             data = vix.history(period="1d")
-            
+
             if not data.empty:
                 vix_value = float(data['Close'].iloc[-1])
+                self._set_cached("vix", vix_value)
                 logger.info(f"VIX: {vix_value:.2f}")
                 return vix_value
-            
+
             logger.warning("No VIX data available")
-            return None
-            
+            self._mark_fetch_miss("vix")
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("vix")
+            stale = self._get_cached("vix", allow_stale=True)
+            if stale is not None:
+                logger.warning("Using last-known-good VIX (rate-limited)")
+                return float(stale)
         except Exception as e:
             logger.error(f"Error fetching VIX: {e}")
-            return None
+            self._mark_fetch_miss("vix")
+
+        stale = self._get_cached("vix", allow_stale=True)
+        if stale is not None:
+            logger.warning("Using last-known-good VIX")
+            return float(stale)
+        return None
     
     def get_vix3m(self, track_estimation: bool = True) -> Optional[float]:
         """
@@ -145,6 +267,35 @@ class CBOECollector:
         Returns:
             VIX3M value or None
         """
+        cached = self._get_cached("vix3m")
+        if isinstance(cached, dict):
+            value = cached.get("value")
+            if value is not None:
+                if track_estimation and cached.get("estimated"):
+                    self._mark_estimated("vix3m", cached.get("reason", "Estimated value"))
+                return float(value)
+        elif cached is not None:
+            return float(cached)
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("vix3m", allow_stale=True)
+            if isinstance(stale, dict) and stale.get("value") is not None:
+                if track_estimation and stale.get("estimated"):
+                    self._mark_estimated("vix3m", stale.get("reason", "Estimated value"))
+                return float(stale["value"])
+            if stale is not None:
+                return float(stale)
+
+        if self._is_fetch_miss_recent("vix3m"):
+            stale = self._get_cached("vix3m", allow_stale=True)
+            if isinstance(stale, dict) and stale.get("value") is not None:
+                if track_estimation and stale.get("estimated"):
+                    self._mark_estimated("vix3m", stale.get("reason", "Estimated value"))
+                return float(stale["value"])
+            if stale is not None:
+                return float(stale)
+            return None
+
         try:
             # Try multiple possible tickers for VIX3M
             tickers_to_try = ["^VIX3M"]  # VXV delisted
@@ -156,6 +307,7 @@ class CBOECollector:
 
                     if not data.empty:
                         vix3m_value = float(data['Close'].iloc[-1])
+                        self._set_cached("vix3m", {"value": vix3m_value, "estimated": False})
                         logger.info(f"VIX3M (using {ticker_symbol}): {vix3m_value:.2f}")
                         return vix3m_value
                 except Exception as e:
@@ -176,13 +328,15 @@ class CBOECollector:
             vix = self.get_vix()
             if vix:
                 multiplier, regime = self._interpolate_vix3m_multiplier(vix)
+                reason = f"Estimated VIX × {multiplier:.3f} for {regime} (VIX={vix:.1f})"
 
                 estimated_vix3m = vix * multiplier
+                self._set_cached(
+                    "vix3m",
+                    {"value": estimated_vix3m, "estimated": True, "reason": reason}
+                )
                 if track_estimation:
-                    self._mark_estimated(
-                        'vix3m',
-                        f'Estimated VIX × {multiplier:.3f} for {regime} (VIX={vix:.1f})'
-                    )
+                    self._mark_estimated("vix3m", reason)
                 logger.warning(
                     f"VIX3M unavailable, using smooth estimate: {estimated_vix3m:.2f} "
                     f"(VIX={vix:.1f}, multiplier={multiplier:.3f}, regime={regime})"
@@ -190,46 +344,105 @@ class CBOECollector:
                 return estimated_vix3m
 
             logger.warning("No VIX3M data available from any source")
-            return None
-
+            self._mark_fetch_miss("vix3m")
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("vix3m")
         except Exception as e:
             logger.error(f"Error fetching VIX3M: {e}")
-            return None
+            self._mark_fetch_miss("vix3m")
+
+        stale = self._get_cached("vix3m", allow_stale=True)
+        if isinstance(stale, dict) and stale.get("value") is not None:
+            if track_estimation and stale.get("estimated"):
+                self._mark_estimated("vix3m", stale.get("reason", "Estimated value"))
+            logger.warning("Using last-known-good VIX3M")
+            return float(stale["value"])
+        if stale is not None:
+            logger.warning("Using last-known-good VIX3M")
+            return float(stale)
+        return None
     
     
     def get_vix9d(self) -> Optional[float]:
         """Get VIX9D (9-day implied volatility) from Yahoo Finance"""
+        cached = self._get_cached("vix9d")
+        if cached is not None:
+            return float(cached)
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("vix9d", allow_stale=True)
+            if stale is not None:
+                return float(stale)
+
+        if self._is_fetch_miss_recent("vix9d"):
+            stale = self._get_cached("vix9d", allow_stale=True)
+            return float(stale) if stale is not None else None
+
         try:
             vix9d = yf.Ticker('^VIX9D')
             data = vix9d.history(period='5d')
             
             if not data.empty:
                 value = float(data['Close'].iloc[-1])
+                self._set_cached("vix9d", value)
                 logger.info(f"VIX9D: {value:.2f}")
                 return value
             else:
                 logger.warning("VIX9D data unavailable")
-                return None
+                self._mark_fetch_miss("vix9d")
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("vix9d")
         except Exception as e:
             logger.error(f"Error fetching VIX9D: {e}")
-            return None
+            self._mark_fetch_miss("vix9d")
+
+        stale = self._get_cached("vix9d", allow_stale=True)
+        if stale is not None:
+            logger.warning("Using last-known-good VIX9D")
+            return float(stale)
+        return None
     
     def get_skew(self) -> Optional[float]:
         """Get CBOE SKEW Index (tail risk measure) from Yahoo Finance"""
+        cached = self._get_cached("skew")
+        if cached is not None:
+            return float(cached)
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("skew", allow_stale=True)
+            if stale is not None:
+                return float(stale)
+
+        if self._is_fetch_miss_recent("skew"):
+            stale = self._get_cached("skew", allow_stale=True)
+            return float(stale) if stale is not None else None
+
         try:
             skew = yf.Ticker('^SKEW')
             data = skew.history(period='5d')
             
             if not data.empty:
                 value = float(data['Close'].iloc[-1])
+                self._set_cached("skew", value)
                 logger.info(f"SKEW: {value:.2f}")
                 return value
             else:
                 logger.warning("SKEW data unavailable")
-                return None
+                self._mark_fetch_miss("skew")
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("skew")
         except Exception as e:
             logger.error(f"Error fetching SKEW: {e}")
-            return None
+            self._mark_fetch_miss("skew")
+
+        stale = self._get_cached("skew", allow_stale=True)
+        if stale is not None:
+            logger.warning("Using last-known-good SKEW")
+            return float(stale)
+        return None
     
 
     def get_vvix(self) -> Optional[float]:
@@ -248,20 +461,43 @@ class CBOECollector:
         When VVIX spikes > 120, dealers are scrambling for gamma protection.
         The subsequent mean reversion creates powerful vanna/charm tailwinds.
         """
+        cached = self._get_cached("vvix")
+        if cached is not None:
+            return float(cached)
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("vvix", allow_stale=True)
+            if stale is not None:
+                return float(stale)
+
+        if self._is_fetch_miss_recent("vvix"):
+            stale = self._get_cached("vvix", allow_stale=True)
+            return float(stale) if stale is not None else None
+
         try:
             vvix = yf.Ticker('^VVIX')
             data = vvix.history(period='5d')
 
             if not data.empty:
                 value = float(data['Close'].iloc[-1])
+                self._set_cached("vvix", value)
                 logger.info(f"VVIX: {value:.2f}")
                 return value
             else:
                 logger.warning("VVIX data unavailable")
-                return None
+                self._mark_fetch_miss("vvix")
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("vvix")
         except Exception as e:
             logger.error(f"Error fetching VVIX: {e}")
-            return None
+            self._mark_fetch_miss("vvix")
+
+        stale = self._get_cached("vvix", allow_stale=True)
+        if stale is not None:
+            logger.warning("Using last-known-good VVIX")
+            return float(stale)
+        return None
 
     def get_vvix_history(self, days: int = 90) -> pd.DataFrame:
         """Get historical VVIX data"""
@@ -530,11 +766,20 @@ class CBOECollector:
         Returns:
             CBOE Equity P/C ratio or None
         """
+        cached = self._get_cached("cboe_equity_pc")
+        if cached is not None:
+            return float(cached)
+
+        if self._is_fetch_miss_recent("cboe_equity_pc"):
+            stale = self._get_cached("cboe_equity_pc", allow_stale=True)
+            return float(stale) if stale is not None else None
+
         try:
             # Try CBOE website scrape (usually returns None - page uses JS)
             cboe_data = self._scrape_cboe_put_call()
             if cboe_data and cboe_data.get('equity_pc'):
                 value = cboe_data['equity_pc']
+                self._set_cached("cboe_equity_pc", value)
                 logger.info(f"CBOE Equity P/C (scraped): {value:.3f}")
                 return value
 
@@ -543,11 +788,16 @@ class CBOECollector:
             # - cdn.cboe.com CSVs ended in 2019
             # - Current data requires CBOE DataShop subscription
             logger.debug("CBOE PCCE not available via free sources - use manual input")
-            return None
+            self._mark_fetch_miss("cboe_equity_pc")
 
         except Exception as e:
             logger.debug(f"CBOE PCCE fetch failed: {e}")
-            return None
+            self._mark_fetch_miss("cboe_equity_pc")
+        stale = self._get_cached("cboe_equity_pc", allow_stale=True)
+        if stale is not None:
+            logger.warning("Using last-known-good CBOE Equity P/C")
+            return float(stale)
+        return None
 
     def get_spy_put_call_ratio(self) -> Optional[Dict]:
         """
@@ -563,6 +813,21 @@ class CBOECollector:
         Returns:
             Dict with volume_ratio, oi_ratio, put/call volumes and OI
         """
+        cached = self._get_cached("spy_put_call_ratio")
+        if isinstance(cached, dict):
+            return cached if cached.get("ratio") else None
+
+        if self._rate_limited_recently():
+            stale = self._get_cached("spy_put_call_ratio", allow_stale=True)
+            if isinstance(stale, dict):
+                return stale if stale.get("ratio") else None
+
+        if self._is_fetch_miss_recent("spy_put_call_ratio"):
+            stale = self._get_cached("spy_put_call_ratio", allow_stale=True)
+            if isinstance(stale, dict):
+                return stale if stale.get("ratio") else None
+            return None
+
         try:
             spy = yf.Ticker("SPY")
             options_dates = spy.options
@@ -611,11 +876,24 @@ class CBOECollector:
             # Set 'ratio' to volume-based (CBOE-comparable) or fallback to OI
             result['ratio'] = result.get('volume_ratio') or result.get('oi_ratio')
 
+            self._set_cached("spy_put_call_ratio", result)
             return result if result.get('ratio') else None
 
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("spy_put_call_ratio")
+            stale = self._get_cached("spy_put_call_ratio", allow_stale=True)
+            if isinstance(stale, dict):
+                logger.warning("Using last-known-good SPY put/call ratio")
+                return stale if stale.get("ratio") else None
         except Exception as e:
             logger.debug(f"SPY options chain failed: {e}")
-            return None
+            self._mark_fetch_miss("spy_put_call_ratio")
+        stale = self._get_cached("spy_put_call_ratio", allow_stale=True)
+        if isinstance(stale, dict):
+            logger.warning("Using last-known-good SPY put/call ratio")
+            return stale if stale.get("ratio") else None
+        return None
 
     def get_equity_put_call_ratio(self) -> Optional[float]:
         """

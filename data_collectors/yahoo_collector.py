@@ -12,6 +12,9 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Callable, Any
 import time
 import logging
+import json
+import threading
+from pathlib import Path
 from functools import wraps
 from yfinance.exceptions import YFRateLimitError
 
@@ -95,7 +98,11 @@ def with_retry(func: Callable) -> Callable:
 class YahooCollector:
     """Collects market data from Yahoo Finance with robust error handling"""
     _CACHE: Dict[str, Dict[str, Any]] = {}
+    _MISS_CACHE: Dict[str, float] = {}
     _LAST_RATE_LIMIT_AT: Optional[float] = None
+    _CACHE_LOCK = threading.Lock()
+    _LKG_LOCK = threading.Lock()
+    _LKG_PATH = Path(__file__).resolve().parents[1] / "data" / "cache" / "yahoo_lkg.json"
     
     def __init__(self, retry_config: RetryConfig = None, cache_ttl_seconds: int = 300):
         """
@@ -112,28 +119,87 @@ class YahooCollector:
         )
         self.cache_ttl_seconds = cache_ttl_seconds
         self.stale_ttl_seconds = 3600  # allow stale for 1 hour on errors
+        self.persistent_ttl_seconds = 86400  # 24h last-known-good fallback window
         self.rate_limit_cooldown_seconds = 180  # short cooldown after rate limit
 
-    def _get_cached(self, key: str, allow_stale: bool = False):
-        entry = self._CACHE.get(key)
-        if not entry:
+    def _load_lkg_store(self) -> Dict[str, Any]:
+        try:
+            if not self._LKG_PATH.exists():
+                return {}
+            with self._LKG_PATH.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.debug(f"Could not read Yahoo LKG store: {e}")
+            return {}
+
+    def _save_lkg_store(self, store: Dict[str, Any]):
+        try:
+            self._LKG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._LKG_PATH.with_suffix(".tmp")
+            with tmp_path.open("w", encoding="utf-8") as f:
+                json.dump(store, f)
+            tmp_path.replace(self._LKG_PATH)
+        except Exception as e:
+            logger.debug(f"Could not write Yahoo LKG store: {e}")
+
+    def _get_persisted(self, key: str, allow_stale: bool = False):
+        ttl = self.persistent_ttl_seconds if allow_stale else self.cache_ttl_seconds
+        with self._LKG_LOCK:
+            store = self._load_lkg_store()
+            entry = store.get(key)
+            if not isinstance(entry, dict):
+                return None
+            ts = entry.get("ts")
+            value = entry.get("value")
+            try:
+                age = time.time() - float(ts)
+            except (TypeError, ValueError):
+                return None
+            if age <= ttl:
+                return value
             return None
+
+    def _get_cached(self, key: str, allow_stale: bool = False):
+        with self._CACHE_LOCK:
+            entry = self._CACHE.get(key)
+        if not entry:
+            return self._get_persisted(key, allow_stale=allow_stale)
         age = time.time() - entry["ts"]
         if age <= self.cache_ttl_seconds:
             return entry["value"]
         if allow_stale and age <= self.stale_ttl_seconds:
             return entry["value"]
-        return None
+        return self._get_persisted(key, allow_stale=allow_stale)
 
     def _set_cached(self, key: str, value: Any):
         if value is None:
             return
-        self._CACHE[key] = {"ts": time.time(), "value": value}
+        ts = time.time()
+        with self._CACHE_LOCK:
+            self._CACHE[key] = {"ts": ts, "value": value}
+            self._MISS_CACHE.pop(key, None)
+        with self._LKG_LOCK:
+            store = self._load_lkg_store()
+            store[key] = {"ts": ts, "value": value}
+            self._save_lkg_store(store)
+
+    def _mark_fetch_miss(self, key: str):
+        with self._CACHE_LOCK:
+            self._MISS_CACHE[key] = time.time()
+
+    def _is_fetch_miss_recent(self, key: str, cooldown_seconds: int = 60) -> bool:
+        with self._CACHE_LOCK:
+            ts = self._MISS_CACHE.get(key)
+        if ts is None:
+            return False
+        return (time.time() - ts) < cooldown_seconds
 
     def _rate_limited_recently(self) -> bool:
-        if self._LAST_RATE_LIMIT_AT is None:
+        last_rate_limit_at = type(self)._LAST_RATE_LIMIT_AT
+        if last_rate_limit_at is None:
             return False
-        return (time.time() - self._LAST_RATE_LIMIT_AT) < self.rate_limit_cooldown_seconds
+        return (time.time() - last_rate_limit_at) < self.rate_limit_cooldown_seconds
     
     @with_retry
     def get_vix(self) -> Optional[float]:
@@ -146,6 +212,10 @@ class YahooCollector:
             stale = self._get_cached("vix", allow_stale=True)
             if stale is not None:
                 return stale
+
+        if self._is_fetch_miss_recent("vix"):
+            stale = self._get_cached("vix", allow_stale=True)
+            return stale
 
         # Apply centralized rate limiting
         if YAHOO_LIMITER:
@@ -162,8 +232,16 @@ class YahooCollector:
             
             raise ValueError("VIX data is empty")
         except YFRateLimitError:
-            self._LAST_RATE_LIMIT_AT = time.time()
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("vix")
             stale = self._get_cached("vix", allow_stale=True)
+            return stale
+        except Exception as e:
+            logger.error(f"Error fetching VIX from Yahoo: {e}")
+            self._mark_fetch_miss("vix")
+            stale = self._get_cached("vix", allow_stale=True)
+            if stale is not None:
+                logger.warning("Using last-known-good VIX value")
             return stale
     
     @with_retry
@@ -228,6 +306,10 @@ class YahooCollector:
             if stale is not None:
                 return stale
 
+        if self._is_fetch_miss_recent("market_breadth_proxy"):
+            stale = self._get_cached("market_breadth_proxy", allow_stale=True)
+            return stale
+
         try:
             for ticker in sectors.keys():
                 try:
@@ -242,7 +324,8 @@ class YahooCollector:
                     logger.debug(f"Error fetching {ticker} for breadth: {e}")
                     continue
         except YFRateLimitError:
-            self._LAST_RATE_LIMIT_AT = time.time()
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("market_breadth_proxy")
             stale = self._get_cached("market_breadth_proxy", allow_stale=True)
             return stale
         
@@ -250,7 +333,12 @@ class YahooCollector:
             value = advancing / total
             self._set_cached("market_breadth_proxy", value)
             return value
-        
+
+        stale = self._get_cached("market_breadth_proxy", allow_stale=True)
+        if stale is not None:
+            logger.warning("Using last-known-good market breadth proxy")
+            return stale
+        self._mark_fetch_miss("market_breadth_proxy")
         raise ValueError("No sector ETF data available for breadth calculation")
     
     @with_retry
@@ -267,6 +355,10 @@ class YahooCollector:
             stale = self._get_cached("put_call_proxy", allow_stale=True)
             if stale is not None:
                 return stale
+
+        if self._is_fetch_miss_recent("put_call_proxy"):
+            stale = self._get_cached("put_call_proxy", allow_stale=True)
+            return stale
 
         try:
             spy = yf.Ticker("SPY")
@@ -295,12 +387,17 @@ class YahooCollector:
                 return None
                 
         except YFRateLimitError:
-            self._LAST_RATE_LIMIT_AT = time.time()
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("put_call_proxy")
             stale = self._get_cached("put_call_proxy", allow_stale=True)
             return stale
         except Exception as e:
             logger.error(f"Error calculating SPY P/C ratio: {e}")
-            return None
+            self._mark_fetch_miss("put_call_proxy")
+            stale = self._get_cached("put_call_proxy", allow_stale=True)
+            if stale is not None:
+                logger.warning("Using last-known-good SPY put/call ratio")
+            return stale
 
 
     def get_all_data(self) -> Dict:
@@ -341,6 +438,10 @@ class YahooCollector:
             if stale is not None:
                 return stale
 
+        if self._is_fetch_miss_recent("treasury_10y"):
+            stale = self._get_cached("treasury_10y", allow_stale=True)
+            return stale
+
         try:
             tnx = yf.Ticker("^TNX")
             data = tnx.history(period="5d")
@@ -356,12 +457,17 @@ class YahooCollector:
             return None
 
         except YFRateLimitError:
-            self._LAST_RATE_LIMIT_AT = time.time()
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("treasury_10y")
             stale = self._get_cached("treasury_10y", allow_stale=True)
             return stale
         except Exception as e:
             logger.error(f"Error fetching 10Y Treasury: {e}")
-            return None
+            self._mark_fetch_miss("treasury_10y")
+            stale = self._get_cached("treasury_10y", allow_stale=True)
+            if stale is not None:
+                logger.warning("Using last-known-good 10Y Treasury value")
+            return stale
 
     @with_retry
     def get_hy_spread_proxy(self) -> Optional[float]:
@@ -387,6 +493,10 @@ class YahooCollector:
             stale = self._get_cached("hy_spread_proxy", allow_stale=True)
             if stale is not None:
                 return stale
+
+        if self._is_fetch_miss_recent("hy_spread_proxy"):
+            stale = self._get_cached("hy_spread_proxy", allow_stale=True)
+            return stale
 
         try:
             # HYG - iShares iBoxx High Yield Corporate Bond ETF
@@ -426,12 +536,17 @@ class YahooCollector:
             return None
 
         except YFRateLimitError:
-            self._LAST_RATE_LIMIT_AT = time.time()
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("hy_spread_proxy")
             stale = self._get_cached("hy_spread_proxy", allow_stale=True)
             return stale
         except Exception as e:
             logger.error(f"Error calculating HY spread proxy: {e}")
-            return None
+            self._mark_fetch_miss("hy_spread_proxy")
+            stale = self._get_cached("hy_spread_proxy", allow_stale=True)
+            if stale is not None:
+                logger.warning("Using last-known-good HY spread proxy")
+            return stale
 
     @with_retry
     def get_credit_etf_flows(self) -> Optional[Dict]:
@@ -456,84 +571,102 @@ class YahooCollector:
             if stale is not None:
                 return stale
 
-        hyg = yf.Ticker("HYG")
-        lqd = yf.Ticker("LQD")
+        if self._is_fetch_miss_recent("credit_etf_flows"):
+            stale = self._get_cached("credit_etf_flows", allow_stale=True)
+            return stale
 
-        # Get 30 days for trend analysis
-        hyg_data = hyg.history(period="1mo")
-        lqd_data = lqd.history(period="1mo")
+        try:
+            hyg = yf.Ticker("HYG")
+            lqd = yf.Ticker("LQD")
 
-        if hyg_data.empty or lqd_data.empty:
-            raise ValueError("Credit ETF data is empty")
+            # Get 30 days for trend analysis
+            hyg_data = hyg.history(period="1mo")
+            lqd_data = lqd.history(period="1mo")
 
-        # Current prices
-        hyg_price = float(hyg_data['Close'].iloc[-1])
-        lqd_price = float(lqd_data['Close'].iloc[-1])
+            if hyg_data.empty or lqd_data.empty:
+                raise ValueError("Credit ETF data is empty")
 
-        # HYG/LQD ratio (higher = more risk appetite)
-        ratio = hyg_price / lqd_price
+            # Current prices
+            hyg_price = float(hyg_data['Close'].iloc[-1])
+            lqd_price = float(lqd_data['Close'].iloc[-1])
 
-        # Calculate 1-day, 5-day, and 20-day performance
-        def calc_return(data, days):
-            if len(data) > days:
-                return (data['Close'].iloc[-1] / data['Close'].iloc[-days-1] - 1) * 100
-            return None
+            # HYG/LQD ratio (higher = more risk appetite)
+            ratio = hyg_price / lqd_price
 
-        hyg_1d = calc_return(hyg_data, 1)
-        hyg_5d = calc_return(hyg_data, 5)
-        hyg_20d = calc_return(hyg_data, 20)
+            # Calculate 1-day, 5-day, and 20-day performance
+            def calc_return(data, days):
+                if len(data) > days:
+                    return (data['Close'].iloc[-1] / data['Close'].iloc[-days-1] - 1) * 100
+                return None
 
-        lqd_1d = calc_return(lqd_data, 1)
-        lqd_5d = calc_return(lqd_data, 5)
-        lqd_20d = calc_return(lqd_data, 20)
+            hyg_1d = calc_return(hyg_data, 1)
+            hyg_5d = calc_return(hyg_data, 5)
+            hyg_20d = calc_return(hyg_data, 20)
 
-        # Relative performance (HYG - LQD)
-        rel_1d = (hyg_1d - lqd_1d) if hyg_1d and lqd_1d else None
-        rel_5d = (hyg_5d - lqd_5d) if hyg_5d and lqd_5d else None
-        rel_20d = (hyg_20d - lqd_20d) if hyg_20d and lqd_20d else None
+            lqd_1d = calc_return(lqd_data, 1)
+            lqd_5d = calc_return(lqd_data, 5)
+            lqd_20d = calc_return(lqd_data, 20)
 
-        # 20-day ratio trend
-        if len(hyg_data) >= 20 and len(lqd_data) >= 20:
-            ratio_20d_ago = float(hyg_data['Close'].iloc[-20]) / float(lqd_data['Close'].iloc[-20])
-            ratio_change = ((ratio / ratio_20d_ago) - 1) * 100
-        else:
-            ratio_change = None
+            # Relative performance (HYG - LQD)
+            rel_1d = (hyg_1d - lqd_1d) if hyg_1d and lqd_1d else None
+            rel_5d = (hyg_5d - lqd_5d) if hyg_5d and lqd_5d else None
+            rel_20d = (hyg_20d - lqd_20d) if hyg_20d and lqd_20d else None
 
-        # Signal interpretation
-        if rel_5d is not None:
-            if rel_5d > 0.5:
-                signal = "RISK_ON"
-                description = "HYG outperforming - credit risk appetite strong"
-            elif rel_5d < -0.5:
-                signal = "RISK_OFF"
-                description = "LQD outperforming - flight to quality"
+            # 20-day ratio trend
+            if len(hyg_data) >= 20 and len(lqd_data) >= 20:
+                ratio_20d_ago = float(hyg_data['Close'].iloc[-20]) / float(lqd_data['Close'].iloc[-20])
+                ratio_change = ((ratio / ratio_20d_ago) - 1) * 100
             else:
-                signal = "NEUTRAL"
-                description = "Credit sentiment balanced"
-        else:
-            signal = "UNKNOWN"
-            description = "Insufficient data"
+                ratio_change = None
 
-        result = {
-            'hyg_price': hyg_price,
-            'lqd_price': lqd_price,
-            'hyg_lqd_ratio': round(ratio, 4),
-            'hyg_1d_pct': round(hyg_1d, 2) if hyg_1d else None,
-            'hyg_5d_pct': round(hyg_5d, 2) if hyg_5d else None,
-            'hyg_20d_pct': round(hyg_20d, 2) if hyg_20d else None,
-            'lqd_1d_pct': round(lqd_1d, 2) if lqd_1d else None,
-            'lqd_5d_pct': round(lqd_5d, 2) if lqd_5d else None,
-            'lqd_20d_pct': round(lqd_20d, 2) if lqd_20d else None,
-            'relative_1d': round(rel_1d, 2) if rel_1d else None,
-            'relative_5d': round(rel_5d, 2) if rel_5d else None,
-            'relative_20d': round(rel_20d, 2) if rel_20d else None,
-            'ratio_20d_change_pct': round(ratio_change, 2) if ratio_change else None,
-            'signal': signal,
-            'description': description,
-            'timestamp': datetime.now().isoformat()
-        }
-        self._set_cached("credit_etf_flows", result)
-        return result
+            # Signal interpretation
+            if rel_5d is not None:
+                if rel_5d > 0.5:
+                    signal = "RISK_ON"
+                    description = "HYG outperforming - credit risk appetite strong"
+                elif rel_5d < -0.5:
+                    signal = "RISK_OFF"
+                    description = "LQD outperforming - flight to quality"
+                else:
+                    signal = "NEUTRAL"
+                    description = "Credit sentiment balanced"
+            else:
+                signal = "UNKNOWN"
+                description = "Insufficient data"
+
+            result = {
+                'hyg_price': hyg_price,
+                'lqd_price': lqd_price,
+                'hyg_lqd_ratio': round(ratio, 4),
+                'hyg_1d_pct': round(hyg_1d, 2) if hyg_1d else None,
+                'hyg_5d_pct': round(hyg_5d, 2) if hyg_5d else None,
+                'hyg_20d_pct': round(hyg_20d, 2) if hyg_20d else None,
+                'lqd_1d_pct': round(lqd_1d, 2) if lqd_1d else None,
+                'lqd_5d_pct': round(lqd_5d, 2) if lqd_5d else None,
+                'lqd_20d_pct': round(lqd_20d, 2) if lqd_20d else None,
+                'relative_1d': round(rel_1d, 2) if rel_1d else None,
+                'relative_5d': round(rel_5d, 2) if rel_5d else None,
+                'relative_20d': round(rel_20d, 2) if rel_20d else None,
+                'ratio_20d_change_pct': round(ratio_change, 2) if ratio_change else None,
+                'signal': signal,
+                'description': description,
+                'timestamp': datetime.now().isoformat()
+            }
+            self._set_cached("credit_etf_flows", result)
+            return result
+
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss("credit_etf_flows")
+            stale = self._get_cached("credit_etf_flows", allow_stale=True)
+            return stale
+        except Exception as e:
+            logger.error(f"Error fetching credit ETF flow data: {e}")
+            self._mark_fetch_miss("credit_etf_flows")
+            stale = self._get_cached("credit_etf_flows", allow_stale=True)
+            if stale is not None:
+                logger.warning("Using last-known-good credit ETF flow data")
+            return stale
 
     def get_health_check(self) -> Dict:
         """

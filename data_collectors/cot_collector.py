@@ -30,6 +30,8 @@ from typing import Dict, Optional, List
 from io import StringIO
 from dotenv import load_dotenv
 import re
+import json
+from pathlib import Path
 
 # Try to import cot_reports library
 try:
@@ -130,9 +132,14 @@ class COTCollector:
             )
 
         self.logger = logging.getLogger(__name__)
-        self._cache = {}
-        self._cache_time = None
-        self._cache_ttl = timedelta(hours=6)  # Cache for 6 hours (data is weekly)
+        self._cache: Dict[str, Dict[str, object]] = {}
+        self._cache_ttl = timedelta(hours=6)  # Fresh cache window
+        self._persistent_ttl = timedelta(days=14)  # LKG fallback window
+        self._cache_dir = Path(__file__).resolve().parents[1] / "data" / "cache" / "cot"
+        try:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            self.logger.debug(f"Could not create COT cache directory: {e}")
         self._quandl_disabled_until: Optional[datetime] = None
 
     def _is_quandl_enabled(self) -> bool:
@@ -175,6 +182,80 @@ class COTCollector:
                 df = df.rename(columns={col: target})
         return df
 
+    def _cache_file(self, symbol: str) -> Path:
+        return self._cache_dir / f"{symbol.lower()}_lkg.json"
+
+    def _slice_weeks(self, df: pd.DataFrame, weeks_back: int) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        sliced = df.sort_values("date").tail(weeks_back).copy()
+        return sliced.reset_index(drop=True)
+
+    def _get_cached_df(self, symbol: str, weeks_back: int, allow_stale: bool = False) -> Optional[pd.DataFrame]:
+        entry = self._cache.get(symbol)
+        if not entry:
+            return None
+        ts = entry.get("ts")
+        df = entry.get("df")
+        if not isinstance(ts, datetime) or not isinstance(df, pd.DataFrame) or df.empty:
+            return None
+        age = datetime.now() - ts
+        if age <= self._cache_ttl or allow_stale:
+            return self._slice_weeks(df, weeks_back)
+        return None
+
+    def _set_cached_df(self, symbol: str, df: pd.DataFrame):
+        if df is None or df.empty:
+            return
+        self._cache[symbol] = {"ts": datetime.now(), "df": df.copy()}
+
+    def _save_persisted_df(self, symbol: str, df: pd.DataFrame):
+        if df is None or df.empty:
+            return
+        try:
+            payload_df = df.copy()
+            if "date" in payload_df.columns:
+                payload_df["date"] = pd.to_datetime(payload_df["date"]).dt.strftime("%Y-%m-%d")
+            rows = json.loads(payload_df.to_json(orient="records"))
+            payload = {
+                "saved_at": datetime.now().isoformat(),
+                "rows": rows,
+            }
+            path = self._cache_file(symbol)
+            tmp_path = path.with_suffix(".tmp")
+            with tmp_path.open("w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            tmp_path.replace(path)
+        except Exception as e:
+            self.logger.debug(f"Could not persist COT LKG for {symbol}: {e}")
+
+    def _load_persisted_df(self, symbol: str, weeks_back: int) -> Optional[pd.DataFrame]:
+        try:
+            path = self._cache_file(symbol)
+            if not path.exists():
+                return None
+            with path.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if not isinstance(payload, dict):
+                return None
+            saved_at = payload.get("saved_at")
+            rows = payload.get("rows")
+            if not saved_at or not isinstance(rows, list) or len(rows) == 0:
+                return None
+            saved_at_dt = datetime.fromisoformat(saved_at)
+            if datetime.now() - saved_at_dt > self._persistent_ttl:
+                return None
+            df = pd.DataFrame(rows)
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.dropna(subset=["date"])
+            if df.empty:
+                return None
+            return self._slice_weeks(df, weeks_back)
+        except Exception as e:
+            self.logger.debug(f"Could not load COT LKG for {symbol}: {e}")
+            return None
+
     def fetch_cot_data(self, symbol: str, weeks_back: int = 52) -> Optional[pd.DataFrame]:
         """
         Fetch COT data for a specific contract.
@@ -191,27 +272,50 @@ class COTCollector:
             return None
 
         contract = self.CONTRACTS[symbol]
+        cached_df = self._get_cached_df(symbol, weeks_back)
+        if cached_df is not None and not cached_df.empty:
+            return cached_df
 
         try:
             # Method 1: Try cot_reports library first (most reliable)
             if COT_LIBRARY_AVAILABLE:
                 df = self._fetch_from_cot_library(contract, weeks_back)
                 if df is not None and not df.empty:
-                    return df
+                    self._set_cached_df(symbol, df)
+                    self._save_persisted_df(symbol, df)
+                    return self._slice_weeks(df, weeks_back)
 
             # Method 2: Try Quandl/Nasdaq Data Link if API key provided
             if self.api_key and self._is_quandl_enabled():
                 df = self._fetch_from_quandl(contract['quandl_code'], weeks_back)
                 if df is not None and not df.empty:
-                    return df
+                    self._set_cached_df(symbol, df)
+                    self._save_persisted_df(symbol, df)
+                    return self._slice_weeks(df, weeks_back)
 
             # Method 3: Fallback to CFTC direct (CSV)
             df = self._fetch_from_cftc_csv(contract['cftc_code'], weeks_back)
-            return df
+            if df is not None and not df.empty:
+                self._set_cached_df(symbol, df)
+                self._save_persisted_df(symbol, df)
+                return self._slice_weeks(df, weeks_back)
 
         except Exception as e:
             self.logger.error(f"Error fetching COT data for {symbol}: {e}")
-            return None
+
+        # Fallback chain: stale in-memory cache, then last-known-good on disk
+        stale_df = self._get_cached_df(symbol, weeks_back, allow_stale=True)
+        if stale_df is not None and not stale_df.empty:
+            self.logger.warning(f"Using stale in-memory COT cache for {symbol}")
+            return stale_df
+
+        persisted_df = self._load_persisted_df(symbol, weeks_back)
+        if persisted_df is not None and not persisted_df.empty:
+            self.logger.warning(f"Using last-known-good persisted COT data for {symbol}")
+            self._set_cached_df(symbol, persisted_df)
+            return persisted_df
+
+        return None
 
     def _fetch_from_cot_library(self, contract: Dict, weeks_back: int) -> Optional[pd.DataFrame]:
         """

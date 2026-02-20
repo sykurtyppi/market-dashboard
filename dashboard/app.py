@@ -1486,7 +1486,7 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
             # User has entered manual CBOE PCCE
             st.metric("CBOE Equity P/C", f"{manual_pcce_value:.3f}",
                       help="Manual PCCE from trading platform (all equity options)")
-            status_tracker.update("cboe_equity_pc", DataStatus.FRESH, age_hours=0.0)
+            status_tracker.update("cboe_equity_pc", DataStatus.OK, age_hours=0.0)
             data_source_caption(col3, "Manual input", "user-provided")
             st.caption(f"✏️ Manual ({manual_pcce_date or 'Today'})")
 
