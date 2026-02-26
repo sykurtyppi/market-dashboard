@@ -3109,13 +3109,31 @@ elif page == "Sectors & VIX":
                 )
             )
 
-            # Calculate contango/backwardation
-            front = vix_term["VIX Level"].iloc[0]
-            back = vix_term["VIX Level"].iloc[-1]
-            spread = back - front
-            spread_pct = (spread / front) * 100 if front > 0 else 0
+            # Use VIX3M vs VIX as the primary contango definition.
+            # This matches the core dashboard methodology and avoids
+            # misleading "front/back" values when 1D and 1Y are present.
+            level_map = {row["Maturity"]: float(row["VIX Level"]) for _, row in vix_term.iterrows()}
+            vix_spot_level = level_map.get("VIX")
+            vix3m_level = level_map.get("3M")
 
-            if back > front:
+            if (
+                vix_spot_level is not None
+                and vix3m_level is not None
+                and vix_spot_level > 0
+            ):
+                spread = vix3m_level - vix_spot_level
+                spread_pct = (spread / vix_spot_level) * 100
+                spread_label = "VIX3M - VIX"
+                spread_basis = "based on VIX3M vs spot VIX"
+            else:
+                front = float(vix_term["VIX Level"].iloc[0])
+                back = float(vix_term["VIX Level"].iloc[-1])
+                spread = back - front
+                spread_pct = (spread / front) * 100 if front > 0 else 0
+                spread_label = "Back - Front"
+                spread_basis = "fallback: first vs last curve point"
+
+            if spread > 0:
                 contango_text = "Contango"
                 structure_desc = "bullish - normal market conditions"
                 color = "green"
@@ -3132,7 +3150,7 @@ elif page == "Sectors & VIX":
                 hovermode="x unified",
                 annotations=[
                     dict(
-                        text=f"{contango_text}: {structure_desc}",
+                        text=f"{contango_text}: {structure_desc} ({spread_basis})",
                         x=0.5,
                         y=1.08,
                         xref="paper",
@@ -3148,12 +3166,26 @@ elif page == "Sectors & VIX":
             # Show summary metrics
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Front (Short-term)", f"{front:.2f}")
+                st.metric(
+                    "VIX Spot (30D)",
+                    f"{vix_spot_level:.2f}" if vix_spot_level is not None else "N/A",
+                )
             with col2:
-                st.metric("Back (Long-term)", f"{back:.2f}")
+                st.metric(
+                    "VIX 3M (90D)",
+                    f"{vix3m_level:.2f}" if vix3m_level is not None else "N/A",
+                )
             with col3:
                 delta_color = "normal" if spread > 0 else "inverse"
-                st.metric("Spread", f"{spread:+.2f}", delta=f"{spread_pct:+.1f}%", delta_color=delta_color)
+                st.metric(
+                    spread_label,
+                    f"{spread:+.2f}",
+                    delta=f"{spread_pct:+.1f}%",
+                    delta_color=delta_color,
+                )
+
+            if vix_spot_level is None or vix3m_level is None:
+                st.caption("Contango uses fallback curve slope because VIX or VIX3M is unavailable.")
         else:
             st.warning("VIX term structure data unavailable. Unable to fetch VIX indices.")
 
