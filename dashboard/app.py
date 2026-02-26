@@ -1009,6 +1009,10 @@ def render_api_settings_lock() -> bool:
 
     settings_password = get_secret("SETTINGS_PAGE_PASSWORD")
 
+    # Defer clearing widget-bound state to a new rerun before widget instantiation.
+    if st.session_state.pop("clear_api_settings_password", False):
+        st.session_state["api_settings_password_input"] = ""
+
     # No password configured: keep behavior open, but surface a reminder.
     if not settings_password:
         st.info(
@@ -1037,7 +1041,7 @@ def render_api_settings_lock() -> bool:
     if st.button("Unlock API Settings", key="unlock_api_settings_btn"):
         if entered and hmac.compare_digest(entered, settings_password):
             st.session_state["api_settings_unlocked"] = True
-            st.session_state["api_settings_password_input"] = ""
+            st.session_state["clear_api_settings_password"] = True
             st.rerun()
         else:
             st.error("Incorrect password.")
