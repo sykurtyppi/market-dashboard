@@ -265,6 +265,20 @@ class OptionsFlowCollector:
         self._cache_time = {}
         self._cache_ttl = 120  # 2 minute cache
 
+    def _get_cached_value(self, key: str):
+        """Return a cached value if still within TTL."""
+        cached_at = self._cache_time.get(key)
+        if not cached_at:
+            return None
+        if (datetime.now() - cached_at).total_seconds() > self._cache_ttl:
+            return None
+        return self._cache.get(key)
+
+    def _set_cached_value(self, key: str, value):
+        """Store value in short-lived cache."""
+        self._cache[key] = value
+        self._cache_time[key] = datetime.now()
+
     def _get_ticker_category(self, ticker: str) -> str:
         """Get category for a ticker"""
         for category, tickers in SCAN_TICKERS.items():
@@ -859,6 +873,11 @@ class OptionsFlowCollector:
         Returns:
             Dict with unusual activity, market sentiment, and straddle signals
         """
+        cache_key = "options_flow_summary"
+        cached = self._get_cached_value(cache_key)
+        if cached is not None:
+            return cached
+
         # Get market status for context
         market_status = get_market_status()
 
@@ -904,7 +923,7 @@ class OptionsFlowCollector:
             freshness_msg = f"Data from {market_status['last_trading_day']} market close"
             freshness_color = '#FF9800'
 
-        return {
+        result = {
             'unusual_activity': unusual[:15],  # Top 15
             'total_unusual_count': len(unusual),
             'unique_tickers': len(unique_tickers),
@@ -925,6 +944,8 @@ class OptionsFlowCollector:
             'freshness_color': freshness_color,
             'data_note': 'Yahoo Finance options data (15-20 min delay). Excludes expired 0DTE options.',
         }
+        self._set_cached_value(cache_key, result)
+        return result
 
     def get_ticker_flow(self, ticker: str) -> Dict:
         """Get detailed options flow for a specific ticker"""

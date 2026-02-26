@@ -1987,7 +1987,8 @@ elif page == "Sentiment":
         
         # Check for manual override
         use_manual = st.session_state.get('use_manual_equity_pc', False)
-        
+        total_pc = None
+
         if use_manual:
             equity_pc = st.session_state.get('manual_equity_pc', 1.0)
             st.info(f"📝 Using manual equity P/C ratio: {equity_pc:.3f}")
@@ -6114,18 +6115,25 @@ elif page == "Options Flow":
                         activity = unusual[i + j]
                         ticker = activity.get('ticker', '')
                         opt_type = activity.get('type', '')
-                        strike = activity.get('strike', 0)
+                        strike = activity.get('strike')
                         expiry = activity.get('expiry', '')
                         dte_label = activity.get('dte_label', '')
-                        volume = activity.get('volume', 0)
-                        oi = activity.get('open_interest', 0)
-                        vol_oi = activity.get('vol_oi_ratio', 0)
+                        volume = activity.get('volume') or 0
+                        oi = activity.get('open_interest') or 0
+                        vol_oi = activity.get('vol_oi_ratio')
                         signal = activity.get('signal', '')
                         sentiment = activity.get('sentiment', '')
                         score = activity.get('score', 0)
-                        premium = activity.get('premium_value', 0)
+                        premium = activity.get('premium_value') or 0
                         stock_price = activity.get('stock_price', 0)
-                        moneyness = activity.get('moneyness_pct', 0)
+                        moneyness = activity.get('moneyness_pct')
+
+                        if strike is None or pd.isna(strike):
+                            strike = 0
+                        if vol_oi is None or pd.isna(vol_oi):
+                            vol_oi = 0
+                        if moneyness is None or pd.isna(moneyness):
+                            moneyness = 0
 
                         # Colors and emojis
                         if sentiment == 'BULLISH':

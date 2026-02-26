@@ -1,4 +1,8 @@
-elif page == "Repo Market (SOFR)":
+def render_repo_market_replacement(page, st, components, logger, get_status_color, pd, go):
+    """Legacy Repo Market page snippet retained as a callable helper."""
+    if page != "Repo Market (SOFR)":
+        return
+
     st.markdown(
         "<h1 class='main-header'>💰 Repo Market & Liquidity Stress</h1>",
         unsafe_allow_html=True,
