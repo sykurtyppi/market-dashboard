@@ -31,6 +31,7 @@ git push -u origin main
 ```toml
 FRED_API_KEY = "your_actual_fred_key_here"
 NASDAQ_DATA_LINK_KEY = "your_actual_nasdaq_key_here"
+SETTINGS_PAGE_PASSWORD = "your_settings_password"
 ```
 
 4. Click **"Save"**

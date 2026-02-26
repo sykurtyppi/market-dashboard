@@ -43,6 +43,7 @@ Main app entry:
 ## Public Release Checklist
 - Keep `.streamlit/secrets.toml` local only (already gitignored)
 - Use `.streamlit/secrets.toml.example` for collaborators
+- Optional: set `SETTINGS_PAGE_PASSWORD` in secrets to lock API settings
 - Confirm tests pass before each push:
 ```bash
 pytest -q
@@ -59,4 +60,3 @@ Licensed under GNU AGPL v3. See:
 
 ## Source
 - [https://github.com/sykurtyppi/market-dashboard](https://github.com/sykurtyppi/market-dashboard)
-

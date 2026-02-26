@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 import sys
 from pathlib import Path
 import os
+import hmac
 import yfinance as yf
 import logging
 
@@ -994,6 +995,54 @@ def save_to_env(key: str, value: str):
     else:
         with open(env_path, 'w') as f:
             f.write(f'{key}={value}\n')
+
+
+def render_api_settings_lock() -> bool:
+    """
+    Protect API key settings behind a password.
+
+    Password source (in order):
+    - Streamlit secrets: SETTINGS_PAGE_PASSWORD
+    - Environment variable: SETTINGS_PAGE_PASSWORD
+    """
+    from utils.secrets_helper import get_secret
+
+    settings_password = get_secret("SETTINGS_PAGE_PASSWORD")
+
+    # No password configured: keep behavior open, but surface a reminder.
+    if not settings_password:
+        st.info(
+            "API settings are currently open. "
+            "Set `SETTINGS_PAGE_PASSWORD` in Streamlit Secrets to lock this section."
+        )
+        return True
+
+    if st.session_state.get("api_settings_unlocked", False):
+        col_info, col_action = st.columns([4, 1])
+        with col_info:
+            st.success("API settings are unlocked for this session.")
+        with col_action:
+            if st.button("Lock", key="lock_api_settings_btn"):
+                st.session_state["api_settings_unlocked"] = False
+                st.rerun()
+        return True
+
+    st.warning("API settings are locked.")
+    entered = st.text_input(
+        "Enter API settings password",
+        type="password",
+        key="api_settings_password_input",
+    )
+
+    if st.button("Unlock API Settings", key="unlock_api_settings_btn"):
+        if entered and hmac.compare_digest(entered, settings_password):
+            st.session_state["api_settings_unlocked"] = True
+            st.session_state["api_settings_password_input"] = ""
+            st.rerun()
+        else:
+            st.error("Incorrect password.")
+
+    return False
 
 
 
@@ -6318,110 +6367,115 @@ elif page == "Settings":
     
     # API Keys Section
     st.subheader(" API Keys")
-    
-    # FRED API Key
-    with st.expander("FRED API Key (Required)", expanded=False):
-        st.markdown("Get your free API key at: https://fred.stlouisfed.org/docs/api/api_key.html")
-        
-        current_fred_key = os.getenv('FRED_API_KEY', '')
-        fred_key = st.text_input(
-            "FRED API Key",
-            value=current_fred_key,
-            type="password",
-            key="fred_api_key"
-        )
-        
-        if st.button("Save FRED API Key"):
-            if fred_key:
-                save_to_env('FRED_API_KEY', fred_key)
-                st.success("✓ FRED API key saved! Restart dashboard to apply.")
-            else:
-                st.error("Please enter an API key")
-    
-    # Alpha Vantage API Key
-    with st.expander("Alpha Vantage API Key (Optional)", expanded=False):
-        st.markdown("Get your free API key at: https://www.alphavantage.co/support/#api-key")
-        st.info("Used for: Alternative market data, economic indicators")
-        
-        current_alpha_key = os.getenv('ALPHA_VANTAGE_API_KEY', '')
-        alpha_key = st.text_input(
-            "Alpha Vantage API Key",
-            value=current_alpha_key,
-            type="password",
-            key="alpha_api_key"
-        )
-        
-        if st.button("Save Alpha Vantage API Key"):
-            if alpha_key:
-                save_to_env('ALPHA_VANTAGE_API_KEY', alpha_key)
-                st.success("✓ Alpha Vantage API key saved! Restart dashboard to apply.")
-            else:
-                st.error("Please enter an API key")
-    
-    # Polygon API Key
-    with st.expander("Polygon.io API Key (Optional)", expanded=False):
-        st.markdown("Get your API key at: https://polygon.io/")
-        st.info("Used for: Real-time market data, options flow")
-        
-        current_polygon_key = os.getenv('POLYGON_API_KEY', '')
-        polygon_key = st.text_input(
-            "Polygon API Key",
-            value=current_polygon_key,
-            type="password",
-            key="polygon_api_key"
-        )
-        
-        if st.button("Save Polygon API Key"):
-            if polygon_key:
-                save_to_env('POLYGON_API_KEY', polygon_key)
-                st.success("✓ Polygon API key saved! Restart dashboard to apply.")
-            else:
-                st.error("Please enter an API key")
 
-    # Nasdaq Data Link API Key (for COT data)
-    with st.expander("Nasdaq Data Link API Key (Recommended)", expanded=False):
-        st.markdown("Get your **free** API key at: [data.nasdaq.com](https://data.nasdaq.com)")
-        st.info("🎯 **Used for:** CFTC Commitments of Traders (COT) positioning data. Without this key, COT data uses slow CFTC file downloads.")
+    api_settings_unlocked = render_api_settings_lock()
 
-        current_nasdaq_key = os.getenv('NASDAQ_DATA_LINK_KEY', '')
-        nasdaq_key = st.text_input(
-            "Nasdaq Data Link API Key",
-            value=current_nasdaq_key,
-            type="password",
-            key="nasdaq_api_key",
-            help="Sign up at data.nasdaq.com (free), then go to Account Settings to get your API key"
-        )
+    if api_settings_unlocked:
+        # FRED API Key
+        with st.expander("FRED API Key (Required)", expanded=False):
+            st.markdown("Get your free API key at: https://fred.stlouisfed.org/docs/api/api_key.html")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Save Nasdaq API Key"):
-                if nasdaq_key:
-                    save_to_env('NASDAQ_DATA_LINK_KEY', nasdaq_key)
-                    st.success("✓ Nasdaq Data Link API key saved! Restart dashboard to apply.")
+            current_fred_key = os.getenv('FRED_API_KEY', '')
+            fred_key = st.text_input(
+                "FRED API Key",
+                value=current_fred_key,
+                type="password",
+                key="fred_api_key"
+            )
+
+            if st.button("Save FRED API Key"):
+                if fred_key:
+                    save_to_env('FRED_API_KEY', fred_key)
+                    st.success("✓ FRED API key saved! Restart dashboard to apply.")
                 else:
                     st.error("Please enter an API key")
 
-        with col2:
-            if st.button("Test Nasdaq API Key"):
-                if nasdaq_key:
-                    with st.spinner("Testing API key..."):
-                        try:
-                            import requests
-                            # Test with a simple dataset request
-                            url = f"https://data.nasdaq.com/api/v3/datasets/CFTC/13874A_F_L_ALL.json?api_key={nasdaq_key}&rows=1"
-                            response = requests.get(url, timeout=10)
-                            if response.status_code == 200:
-                                st.success("✅ API key is valid! COT data will use fast Nasdaq API.")
-                            elif response.status_code == 400:
-                                st.error("❌ Invalid API key. Please check your key.")
-                            elif response.status_code == 429:
-                                st.warning("⚠️ Rate limited. Key is valid but too many requests.")
-                            else:
-                                st.warning(f"⚠️ Unexpected response: {response.status_code}")
-                        except Exception as e:
-                            st.error(f"❌ Test failed: {str(e)}")
+        # Alpha Vantage API Key
+        with st.expander("Alpha Vantage API Key (Optional)", expanded=False):
+            st.markdown("Get your free API key at: https://www.alphavantage.co/support/#api-key")
+            st.info("Used for: Alternative market data, economic indicators")
+
+            current_alpha_key = os.getenv('ALPHA_VANTAGE_API_KEY', '')
+            alpha_key = st.text_input(
+                "Alpha Vantage API Key",
+                value=current_alpha_key,
+                type="password",
+                key="alpha_api_key"
+            )
+
+            if st.button("Save Alpha Vantage API Key"):
+                if alpha_key:
+                    save_to_env('ALPHA_VANTAGE_API_KEY', alpha_key)
+                    st.success("✓ Alpha Vantage API key saved! Restart dashboard to apply.")
                 else:
-                    st.warning("Enter an API key first")
+                    st.error("Please enter an API key")
+
+        # Polygon API Key
+        with st.expander("Polygon.io API Key (Optional)", expanded=False):
+            st.markdown("Get your API key at: https://polygon.io/")
+            st.info("Used for: Real-time market data, options flow")
+
+            current_polygon_key = os.getenv('POLYGON_API_KEY', '')
+            polygon_key = st.text_input(
+                "Polygon API Key",
+                value=current_polygon_key,
+                type="password",
+                key="polygon_api_key"
+            )
+
+            if st.button("Save Polygon API Key"):
+                if polygon_key:
+                    save_to_env('POLYGON_API_KEY', polygon_key)
+                    st.success("✓ Polygon API key saved! Restart dashboard to apply.")
+                else:
+                    st.error("Please enter an API key")
+
+        # Nasdaq Data Link API Key (for COT data)
+        with st.expander("Nasdaq Data Link API Key (Recommended)", expanded=False):
+            st.markdown("Get your **free** API key at: [data.nasdaq.com](https://data.nasdaq.com)")
+            st.info("🎯 **Used for:** CFTC Commitments of Traders (COT) positioning data. Without this key, COT data uses slow CFTC file downloads.")
+
+            current_nasdaq_key = os.getenv('NASDAQ_DATA_LINK_KEY', '')
+            nasdaq_key = st.text_input(
+                "Nasdaq Data Link API Key",
+                value=current_nasdaq_key,
+                type="password",
+                key="nasdaq_api_key",
+                help="Sign up at data.nasdaq.com (free), then go to Account Settings to get your API key"
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Save Nasdaq API Key"):
+                    if nasdaq_key:
+                        save_to_env('NASDAQ_DATA_LINK_KEY', nasdaq_key)
+                        st.success("✓ Nasdaq Data Link API key saved! Restart dashboard to apply.")
+                    else:
+                        st.error("Please enter an API key")
+
+            with col2:
+                if st.button("Test Nasdaq API Key"):
+                    if nasdaq_key:
+                        with st.spinner("Testing API key..."):
+                            try:
+                                import requests
+                                # Test with a simple dataset request
+                                url = f"https://data.nasdaq.com/api/v3/datasets/CFTC/13874A_F_L_ALL.json?api_key={nasdaq_key}&rows=1"
+                                response = requests.get(url, timeout=10)
+                                if response.status_code == 200:
+                                    st.success("✅ API key is valid! COT data will use fast Nasdaq API.")
+                                elif response.status_code == 400:
+                                    st.error("❌ Invalid API key. Please check your key.")
+                                elif response.status_code == 429:
+                                    st.warning("⚠️ Rate limited. Key is valid but too many requests.")
+                                else:
+                                    st.warning(f"⚠️ Unexpected response: {response.status_code}")
+                            except Exception as e:
+                                st.error(f"❌ Test failed: {str(e)}")
+                    else:
+                        st.warning("Enter an API key first")
+    else:
+        st.info("API key controls are hidden until you unlock this section.")
 
     st.divider()
     
