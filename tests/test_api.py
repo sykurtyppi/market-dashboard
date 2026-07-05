@@ -377,21 +377,64 @@ def test_cot_empty_data_warns_and_not_cached(client):
     svc._cache.clear()
 
 
+def _options_summary(**overrides):
+    base = {
+        "timestamp": "2026-07-05T00:00:00",
+        "spy": {"ticker": "SPY", "current_price": 744.0, "expiry": "2026-07-06", "dte": 1,
+                "total_call_volume": 900000, "total_put_volume": 850000,
+                "put_call_ratio": 0.94, "sentiment": "BULLISH", "status": "ok"},
+        "qqq": {"ticker": "QQQ", "current_price": 712.0, "dte": 1, "put_call_ratio": 0.93,
+                "sentiment": "NEUTRAL", "status": "ok"},
+        "iwm": {"ticker": "IWM", "current_price": 297.0, "dte": 1, "put_call_ratio": 0.80,
+                "sentiment": "NEUTRAL", "status": "ok"},
+    }
+    base.update(overrides)
+    return base
+
+
 def test_options_flow_returns_expected_shape(client):
     import api.flows_service as svc
     svc._cache.clear()
     with patch("data_collectors.options_flow_collector.OptionsFlowCollector") as MockOF:
-        MockOF.return_value.get_market_options_summary.return_value = {
-            "timestamp": "2026-07-05T00:00:00",
-            "spy": {"ticker": "SPY", "current_price": 744.0, "expiry": "2026-07-06", "dte": 1,
-                    "total_call_volume": 900000, "total_put_volume": 850000,
-                    "put_call_ratio": 0.94, "sentiment": "BULLISH", "status": "ok"},
-            "qqq": {"status": "error"},  # dropped
-        }
+        MockOF.return_value.get_market_options_summary.return_value = _options_summary()
         r = client.get("/api/options-flow")
     svc._cache.clear()
     assert r.status_code == 200
     body = r.json()
-    assert len(body["etfs"]) == 1  # only the ok one
+    assert len(body["etfs"]) == 3  # all present
     assert body["etfs"][0]["ticker"] == "SPY"
     assert body["etfs"][0]["state"] == "good"  # BULLISH -> good
+    assert body["warnings"] == []  # complete fetch, no warning
+
+
+def test_options_flow_partial_data_warns_and_not_cached(client):
+    # Some ETFs fail (the important SPY/QQQ), one succeeds. The user must be told
+    # which are missing, and a partial result must not be cached.
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.options_flow_collector.OptionsFlowCollector") as MockOF:
+        MockOF.return_value.get_market_options_summary.return_value = _options_summary(
+            spy={"status": "error"}, qqq={"status": "error"},
+        )
+        r = client.get("/api/options-flow")
+        body = r.json()
+        assert r.status_code == 200
+        assert [e["ticker"] for e in body["etfs"]] == ["IWM"]
+        assert any("partially unavailable" in w.lower() for w in body["warnings"])
+        assert "SPY" in body["warnings"][0] and "QQQ" in body["warnings"][0]
+        assert "options_flow" not in svc._cache  # partial not cached
+    svc._cache.clear()
+
+
+def test_options_flow_empty_data_warns_and_not_cached(client):
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.options_flow_collector.OptionsFlowCollector") as MockOF:
+        MockOF.return_value.get_market_options_summary.return_value = {}
+        r = client.get("/api/options-flow")
+        body = r.json()
+        assert r.status_code == 200
+        assert body["etfs"] == []
+        assert any("unavailable" in w.lower() for w in body["warnings"])
+        assert "options_flow" not in svc._cache
+    svc._cache.clear()

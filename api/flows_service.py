@@ -10,6 +10,7 @@ from api.overview_service import _num
 
 _TTL_SECONDS = 300
 _cache: Dict[str, tuple[float, Any]] = {}
+_EXPECTED_ETFS = ("spy", "qqq", "iwm")
 
 
 def _cached(key: str, fn: Callable[[], Any], ok: Callable[[Any], bool]) -> Any:
@@ -80,9 +81,11 @@ def _build_options_flow() -> Dict[str, Any]:
         summary = {}
 
     etfs = []
-    for key in ("spy", "qqq", "iwm"):
+    missing: list[str] = []
+    for key in _EXPECTED_ETFS:
         d = summary.get(key)
         if not d or d.get("status") != "ok":
+            missing.append(key.upper())
             continue
         etfs.append({
             "ticker": d.get("ticker", key.upper()),
@@ -98,9 +101,19 @@ def _build_options_flow() -> Dict[str, Any]:
 
     if not etfs:
         warnings.append("Options flow data unavailable (Yahoo Finance).")
+    elif missing:
+        # Partial failure — name the missing ETFs rather than silently show a
+        # normal-looking page with the important ones (SPY/QQQ) absent.
+        warnings.append(f"Options flow partially unavailable: {', '.join(missing)}.")
 
     return {"as_of": summary.get("timestamp"), "etfs": etfs, "warnings": warnings}
 
 
 def build_options_flow() -> Dict[str, Any]:
-    return _cached("options_flow", _build_options_flow, lambda d: bool(d.get("etfs")))
+    # Only cache a complete fetch (all expected ETFs present); partial/empty
+    # results are retried on the next request rather than pinned for the TTL.
+    return _cached(
+        "options_flow",
+        _build_options_flow,
+        lambda d: len(d.get("etfs", [])) == len(_EXPECTED_ETFS),
+    )
