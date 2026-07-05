@@ -3,8 +3,8 @@ name: Tests
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  pull_request:        # all PRs, including stacked feature branches
+  workflow_dispatch:   # allow manual runs
 
 jobs:
   test:
