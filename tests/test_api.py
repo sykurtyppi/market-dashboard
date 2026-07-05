@@ -117,3 +117,46 @@ def test_refresh_accepts_correct_token(client, monkeypatch):
         r = client.post("/api/refresh", headers={"X-API-Token": "secret"})
     assert r.status_code == 200
     assert r.json()["status"] in ("started", "already_running")
+
+
+# --- Phase 2 pages ---
+
+def test_credit_liquidity_returns_expected_shape(client):
+    r = client.get("/api/credit-liquidity")
+    assert r.status_code == 200
+    body = r.json()
+    assert "metrics" in body and "notes" in body
+    for key in ("credit_spreads", "fed_assets", "qt_cumulative"):
+        assert key in body["charts"]
+    valid = {"good", "warn", "crit", "neutral"}
+    assert all(m["state"] in valid for m in body["metrics"])
+
+
+def test_sectors_returns_expected_shape(client):
+    # Sectors is the one live endpoint — mock the collectors so no network is hit,
+    # and clear the TTL cache so the mock is actually exercised.
+    import api.sectors_service as svc
+    svc._cache.clear()
+
+    with patch("data_collectors.sector_collector.SectorCollector") as MockSC, \
+         patch("data_collectors.cboe_collector.CBOECollector") as MockCBOE:
+        MockSC.return_value.get_sector_performance.return_value = {
+            "XLK": {"name": "Technology", "price": 180.5, "change_pct": 1.2, "category": "Cyclical"},
+            "XLU": {"name": "Utilities", "price": 80.1, "change_pct": -0.4, "category": "Defensive"},
+        }
+        MockSC.return_value.get_rotation_signal.return_value = {
+            "signal": "Risk-On", "interpretation": "Cyclicals leading",
+            "leading_sectors": ["Technology (+1.2%)"],
+        }
+        MockCBOE.return_value.get_vix9d.return_value = 12.0
+        MockCBOE.return_value.get_vix.return_value = 15.0
+        MockCBOE.return_value.get_vix3m.return_value = 18.0
+        r = client.get("/api/sectors")
+
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["sectors"]) == 2
+    assert body["sectors"][0]["ticker"] == "XLK"  # sorted desc by change
+    assert body["vix_structure"] == "Contango"
+    assert body["rotation"]["state"] == "good"
