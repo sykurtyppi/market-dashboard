@@ -118,6 +118,7 @@ export interface CreditLiquidity {
 export interface TreasuryStress {
   as_of: string | null;
   regime: string | null;
+  state: State;
   regime_note: string;
   metrics: Metric[];
   charts: { move_history: Point[]; percentile_history: Point[] };
@@ -126,6 +127,7 @@ export interface TreasuryStress {
 export interface Repo {
   as_of: string | null;
   regime: string | null;
+  state: State;
   regime_note: string;
   metrics: Metric[];
   charts: { sofr_history: Point[]; rrp_history: Point[] };

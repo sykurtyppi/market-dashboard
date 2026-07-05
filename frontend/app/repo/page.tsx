@@ -6,7 +6,7 @@ import { MetricCard, Section, Panel } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
-  const state = data.regime ? (data.metrics[0]?.state ?? "neutral") : "neutral";
+  const state = data.state;
   return (
     <>
       <Topbar title="Repo Market" subtitle="SOFR & overnight funding" freshness={freshness} />

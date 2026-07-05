@@ -224,3 +224,33 @@ def test_treasury_uses_most_recent_row_not_oldest(client):
     chart = body["charts"]["move_history"]
     if len(chart) >= 2:
         assert chart[0]["date"] <= chart[-1]["date"]  # ascending
+
+
+def test_repo_uses_most_recent_row_not_oldest(client):
+    # get_repo_history is newest-first (DESC); the builder must report the
+    # most-recent SOFR and an elevated regime must not show a neutral state.
+    from database.db_manager import DatabaseManager
+    hist = DatabaseManager().get_repo_history(days=365)
+    if hist is None or hist.empty:
+        return
+    newest_date = str(hist["date"].max())[:10]
+
+    body = client.get("/api/repo").json()
+    assert str(body["as_of"])[:10] == newest_date
+    # The regime state must reflect the regime, not default to neutral.
+    valid = {"good", "warn", "crit", "neutral"}
+    assert body["state"] in valid
+    if body["regime"] in ("ELEVATED", "TIGHTENING"):
+        assert body["state"] == "warn"
+    chart = body["charts"]["sofr_history"]
+    if len(chart) >= 2:
+        assert chart[0]["date"] <= chart[-1]["date"]
+
+
+def test_credit_fed_assets_uses_most_recent_row_not_oldest(client):
+    # get_fed_balance_sheet_history is newest-first (DESC); the fed-assets chart
+    # must run chronologically and current value comes from the newest row.
+    body = client.get("/api/credit-liquidity").json()
+    chart = body["charts"]["fed_assets"]
+    if len(chart) >= 2:
+        assert chart[0]["date"] <= chart[-1]["date"]

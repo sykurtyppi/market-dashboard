@@ -1,6 +1,7 @@
-"""Payload builders for Phase 1 pages (Volatility & VRP, Market Breadth).
+"""Payload builders for the cached-SQLite pages (Volatility, Breadth, Credit &
+Liquidity, Treasury Stress, Repo Market).
 
-Both read cached SQLite history — no live collector calls per request.
+All read cached SQLite history — no live collector calls per request.
 """
 from typing import Any, Dict, List
 
@@ -256,6 +257,7 @@ def build_treasury_stress() -> dict:
     return {
         "as_of": str(latest.get("date")),
         "regime": stress,
+        "state": _stress_state(stress),
         "regime_note": _MOVE_NOTES.get((stress or "").upper(), "Treasury volatility regime"),
         "metrics": metrics,
         "charts": {
@@ -286,13 +288,15 @@ def build_repo() -> dict:
         {"key": "sofr_z", "label": "SOFR Z-Score", "value": zscore, "unit": "",
          "state": "neutral", "source": "Derived (252d)"},
     ]
+    state = _stress_state(stress)
     return {
         "as_of": str(latest.get("date")),
         "regime": stress,
+        "state": state,
         "regime_note": (
-            "Ample reserves — no funding stress." if _stress_state(stress) == "good"
-            else "Funding conditions tightening." if _stress_state(stress) == "warn"
-            else "Funding stress." if _stress_state(stress) == "crit"
+            "Ample reserves — no funding stress." if state == "good"
+            else "Funding conditions tightening." if state == "warn"
+            else "Funding stress." if state == "crit"
             else "Repo market status"
         ),
         "metrics": metrics,
