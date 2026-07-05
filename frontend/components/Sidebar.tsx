@@ -1,6 +1,10 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ReactNode } from "react";
 
-type Item = { label: string; icon: ReactNode; active?: boolean };
+type Item = { label: string; icon: ReactNode; href?: string };
 type Group = { label: string; items: Item[] };
 
 const I = {
@@ -16,7 +20,7 @@ const I = {
 
 const GROUPS: Group[] = [
   { label: "Volatility", items: [
-    { label: "Volatility & VRP", icon: I.wave },
+    { label: "Volatility & VRP", icon: I.wave, href: "/volatility" },
     { label: "Sectors & VIX", icon: I.wave },
     { label: "Treasury Stress", icon: I.bars },
   ]},
@@ -34,7 +38,7 @@ const GROUPS: Group[] = [
   { label: "Macro & Breadth", items: [
     { label: "Cross-Asset", icon: I.globe },
     { label: "Economic Calendar", icon: I.bars },
-    { label: "Market Breadth", icon: I.wave },
+    { label: "Market Breadth", icon: I.wave, href: "/breadth" },
     { label: "LEFT Strategy", icon: I.flow },
     { label: "Sentiment", icon: I.globe },
   ]},
@@ -44,7 +48,23 @@ const GROUPS: Group[] = [
   ]},
 ];
 
+function NavLink({ item, active }: { item: Item; active: boolean }) {
+  if (!item.href) {
+    return (
+      <a className="nav-item soon" aria-disabled="true" title="Available in a later phase">
+        {item.icon}{item.label}
+      </a>
+    );
+  }
+  return (
+    <Link className={`nav-item${active ? " active" : ""}`} href={item.href} aria-current={active ? "page" : undefined}>
+      {item.icon}{item.label}
+    </Link>
+  );
+}
+
 export default function Sidebar() {
+  const pathname = usePathname();
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -55,19 +75,12 @@ export default function Sidebar() {
         </div>
       </div>
       <nav className="nav" aria-label="Primary">
-        <a className="nav-item active" href="#" aria-current="page">{I.grid}Overview</a>
+        <NavLink item={{ label: "Overview", icon: I.grid, href: "/" }} active={pathname === "/"} />
         {GROUPS.map((g) => (
           <div className="nav-group" key={g.label}>
             <div className="nav-group-label">{g.label}</div>
             {g.items.map((it) => (
-              <a
-                className="nav-item soon"
-                key={it.label}
-                aria-disabled="true"
-                title="Available in a later phase"
-              >
-                {it.icon}{it.label}
-              </a>
+              <NavLink key={it.label} item={it} active={!!it.href && pathname === it.href} />
             ))}
           </div>
         ))}

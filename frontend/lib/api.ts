@@ -1,9 +1,10 @@
-// Typed client for the Market Risk Dashboard API.
+// Typed client for the Market Risk Dashboard API (server-side).
 //
-// getOverview() runs in a Server Component, so the base URL is a server-only
-// env var (MARKET_API_URL) — not NEXT_PUBLIC_*, which would be inlined into the
-// browser bundle and frozen at build time. Add a NEXT_PUBLIC_ fallback only if
-// client-side fetching is introduced later.
+// These run in Server Components / Route Handlers, so the base URL is a
+// server-only env var (MARKET_API_URL) — not NEXT_PUBLIC_*, which would be
+// inlined into the browser bundle and frozen at build time. Client components
+// call the same-origin Next route handlers (/api/refresh, /api/freshness)
+// which proxy to this base, so the backend URL never reaches the browser.
 
 export const API_BASE = process.env.MARKET_API_URL ?? "http://localhost:8000";
 
@@ -13,6 +14,8 @@ export interface Freshness {
   status: string;
   age: string;
   is_fresh: boolean;
+  as_of?: string | null;
+  age_hours?: number | null;
 }
 
 export interface Metric {
@@ -49,10 +52,7 @@ export interface Overview {
   as_of: string | null;
   freshness: Freshness;
   left_signal: string | null;
-  regime: {
-    composite_risk: number | null;
-    components: RegimeComponent[];
-  };
+  regime: { composite_risk: number | null; components: RegimeComponent[] };
   metrics: Metric[];
   charts: {
     vrp_history: Point[];
@@ -61,8 +61,27 @@ export interface Overview {
   detail: DetailRow[];
 }
 
-export async function getOverview(): Promise<Overview> {
-  const res = await fetch(`${API_BASE}/api/overview`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`API ${res.status}: /api/overview`);
-  return res.json();
+export interface Volatility {
+  as_of: string | null;
+  regime: string | null;
+  regime_note: string;
+  metrics: Metric[];
+  charts: { vrp_history: Point[]; vix: Point[]; realized_vol: Point[] };
 }
+
+export interface Breadth {
+  as_of: string | null;
+  metrics: Metric[];
+  charts: { ad_line: Point[]; mcclellan: Point[]; breadth_pct: Point[] };
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
+  return res.json() as Promise<T>;
+}
+
+export const getOverview = () => getJson<Overview>("/api/overview");
+export const getVolatility = () => getJson<Volatility>("/api/volatility");
+export const getBreadth = () => getJson<Breadth>("/api/breadth");
+export const getFreshness = () => getJson<Freshness>("/api/freshness");

@@ -1,24 +1,36 @@
 """FastAPI application for the Market Risk Dashboard.
 
-Phase 0 surface: /api/overview, /api/freshness, /api/health.
-Reads cached data from SQLite; never calls collectors live per request.
+Surface: /api/overview, /api/volatility, /api/breadth, /api/freshness,
+/api/health (GET, cached SQLite) and /api/refresh (POST, background update).
+Read endpoints never call collectors live per request.
 """
 import logging
 import os
+import threading
 
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI, Header
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import get_db, get_health
 from api.overview_service import build_overview
-from api.schemas import FreshnessDetail, HealthResponse, OverviewResponse
+from api.pages_service import build_breadth, build_volatility
+from api.schemas import (
+    BreadthResponse,
+    FreshnessDetail,
+    HealthResponse,
+    OverviewResponse,
+    RefreshResponse,
+    RefreshStatus,
+    VolatilityResponse,
+)
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Market Risk Dashboard API",
-    version="0.1.0",
-    description="HTTP API over the market-risk backend. Phase 0.",
+    version="0.2.0",
+    description="HTTP API over the market-risk backend.",
 )
 
 # Frontend dev + deployed origins. Overridable via FRONTEND_ORIGINS (comma-sep).
@@ -33,6 +45,9 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# Serialize data refreshes: only one background update runs at a time.
+_refresh_lock = threading.Lock()
 
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -55,3 +70,48 @@ def freshness():
 @app.get("/api/overview", response_model=OverviewResponse)
 def overview():
     return build_overview()
+
+
+@app.get("/api/volatility", response_model=VolatilityResponse)
+def volatility():
+    return build_volatility()
+
+
+@app.get("/api/breadth", response_model=BreadthResponse)
+def breadth():
+    return build_breadth()
+
+
+def _run_refresh():
+    """Run a full data update, releasing the lock when done."""
+    try:
+        from scheduler.daily_update import MarketDataUpdater
+        MarketDataUpdater().run_full_update()
+    except Exception as exc:  # noqa: BLE001 - log and move on; lock still releases
+        logger.error("Data refresh failed: %s", exc)
+    finally:
+        _refresh_lock.release()
+
+
+@app.post("/api/refresh", response_model=RefreshResponse)
+def refresh(background_tasks: BackgroundTasks, x_api_token: str | None = Header(default=None)):
+    """Kick off a full data refresh in the background.
+
+    Live and slow (hits FRED/Yahoo/CBOE), so it runs as a background task and
+    returns immediately; poll /api/freshness for completion. If MARKET_API_TOKEN
+    is set, the caller must supply it via the X-API-Token header.
+    """
+    expected = os.getenv("MARKET_API_TOKEN")
+    if expected and x_api_token != expected:
+        return {"status": "unauthorized", "detail": "Invalid or missing X-API-Token"}
+
+    if not _refresh_lock.acquire(blocking=False):
+        return {"status": "already_running", "detail": "A refresh is already in progress"}
+
+    background_tasks.add_task(_run_refresh)
+    return {"status": "started", "detail": "Refresh started; poll /api/refresh/status for completion"}
+
+
+@app.get("/api/refresh/status", response_model=RefreshStatus)
+def refresh_status():
+    return {"running": _refresh_lock.locked()}
