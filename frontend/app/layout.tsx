@@ -4,6 +4,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import Providers from "./providers";
 
 export const metadata: Metadata = {
   title: "Meridian · Market Risk",
@@ -14,10 +15,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable} antialiased`}>
       <body>
-        <div className="app">
-          <Sidebar />
-          <div className="main">{children}</div>
-        </div>
+        <Providers>
+          <div className="app">
+            <Sidebar />
+            <div className="main">{children}</div>
+          </div>
+        </Providers>
       </body>
     </html>
   );

@@ -81,3 +81,40 @@ class HealthResponse(BaseModel):
     # the rest through rather than mirror the whole tree.
     model_config = ConfigDict(extra="allow")
     overall_status: str
+
+
+# --- Phase 1 pages ---
+
+class VolatilityCharts(BaseModel):
+    vrp_history: List[Point]
+    vix: List[Point]
+    realized_vol: List[Point]
+
+
+class VolatilityResponse(BaseModel):
+    as_of: Optional[str] = None
+    regime: Optional[str] = None
+    regime_note: str
+    metrics: List[Metric]
+    charts: VolatilityCharts
+
+
+class BreadthCharts(BaseModel):
+    ad_line: List[Point]
+    mcclellan: List[Point]
+    breadth_pct: List[Point]
+
+
+class BreadthResponse(BaseModel):
+    as_of: Optional[str] = None
+    metrics: List[Metric]
+    charts: BreadthCharts
+
+
+class RefreshResponse(BaseModel):
+    status: Literal["started", "already_running", "unauthorized"]
+    detail: Optional[str] = None
+
+
+class RefreshStatus(BaseModel):
+    running: bool
