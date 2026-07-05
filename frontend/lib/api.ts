@@ -115,6 +115,22 @@ export interface CreditLiquidity {
   notes: Record<string, string>;
 }
 
+export interface TreasuryStress {
+  as_of: string | null;
+  regime: string | null;
+  regime_note: string;
+  metrics: Metric[];
+  charts: { move_history: Point[]; percentile_history: Point[] };
+}
+
+export interface Repo {
+  as_of: string | null;
+  regime: string | null;
+  regime_note: string;
+  metrics: Metric[];
+  charts: { sofr_history: Point[]; rrp_history: Point[] };
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -126,4 +142,6 @@ export const getVolatility = () => getJson<Volatility>("/api/volatility");
 export const getBreadth = () => getJson<Breadth>("/api/breadth");
 export const getSectors = () => getJson<Sectors>("/api/sectors");
 export const getCreditLiquidity = () => getJson<CreditLiquidity>("/api/credit-liquidity");
+export const getTreasuryStress = () => getJson<TreasuryStress>("/api/treasury-stress");
+export const getRepo = () => getJson<Repo>("/api/repo");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");

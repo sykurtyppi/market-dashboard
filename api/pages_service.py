@@ -8,6 +8,19 @@ from api.deps import get_db
 from api.overview_service import _num, _series
 
 
+def _asc(df):
+    """Normalize a history frame to ascending-by-date order.
+
+    Some DatabaseManager history methods return newest-first (DESC), which makes
+    iloc[-1] the OLDEST row and reverses charts. Sorting here keeps the API
+    correct without changing db_manager (the live Streamlit app depends on it).
+    """
+    if df is None or df.empty:
+        return df
+    date_col = "date" if "date" in df.columns else df.columns[0]
+    return df.sort_values(date_col).reset_index(drop=True)
+
+
 def _vrp_state(vrp: float | None) -> str:
     if vrp is None:
         return "neutral"
@@ -141,7 +154,7 @@ def build_credit_liquidity() -> dict:
     db = get_db()
     hy_hist = db.get_indicator_history("credit_spread_hy", days=365)
     ig_hist = db.get_indicator_history("credit_spread_ig", days=365)
-    fed = db.get_fed_balance_sheet_history(days=365)
+    fed = _asc(db.get_fed_balance_sheet_history(days=365))  # method returns DESC
 
     hy = _latest_val(hy_hist)
     ig = _latest_val(ig_hist)
@@ -200,5 +213,91 @@ def build_credit_liquidity() -> dict:
                 "Net liquidity (Fed BS − TGA − RRP) needs the liquidity pipeline, "
                 "which isn't currently populated."
             ),
+        },
+    }
+
+
+# --- Phase 3 pages: Treasury Stress (MOVE) & Repo Market (SOFR) ---
+
+def _stress_state(level: str | None) -> str:
+    return {
+        "LOW": "good", "NORMAL": "good", "AMPLE": "good", "ABUNDANT": "good",
+        "ELEVATED": "warn", "TIGHTENING": "warn",
+        "HIGH": "crit", "STRESS": "crit",
+    }.get((level or "").upper(), "neutral")
+
+
+_MOVE_NOTES = {
+    "LOW": "Calm Treasury market — below the 25th percentile.",
+    "NORMAL": "Typical Treasury volatility (middle of the historical range).",
+    "ELEVATED": "Elevated Treasury uncertainty — 75th–90th percentile.",
+    "HIGH": "Treasury market stress — above the 90th percentile.",
+}
+
+
+def build_treasury_stress() -> dict:
+    db = get_db()
+    hist = _asc(db.get_move_history(days=365))  # method returns DESC
+    if hist is None or hist.empty:
+        return {"as_of": None, "regime": None, "regime_note": "No MOVE data available",
+                "metrics": [], "charts": {"move_history": [], "percentile_history": []}}
+
+    latest = hist.iloc[-1]
+    move = _num(latest.get("move"))
+    pct = _num(latest.get("percentile"))
+    stress = latest.get("stress_level")
+
+    metrics = [
+        {"key": "move", "label": "MOVE Index", "value": move, "unit": "",
+         "state": _stress_state(stress), "source": "ICE BofA / Yahoo (^MOVE)"},
+        {"key": "percentile", "label": "Percentile (2Y)", "value": pct, "unit": "%",
+         "state": "neutral", "source": "Historical distribution"},
+    ]
+    return {
+        "as_of": str(latest.get("date")),
+        "regime": stress,
+        "regime_note": _MOVE_NOTES.get((stress or "").upper(), "Treasury volatility regime"),
+        "metrics": metrics,
+        "charts": {
+            "move_history": _series(hist, value_col="move"),
+            "percentile_history": _series(hist, value_col="percentile"),
+        },
+    }
+
+
+def build_repo() -> dict:
+    db = get_db()
+    hist = _asc(db.get_repo_history(days=365))  # method returns DESC
+    if hist is None or hist.empty:
+        return {"as_of": None, "regime": None, "regime_note": "No repo data available",
+                "metrics": [], "charts": {"sofr_history": [], "rrp_history": []}}
+
+    latest = hist.iloc[-1]
+    sofr = _num(latest.get("sofr"))
+    rrp = _num(latest.get("rrp_on"))
+    zscore = _num(latest.get("sofr_z_score"))
+    stress = latest.get("stress_level")
+
+    metrics = [
+        {"key": "sofr", "label": "SOFR", "value": sofr, "unit": "%",
+         "state": "neutral", "source": "FRED (SOFR)"},
+        {"key": "rrp", "label": "RRP (Overnight)", "value": rrp, "unit": "",
+         "state": "neutral", "source": "FRED (RRPONTSYD)"},
+        {"key": "sofr_z", "label": "SOFR Z-Score", "value": zscore, "unit": "",
+         "state": "neutral", "source": "Derived (252d)"},
+    ]
+    return {
+        "as_of": str(latest.get("date")),
+        "regime": stress,
+        "regime_note": (
+            "Ample reserves — no funding stress." if _stress_state(stress) == "good"
+            else "Funding conditions tightening." if _stress_state(stress) == "warn"
+            else "Funding stress." if _stress_state(stress) == "crit"
+            else "Repo market status"
+        ),
+        "metrics": metrics,
+        "charts": {
+            "sofr_history": _series(hist, value_col="sofr"),
+            "rrp_history": _series(hist, value_col="rrp_on"),
         },
     }

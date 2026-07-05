@@ -187,3 +187,40 @@ def test_sectors_empty_data_warns_and_is_not_cached(client):
         assert "sectors" not in svc._cache
 
     svc._cache.clear()
+
+
+# --- Phase 3 pages: Treasury Stress & Repo ---
+
+def test_treasury_returns_expected_shape(client):
+    r = client.get("/api/treasury-stress")
+    assert r.status_code == 200
+    body = r.json()
+    assert "regime_note" in body and "metrics" in body
+    assert "move_history" in body["charts"]
+    valid = {"good", "warn", "crit", "neutral"}
+    assert all(m["state"] in valid for m in body["metrics"])
+
+
+def test_repo_returns_expected_shape(client):
+    r = client.get("/api/repo")
+    assert r.status_code == 200
+    body = r.json()
+    assert "metrics" in body
+    for key in ("sofr_history", "rrp_history"):
+        assert key in body["charts"]
+
+
+def test_treasury_uses_most_recent_row_not_oldest(client):
+    # Regression: get_move_history returns newest-first (DESC). The builder must
+    # report the most-recent MOVE, and the chart must run chronologically.
+    from database.db_manager import DatabaseManager
+    hist = DatabaseManager().get_move_history(days=365)
+    if hist is None or hist.empty:
+        return  # nothing to assert against
+    newest_date = str(hist["date"].max())[:10]
+
+    body = client.get("/api/treasury-stress").json()
+    assert str(body["as_of"])[:10] == newest_date
+    chart = body["charts"]["move_history"]
+    if len(chart) >= 2:
+        assert chart[0]["date"] <= chart[-1]["date"]  # ascending

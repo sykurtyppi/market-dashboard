@@ -22,11 +22,11 @@ const GROUPS: Group[] = [
   { label: "Volatility", items: [
     { label: "Volatility & VRP", icon: I.wave, href: "/volatility" },
     { label: "Sectors & VIX", icon: I.wave, href: "/sectors" },
-    { label: "Treasury Stress", icon: I.bars },
+    { label: "Treasury Stress", icon: I.bars, href: "/treasury" },
   ]},
   { label: "Credit & Rates", items: [
     { label: "Credit & Liquidity", icon: I.flow, href: "/credit" },
-    { label: "Repo Market", icon: I.bars },
+    { label: "Repo Market", icon: I.bars, href: "/repo" },
     { label: "Fed Watch", icon: I.bars },
   ]},
   { label: "Positioning", items: [

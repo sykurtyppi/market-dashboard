@@ -164,3 +164,31 @@ class CreditLiquidityResponse(BaseModel):
     metrics: List[Metric]
     charts: CreditCharts
     notes: Dict[str, str]
+
+
+# --- Phase 3 pages ---
+
+class TreasuryCharts(BaseModel):
+    move_history: List[Point]
+    percentile_history: List[Point]
+
+
+class TreasuryResponse(BaseModel):
+    as_of: Optional[str] = None
+    regime: Optional[str] = None
+    regime_note: str
+    metrics: List[Metric]
+    charts: TreasuryCharts
+
+
+class RepoCharts(BaseModel):
+    sofr_history: List[Point]
+    rrp_history: List[Point]
+
+
+class RepoResponse(BaseModel):
+    as_of: Optional[str] = None
+    regime: Optional[str] = None
+    regime_note: str
+    metrics: List[Metric]
+    charts: RepoCharts

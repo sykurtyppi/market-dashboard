@@ -13,7 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import get_db, get_health
 from api.overview_service import build_overview
-from api.pages_service import build_breadth, build_credit_liquidity, build_volatility
+from api.pages_service import (
+    build_breadth,
+    build_credit_liquidity,
+    build_repo,
+    build_treasury_stress,
+    build_volatility,
+)
 from api.sectors_service import build_sectors
 from api.schemas import (
     BreadthResponse,
@@ -23,7 +29,9 @@ from api.schemas import (
     OverviewResponse,
     RefreshResponse,
     RefreshStatus,
+    RepoResponse,
     SectorsResponse,
+    TreasuryResponse,
     VolatilityResponse,
 )
 
@@ -93,6 +101,16 @@ def sectors():
 @app.get("/api/credit-liquidity", response_model=CreditLiquidityResponse)
 def credit_liquidity():
     return build_credit_liquidity()
+
+
+@app.get("/api/treasury-stress", response_model=TreasuryResponse)
+def treasury_stress():
+    return build_treasury_stress()
+
+
+@app.get("/api/repo", response_model=RepoResponse)
+def repo():
+    return build_repo()
 
 
 def _run_refresh():
