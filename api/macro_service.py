@@ -56,8 +56,19 @@ def _build_fed_watch() -> Dict[str, Any]:
         fw = FedWatchCollector().get_fed_watch_summary() or {}
     except Exception:
         fw = {}
+
+    # Provenance: the collector falls back to neutral/derived numbers when the
+    # fed funds futures feed is down. Surface that so the probabilities aren't
+    # mistaken for real market-implied data.
+    degraded = False
     if not fw.get("current_rate"):
         warnings.append("Fed funds data unavailable.")
+        degraded = True
+    elif fw.get("rate_source") == "fallback" or fw.get("implied_rate") is None:
+        warnings.append(
+            "Fed Watch is using fallback rate/probability estimates; live futures data unavailable."
+        )
+        degraded = True
 
     probs_raw = fw.get("probabilities") or {}
     probabilities = [
@@ -80,6 +91,7 @@ def _build_fed_watch() -> Dict[str, Any]:
     return {
         "as_of": fw.get("rate_as_of") or fw.get("timestamp"),
         "current_rate": fw.get("current_rate"),
+        "degraded": degraded,
         "next_meeting": {"date": nm.get("date_str"), "days_until": nm.get("days_until")},
         "most_likely": {"outcome": fw.get("most_likely"), "pct": _num(fw.get("most_likely_prob"))},
         "market_bias": fw.get("market_bias"),
@@ -91,7 +103,13 @@ def _build_fed_watch() -> Dict[str, Any]:
 
 
 def build_fed_watch() -> Dict[str, Any]:
-    return _cached("fed_watch", _build_fed_watch, lambda d: bool(d.get("current_rate")))
+    # Only cache a genuine (non-degraded) fetch, so fallback data is retried
+    # rather than pinned for the whole TTL window.
+    return _cached(
+        "fed_watch",
+        _build_fed_watch,
+        lambda d: bool(d.get("current_rate")) and not d.get("degraded"),
+    )
 
 
 # ---------------- Cross-Asset ----------------
