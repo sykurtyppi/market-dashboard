@@ -33,6 +33,12 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
     <>
       <Topbar title="Sectors & VIX" subtitle="Sector rotation & VIX term structure" freshness={freshness} />
       <div className="content">
+        {data.warnings.length > 0 ? (
+          <div className="notice">
+            <span className="dot warn" />
+            {data.warnings.join(" ")}
+          </div>
+        ) : null}
         <Section title="Sector Rotation" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.2fr 2fr" }}>
             <div className="regime-cell lead">
@@ -69,7 +75,11 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
                   <tr><th>ETF</th><th>Sector</th><th>Type</th><th className="num">1d</th><th className="num">Price</th></tr>
                 </thead>
                 <tbody>
-                  {data.sectors.map((s) => <SectorTableRow key={s.ticker} s={s} />)}
+                  {data.sectors.length > 0 ? (
+                    data.sectors.map((s) => <SectorTableRow key={s.ticker} s={s} />)
+                  ) : (
+                    <tr><td colSpan={5}><div className="empty-state">Sector ETF data unavailable right now.</div></td></tr>
+                  )}
                 </tbody>
               </table>
             </div>

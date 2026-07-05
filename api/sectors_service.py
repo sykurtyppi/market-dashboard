@@ -6,22 +6,12 @@ from hammering Yahoo/CBOE.
 """
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from api.overview_service import _num
 
 _TTL_SECONDS = 300
 _cache: Dict[str, tuple[float, Any]] = {}
-
-
-def _cached(key: str, ttl: int, fn: Callable[[], Any]) -> Any:
-    now = time.monotonic()
-    hit = _cache.get(key)
-    if hit and (now - hit[0]) < ttl:
-        return hit[1]
-    value = fn()
-    _cache[key] = (now, value)
-    return value
 
 
 def _rotation_state(signal: str | None) -> str:
@@ -49,8 +39,15 @@ def _build_live() -> Dict[str, Any]:
     from data_collectors.cboe_collector import CBOECollector
     from data_collectors.sector_collector import SectorCollector
 
+    warnings: list[str] = []
+
     sc = SectorCollector()
-    perf = sc.get_sector_performance(period="1d") or {}
+    try:
+        perf = sc.get_sector_performance(period="1d") or {}
+    except Exception:
+        perf = {}
+    if not perf:
+        warnings.append("Sector ETF data unavailable (Yahoo Finance) — showing VIX only.")
     sectors = [
         {
             "ticker": ticker,
@@ -90,6 +87,8 @@ def _build_live() -> Dict[str, Any]:
     if len(vix_term) >= 2:
         near, far = vix_term[0]["value"], vix_term[-1]["value"]
         structure = "Contango" if far > near else "Backwardation"
+    if not vix_term:
+        warnings.append("VIX term-structure data unavailable (CBOE).")
 
     return {
         "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -97,8 +96,18 @@ def _build_live() -> Dict[str, Any]:
         "rotation": rotation,
         "vix_term": vix_term,
         "vix_structure": structure,
+        "warnings": warnings,
     }
 
 
 def build_sectors() -> Dict[str, Any]:
-    return _cached("sectors", _TTL_SECONDS, _build_live)
+    """Return sectors data, TTL-cached — but never cache a failed (empty) fetch,
+    so one Yahoo hiccup can't pin an empty page for the whole TTL window."""
+    now = time.monotonic()
+    hit = _cache.get("sectors")
+    if hit and (now - hit[0]) < _TTL_SECONDS:
+        return hit[1]
+    data = _build_live()
+    if data.get("sectors"):  # only cache a successful fetch
+        _cache["sectors"] = (now, data)
+    return data

@@ -150,6 +150,7 @@ class SectorsResponse(BaseModel):
     rotation: Rotation
     vix_term: List[VixTenor]
     vix_structure: Optional[str] = None
+    warnings: List[str] = []
 
 
 class CreditCharts(BaseModel):
