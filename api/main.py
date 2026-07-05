@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 
-from fastapi import BackgroundTasks, FastAPI, Header
+from fastapi import BackgroundTasks, FastAPI, Header, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import get_db, get_health
@@ -94,15 +94,20 @@ def _run_refresh():
 
 
 @app.post("/api/refresh", response_model=RefreshResponse)
-def refresh(background_tasks: BackgroundTasks, x_api_token: str | None = Header(default=None)):
+def refresh(
+    background_tasks: BackgroundTasks,
+    response: Response,
+    x_api_token: str | None = Header(default=None),
+):
     """Kick off a full data refresh in the background.
 
     Live and slow (hits FRED/Yahoo/CBOE), so it runs as a background task and
-    returns immediately; poll /api/freshness for completion. If MARKET_API_TOKEN
-    is set, the caller must supply it via the X-API-Token header.
+    returns immediately; poll /api/refresh/status for completion. If
+    MARKET_API_TOKEN is set, the caller must supply it via the X-API-Token header.
     """
     expected = os.getenv("MARKET_API_TOKEN")
     if expected and x_api_token != expected:
+        response.status_code = status.HTTP_401_UNAUTHORIZED
         return {"status": "unauthorized", "detail": "Invalid or missing X-API-Token"}
 
     if not _refresh_lock.acquire(blocking=False):

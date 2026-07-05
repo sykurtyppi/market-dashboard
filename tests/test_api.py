@@ -106,4 +106,14 @@ def test_refresh_starts_and_reports_status(client):
 def test_refresh_rejects_bad_token_when_configured(client, monkeypatch):
     monkeypatch.setenv("MARKET_API_TOKEN", "secret")
     r = client.post("/api/refresh")  # no X-API-Token header
+    assert r.status_code == 401
     assert r.json()["status"] == "unauthorized"
+
+
+def test_refresh_accepts_correct_token(client, monkeypatch):
+    monkeypatch.setenv("MARKET_API_TOKEN", "secret")
+    with patch("scheduler.daily_update.MarketDataUpdater") as MockUpdater:
+        MockUpdater.return_value.run_full_update.return_value = None
+        r = client.post("/api/refresh", headers={"X-API-Token": "secret"})
+    assert r.status_code == 200
+    assert r.json()["status"] in ("started", "already_running")

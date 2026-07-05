@@ -40,14 +40,21 @@ export default function RefreshButton() {
     queryKey: ["refresh-status"],
     queryFn: async (): Promise<StatusResult> => {
       const res = await fetch("/api/refresh/status", { cache: "no-store" });
-      return res.json();
+      // A failed poll must not resolve to running:false (which would read as
+      // "finished" and show a false success) — surface it as an error instead.
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const body = await res.json();
+      if (typeof body.running !== "boolean") throw new Error("bad status payload");
+      return body;
     },
     enabled: active,
     refetchInterval: active ? 3000 : false,
+    retry: 2,
   });
 
+  // Refresh completed: status polled cleanly and reports not running.
   useEffect(() => {
-    if (active && status.data && status.data.running === false) {
+    if (active && status.data?.running === false) {
       setActive(false);
       setNote("Data updated");
       router.refresh();
@@ -55,6 +62,16 @@ export default function RefreshButton() {
       return () => clearTimeout(t);
     }
   }, [active, status.data, router]);
+
+  // Polling failed (API went away mid-refresh): stop and report honestly.
+  useEffect(() => {
+    if (active && status.isError) {
+      setActive(false);
+      setNote("Couldn't confirm refresh — check data freshness");
+      const t = setTimeout(() => setNote(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [active, status.isError]);
 
   const busy = active || trigger.isPending;
 
