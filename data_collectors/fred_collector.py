@@ -36,22 +36,29 @@ class FREDCollector:
     
     @exponential_backoff_retry(max_retries=3, base_delay=2.0, max_delay=30.0)
     def get_series(
-        self, 
-        series_id: str, 
+        self,
+        series_id: str,
         start_date: Optional[str] = None,
-        limit: int = 100000
+        limit: int = 100000,
+        optional: bool = False
     ) -> pd.DataFrame:
         """
         Fetch a single series from FRED
-        
+
         Args:
             series_id: FRED series ID (e.g., 'BAMLH0A0HYM2')
             start_date: Start date in YYYY-MM-DD format (default: 2 years ago)
             limit: Maximum observations to return (default: 100000)
-        
+            optional: If True, this series may legitimately not exist on FRED
+                (e.g. a cross-validation probe). A missing series or fetch
+                failure is then logged at debug instead of error/warning.
+
         Returns:
             DataFrame with date and value columns
         """
+        # Absent/failed optional probes are expected, so keep them quiet
+        miss_log = logger.debug if optional else logger.warning
+        err_log = logger.debug if optional else logger.error
         if not start_date:
             start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
         
@@ -70,17 +77,17 @@ class FREDCollector:
             data = response.json()
             
             if 'observations' not in data:
-                logger.warning(f"No observations found for {series_id}")
+                miss_log(f"No observations found for {series_id}")
                 return pd.DataFrame()
-            
+
             # Parse observations
             observations = data['observations']
-            
+
             # Convert to DataFrame
             df = pd.DataFrame(observations)
-            
+
             if df.empty:
-                logger.warning(f"Empty data for {series_id}")
+                miss_log(f"Empty data for {series_id}")
                 return pd.DataFrame()
             
             # Clean and process data
@@ -100,10 +107,10 @@ class FREDCollector:
             return df
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching FRED data for {series_id}: {e}")
+            err_log(f"Error fetching FRED data for {series_id}: {e}")
             return pd.DataFrame()
         except Exception as e:
-            logger.error(f"Unexpected error for {series_id}: {e}")
+            err_log(f"Unexpected error for {series_id}: {e}")
             return pd.DataFrame()
     
     def get_all_indicators(self, lookback_days: int = 730) -> Dict[str, pd.DataFrame]:

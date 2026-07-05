@@ -99,12 +99,16 @@ class MOVECollector:
             fred_latest = None
             yahoo_latest = None
 
-            # Try FRED first
-            self.logger.info(f"Trying FRED for MOVE Index from {start_date.date()}")
+            # Try FRED first. MOVE is not reliably published on FRED, so this is
+            # an optional cross-validation probe: an absent series is expected and
+            # must not surface as an error (Yahoo below is the real source).
+            self.logger.debug(f"Probing FRED for MOVE Index from {start_date.date()}")
 
             try:
                 fred = FREDCollector()
-                move_data = fred.get_series("MOVE", start_date=start_date.strftime('%Y-%m-%d'))
+                move_data = fred.get_series(
+                    "MOVE", start_date=start_date.strftime('%Y-%m-%d'), optional=True
+                )
 
                 if not move_data.empty:
                     self.logger.info(f"FRED: Fetched {len(move_data)} MOVE observations")
@@ -114,9 +118,9 @@ class MOVECollector:
                     fred_df['source'] = 'FRED'
                     fred_latest = float(fred_df['move'].iloc[-1])
                 else:
-                    self.logger.warning("FRED returned empty DataFrame for MOVE")
+                    self.logger.debug("FRED has no MOVE series; using Yahoo Finance")
             except Exception as e:
-                self.logger.warning(f"FRED MOVE fetch failed: {e}")
+                self.logger.debug(f"FRED MOVE probe failed (expected): {e}")
 
             # Cross-validation: Also fetch Yahoo to compare (if validation enabled)
             if validate_sources or fred_df.empty:

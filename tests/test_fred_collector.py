@@ -221,6 +221,54 @@ class TestGetSeries:
         # Assert
         assert df.empty
 
+
+# ---------------------------------------------------------------------------
+# optional=True probe: expected-absent series must not log at error level
+# ---------------------------------------------------------------------------
+
+class TestOptionalProbe:
+    def _http_400_response(self):
+        response = Mock()
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "400 Client Error"
+        )
+        return response
+
+    def test_failure_logs_at_error_by_default(self, collector, caplog):
+        # Arrange
+        with patch(REQUESTS_GET, return_value=self._http_400_response()):
+            # Act
+            with caplog.at_level("DEBUG", logger="data_collectors.fred_collector"):
+                df = collector.get_series("BAMLH0A0HYM2")
+
+        # Assert - a real series failing is a genuine error
+        assert df.empty
+        assert any(r.levelname == "ERROR" for r in caplog.records)
+
+    def test_optional_failure_does_not_log_error(self, collector, caplog):
+        # Arrange - MOVE is not on FRED; an optional probe failing is expected
+        with patch(REQUESTS_GET, return_value=self._http_400_response()):
+            # Act
+            with caplog.at_level("DEBUG", logger="data_collectors.fred_collector"):
+                df = collector.get_series("MOVE", optional=True)
+
+        # Assert - still empty, but demoted to debug (no ERROR/WARNING noise)
+        assert df.empty
+        assert not any(r.levelname in ("ERROR", "WARNING") for r in caplog.records)
+        assert any(r.levelname == "DEBUG" for r in caplog.records)
+
+    def test_optional_missing_observations_does_not_warn(self, collector, caplog):
+        # Arrange - payload without observations, via an optional probe
+        payload = {"error_code": 400, "error_message": "Bad Request"}
+        with patch(REQUESTS_GET, return_value=make_json_response(payload)):
+            # Act
+            with caplog.at_level("DEBUG", logger="data_collectors.fred_collector"):
+                df = collector.get_series("MOVE", optional=True)
+
+        # Assert
+        assert df.empty
+        assert not any(r.levelname in ("ERROR", "WARNING") for r in caplog.records)
+
     def test_malformed_json_returns_empty(self, collector):
         # Arrange
         response = Mock()
