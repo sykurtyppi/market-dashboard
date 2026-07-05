@@ -101,6 +101,7 @@ export interface Sectors {
   };
   vix_term: VixTenor[];
   vix_structure: string | null;
+  warnings: string[];
 }
 
 export interface CreditLiquidity {

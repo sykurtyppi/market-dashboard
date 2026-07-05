@@ -160,3 +160,30 @@ def test_sectors_returns_expected_shape(client):
     assert body["sectors"][0]["ticker"] == "XLK"  # sorted desc by change
     assert body["vix_structure"] == "Contango"
     assert body["rotation"]["state"] == "good"
+
+
+def test_sectors_empty_data_warns_and_is_not_cached(client):
+    # When sector data fails, the endpoint still returns 200 but with a warning
+    # and an empty sector list — and it must NOT be cached (so recovery is fast).
+    import api.sectors_service as svc
+    svc._cache.clear()
+
+    with patch("data_collectors.sector_collector.SectorCollector") as MockSC, \
+         patch("data_collectors.cboe_collector.CBOECollector") as MockCBOE:
+        MockSC.return_value.get_sector_performance.return_value = {}  # Yahoo failed
+        MockSC.return_value.get_rotation_signal.return_value = {}
+        MockCBOE.return_value.get_vix9d.return_value = 12.0
+        MockCBOE.return_value.get_vix.return_value = 15.0
+        MockCBOE.return_value.get_vix3m.return_value = 18.0
+        r = client.get("/api/sectors")
+        body = r.json()
+
+        assert r.status_code == 200
+        assert body["sectors"] == []
+        assert any("unavailable" in w.lower() for w in body["warnings"])
+        # VIX still served even when sectors fail
+        assert len(body["vix_term"]) == 3
+        # The failed fetch was not cached
+        assert "sectors" not in svc._cache
+
+    svc._cache.clear()
