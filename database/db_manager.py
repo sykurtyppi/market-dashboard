@@ -372,10 +372,14 @@ class DatabaseManager:
                 # Calculate data age
                 try:
                     data_date = datetime.strptime(result.get('date', ''), '%Y-%m-%d')
-                    # Check for updated_at timestamp if available
-                    if 'updated_at' in result and result['updated_at']:
+                    # Prefer the actual write timestamp so freshness reflects when
+                    # data was fetched, not midnight of its calendar date. The
+                    # snapshots table stores this as created_at (updated_at kept
+                    # for forward-compatibility); fall back to the date field.
+                    ts_raw = result.get('created_at') or result.get('updated_at')
+                    if ts_raw:
                         try:
-                            data_date = datetime.fromisoformat(result['updated_at'].replace('Z', '+00:00'))
+                            data_date = datetime.fromisoformat(str(ts_raw).replace('Z', '+00:00'))
                             data_date = data_date.replace(tzinfo=None)  # Make naive for comparison
                         except (ValueError, AttributeError):
                             pass  # Use date field instead
