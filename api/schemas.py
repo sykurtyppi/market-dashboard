@@ -5,7 +5,7 @@ populated OpenAPI schema at /openapi.json, and a basis for client generation.
 """
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 State = Literal["good", "warn", "crit", "neutral"]
 
@@ -150,7 +150,7 @@ class SectorsResponse(BaseModel):
     rotation: Rotation
     vix_term: List[VixTenor]
     vix_structure: Optional[str] = None
-    warnings: List[str] = []
+    warnings: List[str] = Field(default_factory=list)
 
 
 class CreditCharts(BaseModel):
@@ -176,6 +176,7 @@ class TreasuryCharts(BaseModel):
 class TreasuryResponse(BaseModel):
     as_of: Optional[str] = None
     regime: Optional[str] = None
+    state: State = "neutral"
     regime_note: str
     metrics: List[Metric]
     charts: TreasuryCharts
@@ -189,6 +190,7 @@ class RepoCharts(BaseModel):
 class RepoResponse(BaseModel):
     as_of: Optional[str] = None
     regime: Optional[str] = None
+    state: State = "neutral"
     regime_note: str
     metrics: List[Metric]
     charts: RepoCharts

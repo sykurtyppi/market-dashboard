@@ -6,7 +6,7 @@ import { MetricCard, Section, Panel } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshness }) {
-  const state = data.metrics.find((m) => m.key === "move")?.state ?? "neutral";
+  const state = data.state;
   return (
     <>
       <Topbar title="Treasury Stress" subtitle="MOVE index — Treasury market volatility" freshness={freshness} />
