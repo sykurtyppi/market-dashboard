@@ -41,7 +41,7 @@ function Content({ data, freshness }: { data: FedWatch; freshness: Freshness }) 
         </Section>
 
         <section className="grid-2">
-          <Panel title="Next-Meeting Probabilities" sub="implied by fed funds futures">
+          <Panel title="Next-Meeting Probabilities" sub={data.degraded ? "fallback estimate — futures data unavailable" : "implied by fed funds futures"}>
             {data.probabilities.length > 0 ? (
               data.probabilities.map((p) => (
                 <div className="prob-row" key={p.outcome}>

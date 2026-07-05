@@ -216,6 +216,7 @@ class MostLikely(BaseModel):
 class FedWatchResponse(BaseModel):
     as_of: Optional[str] = None
     current_rate: Optional[str] = None
+    degraded: bool = False
     next_meeting: NextMeeting
     most_likely: MostLikely
     market_bias: Optional[str] = None

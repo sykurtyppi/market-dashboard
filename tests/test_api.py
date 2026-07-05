@@ -315,3 +315,26 @@ def test_cross_asset_returns_expected_shape(client):
     assert len(body["assets"]) == 2
     assert body["assets"][0]["state"] == "good"  # SPY +1%
     assert len(body["correlations"]) == 1
+
+
+def test_fed_watch_fallback_data_warns_marks_degraded_and_not_cached(client):
+    # Partial fallback: current_rate exists but the collector is on fallback
+    # data (rate_source=fallback, implied_rate None). Must warn, mark degraded,
+    # and not be cached (so it retries when futures data returns).
+    import api.macro_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.fed_watch_collector.FedWatchCollector") as MockFW:
+        MockFW.return_value.get_fed_watch_summary.return_value = {
+            "current_rate": "3.50% - 3.75%", "current_rate_mid": 3.625,
+            "rate_source": "fallback", "implied_rate": None,
+            "next_meeting": {"date_str": "Jul 29, 2026", "days_until": 23},
+            "most_likely": "No Change", "most_likely_prob": 60.0,
+            "probabilities": {"No Change": 60.0, "Cut 25bp": 15.0, "Hike 25bp": 15.0},
+        }
+        r = client.get("/api/fed-watch")
+        body = r.json()
+        assert r.status_code == 200
+        assert body["degraded"] is True
+        assert any("fallback" in w.lower() for w in body["warnings"])
+        assert "fed_watch" not in svc._cache  # degraded response not cached
+    svc._cache.clear()

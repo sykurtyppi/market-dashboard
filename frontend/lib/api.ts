@@ -136,6 +136,7 @@ export interface Repo {
 export interface FedWatch {
   as_of: string | null;
   current_rate: string | null;
+  degraded: boolean;
   next_meeting: { date: string | null; days_until: number | null };
   most_likely: { outcome: string | null; pct: number | null };
   market_bias: string | null;
