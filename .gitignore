@@ -53,5 +53,8 @@ sceduler/
 # VS Code
 .vscode/
 
+# Claude Code local tooling config
+.claude/launch.json
+
 # Logs
 *.log
