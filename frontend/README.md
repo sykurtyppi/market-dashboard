@@ -8,7 +8,7 @@ Part of the Phase 0 rewrite that replaces the Streamlit UI. See
 
 ## Prerequisites
 
-- Node 18.18+ (developed on Node 24)
+- Node 20.9+ (developed on Node 24; Next.js 16 requires Node >=20.9)
 - The Python API running (see below)
 
 ## Run locally
