@@ -27,7 +27,7 @@ const GROUPS: Group[] = [
   { label: "Credit & Rates", items: [
     { label: "Credit & Liquidity", icon: I.flow, href: "/credit" },
     { label: "Repo Market", icon: I.bars, href: "/repo" },
-    { label: "Fed Watch", icon: I.bars },
+    { label: "Fed Watch", icon: I.bars, href: "/fed-watch" },
   ]},
   { label: "Positioning", items: [
     { label: "COT Positioning", icon: I.flow },
@@ -36,7 +36,7 @@ const GROUPS: Group[] = [
     { label: "Institutional Flow", icon: I.bars },
   ]},
   { label: "Macro & Breadth", items: [
-    { label: "Cross-Asset", icon: I.globe },
+    { label: "Cross-Asset", icon: I.globe, href: "/cross-asset" },
     { label: "Economic Calendar", icon: I.bars },
     { label: "Market Breadth", icon: I.wave, href: "/breadth" },
     { label: "LEFT Strategy", icon: I.flow },

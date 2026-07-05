@@ -194,3 +194,61 @@ class RepoResponse(BaseModel):
     regime_note: str
     metrics: List[Metric]
     charts: RepoCharts
+
+
+# --- Phase 4 pages (macro, live) ---
+
+class RateProbability(BaseModel):
+    outcome: str
+    pct: Optional[float] = None
+
+
+class NextMeeting(BaseModel):
+    date: Optional[str] = None
+    days_until: Optional[int] = None
+
+
+class MostLikely(BaseModel):
+    outcome: Optional[str] = None
+    pct: Optional[float] = None
+
+
+class FedWatchResponse(BaseModel):
+    as_of: Optional[str] = None
+    current_rate: Optional[str] = None
+    next_meeting: NextMeeting
+    most_likely: MostLikely
+    market_bias: Optional[str] = None
+    bias_state: State = "neutral"
+    probabilities: List[RateProbability]
+    metrics: List[Metric]
+    warnings: List[str] = Field(default_factory=list)
+
+
+class AssetPerf(BaseModel):
+    ticker: str
+    name: Optional[str] = None
+    change_pct: Optional[float] = None
+    state: State
+
+
+class Correlation(BaseModel):
+    pair: Optional[str] = None
+    correlation: Optional[float] = None
+    strength: Optional[str] = None
+    interpretation: Optional[str] = None
+
+
+class CrossAssetRegime(BaseModel):
+    signal: Optional[str] = None
+    state: State = "neutral"
+    description: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class CrossAssetResponse(BaseModel):
+    as_of: Optional[str] = None
+    regime: CrossAssetRegime
+    assets: List[AssetPerf]
+    correlations: List[Correlation]
+    warnings: List[str] = Field(default_factory=list)

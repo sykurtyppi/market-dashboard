@@ -254,3 +254,64 @@ def test_credit_fed_assets_uses_most_recent_row_not_oldest(client):
     chart = body["charts"]["fed_assets"]
     if len(chart) >= 2:
         assert chart[0]["date"] <= chart[-1]["date"]
+
+
+# --- Phase 4 pages (macro, live — collectors mocked) ---
+
+def test_fed_watch_returns_expected_shape(client):
+    import api.macro_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.fed_watch_collector.FedWatchCollector") as MockFW:
+        MockFW.return_value.get_fed_watch_summary.return_value = {
+            "current_rate": "3.50% - 3.75%", "current_rate_mid": 3.625, "effr": 3.63,
+            "rate_source": "FRED", "rate_as_of": "2026-07-05",
+            "next_meeting": {"date_str": "Jul 29, 2026", "days_until": 23},
+            "most_likely": "No Change", "most_likely_prob": 98.0, "market_bias": "Neutral",
+            "probabilities": {"Cut 25bp": 0.0, "No Change": 98.0, "Hike 25bp": 2.0},
+            "implied_rate": 3.63, "terminal_rate": 3.5,
+        }
+        r = client.get("/api/fed-watch")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["current_rate"] == "3.50% - 3.75%"
+    assert body["next_meeting"]["days_until"] == 23
+    assert len(body["probabilities"]) == 3
+    assert body["most_likely"]["outcome"] == "No Change"
+
+
+def test_fed_watch_empty_data_warns_and_not_cached(client):
+    import api.macro_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.fed_watch_collector.FedWatchCollector") as MockFW:
+        MockFW.return_value.get_fed_watch_summary.return_value = {}
+        r = client.get("/api/fed-watch")
+        body = r.json()
+        assert r.status_code == 200
+        assert any("unavailable" in w.lower() for w in body["warnings"])
+        assert "fed_watch" not in svc._cache
+    svc._cache.clear()
+
+
+def test_cross_asset_returns_expected_shape(client):
+    import api.macro_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.cross_asset_collector.CrossAssetCollector") as MockCA:
+        MockCA.return_value.get_regime_signal.return_value = {
+            "regime": "Risk-On", "color": "#4CAF50", "description": "Cyclicals bid", "confidence": 70,
+        }
+        MockCA.return_value.get_asset_performance_summary.return_value = {
+            "SPY": {"name": "S&P 500", "price": 744.0, "change_pct": 1.0},
+            "VIX": {"name": "VIX", "price": 15.0, "change_pct": -3.0},
+        }
+        MockCA.return_value.get_key_correlations.return_value = [
+            {"pair": "Stock-Bond", "correlation": 0.42, "strength": "Moderate", "interpretation": "..."},
+        ]
+        r = client.get("/api/cross-asset")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["regime"]["state"] == "good"  # Risk-On -> good
+    assert len(body["assets"]) == 2
+    assert body["assets"][0]["state"] == "good"  # SPY +1%
+    assert len(body["correlations"]) == 1
