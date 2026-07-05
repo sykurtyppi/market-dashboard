@@ -71,6 +71,12 @@ body {
 .btn svg { width: 15px; height: 15px; }
 .btn.ghost { background: var(--surface); color: var(--ink-muted); border-color: var(--line-strong); }
 .btn.ghost:hover { background: #f4f6f8; color: var(--ink); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { background: var(--accent); }
+.btn.ghost:disabled:hover { background: var(--surface); color: var(--ink-muted); }
+.nav-item.soon { cursor: default; }
+.nav-item.soon:hover { background: transparent; color: var(--ink-muted); }
+.nav-item.soon::after { content: ""; }
 
 /* ---------- Content ---------- */
 .content { padding: 24px 28px 40px; display: flex; flex-direction: column; gap: 20px; }

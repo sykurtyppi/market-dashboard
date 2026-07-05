@@ -1,7 +1,11 @@
 // Typed client for the Market Risk Dashboard API.
+//
+// getOverview() runs in a Server Component, so the base URL is a server-only
+// env var (MARKET_API_URL) — not NEXT_PUBLIC_*, which would be inlined into the
+// browser bundle and frozen at build time. Add a NEXT_PUBLIC_ fallback only if
+// client-side fetching is introduced later.
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_BASE = process.env.MARKET_API_URL ?? "http://localhost:8000";
 
 export type State = "good" | "warn" | "crit" | "neutral";
 
