@@ -34,7 +34,8 @@ def render(components):
         
         if move_df is not None and not move_df.empty and not vix_df.empty:
             vix_series = vix_df['close'] if 'close' in vix_df.columns else vix_df.iloc[:, 0]
-            treasury_signal = components["treasury_analyzer"].analyze(move_df, vix_series)
+            treasury_analyzer = components.get("treasury_analyzer")
+            treasury_signal = treasury_analyzer.analyze(move_df, vix_series) if treasury_analyzer else None
         else:
             treasury_signal = None
     
@@ -104,8 +105,8 @@ def render(components):
             st.warning("Analysis unavailable")
     
     with col4:
-        if treasury_signal and hasattr(treasury_signal, 'divergence_type') and treasury_signal.divergence_type:
-            div_type = treasury_signal.divergence_type
+        div_type = getattr(treasury_signal, 'move_vix_divergence', None) if treasury_signal else None
+        if div_type:
             
             if "Leading" in div_type:
                 color = "#FF9800"
@@ -212,8 +213,9 @@ def render(components):
             )
             st.plotly_chart(fig, width='stretch')
             
-            if treasury_signal and hasattr(treasury_signal, 'divergence_type') and treasury_signal.divergence_type:
-                st.info(f"**Current Divergence:** {treasury_signal.divergence_type}")
+            div_type = getattr(treasury_signal, 'move_vix_divergence', None) if treasury_signal else None
+            if div_type:
+                st.info(f"**Current Divergence:** {div_type}")
                 if hasattr(treasury_signal, 'description'):
                     st.write(treasury_signal.description)
         else:

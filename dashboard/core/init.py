@@ -62,7 +62,7 @@ def init_components():
             "move": MOVECollector(),
             "repo": RepoCollector(),
             "qt_analyzer": QTAnalyzer() if fed_bs_collector else None,
-            "treasury_analyzer": TreasuryLiquidityAnalyzer() if fed_bs_collector else None,
+            "treasury_analyzer": TreasuryLiquidityAnalyzer(),
             "repo_analyzer": RepoAnalyzer(),
         }
 

@@ -50,7 +50,8 @@ def render(components):
 
         # ---------- Fed Balance Sheet / Net Liquidity ----------
         # Using CORRECT formula: Net Liquidity = Fed BS - TGA - RRP
-        fed_bs_snapshot = components["fed_bs"].get_full_snapshot()
+        fed_bs_collector = components.get("fed_bs")
+        fed_bs_snapshot = fed_bs_collector.get_full_snapshot() if fed_bs_collector else None
         net_liq_signal = None
 
         if fed_bs_snapshot and "balance_sheet_df" in fed_bs_snapshot:
@@ -66,11 +67,13 @@ def render(components):
 
             # Use the corrected LiquidityAnalyzer (Fed BS - TGA - RRP)
             try:
-                net_liq_signal = components["liquidity_analyzer"].analyze(
-                    fed_bs_snapshot["balance_sheet_df"],
-                    tga_series,
-                    rrp_series
-                )
+                liquidity_analyzer = components.get("liquidity_analyzer")
+                if liquidity_analyzer:
+                    net_liq_signal = liquidity_analyzer.analyze(
+                        fed_bs_snapshot["balance_sheet_df"],
+                        tga_series,
+                        rrp_series
+                    )
             except Exception as e:
                 logger.error(f"Error generating net liquidity signal: {e}")
 
