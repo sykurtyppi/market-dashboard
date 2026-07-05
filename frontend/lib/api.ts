@@ -75,6 +75,45 @@ export interface Breadth {
   charts: { ad_line: Point[]; mcclellan: Point[]; breadth_pct: Point[] };
 }
 
+export interface SectorRow {
+  ticker: string;
+  name: string | null;
+  category: string | null;
+  change_pct: number | null;
+  price: number | null;
+  state: State;
+}
+
+export interface VixTenor {
+  maturity: string;
+  days: number;
+  value: number;
+}
+
+export interface Sectors {
+  as_of: string | null;
+  sectors: SectorRow[];
+  rotation: {
+    signal: string | null;
+    state: State;
+    interpretation: string | null;
+    leading_sectors: string[];
+  };
+  vix_term: VixTenor[];
+  vix_structure: string | null;
+}
+
+export interface CreditLiquidity {
+  as_of: string | null;
+  metrics: Metric[];
+  charts: {
+    credit_spreads: { hy: Point[]; ig: Point[] };
+    fed_assets: Point[];
+    qt_cumulative: Point[];
+  };
+  notes: Record<string, string>;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -84,4 +123,6 @@ async function getJson<T>(path: string): Promise<T> {
 export const getOverview = () => getJson<Overview>("/api/overview");
 export const getVolatility = () => getJson<Volatility>("/api/volatility");
 export const getBreadth = () => getJson<Breadth>("/api/breadth");
+export const getSectors = () => getJson<Sectors>("/api/sectors");
+export const getCreditLiquidity = () => getJson<CreditLiquidity>("/api/credit-liquidity");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");

@@ -117,3 +117,88 @@ def build_breadth() -> Dict[str, Any]:
             "breadth_pct": pct_series,
         },
     }
+
+
+def _latest_val(df) -> float | None:
+    if df is None or df.empty:
+        return None
+    date_col = "date" if "date" in df.columns else df.columns[0]
+    cols = [c for c in df.columns if c != date_col]
+    return _num(df[cols[0]].iloc[-1]) if cols else None
+
+
+def _hy_state(hy: float | None) -> str:
+    if hy is None:
+        return "neutral"
+    if hy < 3.0:
+        return "good"
+    if hy < 5.0:
+        return "warn"
+    return "crit"
+
+
+def build_credit_liquidity() -> dict:
+    db = get_db()
+    hy_hist = db.get_indicator_history("credit_spread_hy", days=365)
+    ig_hist = db.get_indicator_history("credit_spread_ig", days=365)
+    fed = db.get_fed_balance_sheet_history(days=365)
+
+    hy = _latest_val(hy_hist)
+    ig = _latest_val(ig_hist)
+
+    total_assets = qt_cum = qt_pace = reserves = None
+    fed_date = None
+    if fed is not None and not fed.empty:
+        row = fed.iloc[-1]
+        fed_date = str(row.get("date"))
+        total_assets = _num(row.get("total_assets"))
+        qt_cum = _num(row.get("qt_cumulative"))
+        qt_pace = _num(row.get("qt_monthly_pace"))
+        reserves = _num(row.get("reserve_balances"))
+
+    # Fed figures are stored in $ millions; present in $T / $B.
+    to_t = lambda v: round(v / 1_000_000, 2) if v is not None else None
+    to_b = lambda v: round(v / 1_000, 1) if v is not None else None
+
+    metrics = [
+        {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
+         "state": _hy_state(hy), "source": "FRED (BAMLH0A0HYM2)"},
+        {"key": "ig", "label": "IG Credit Spread", "value": ig, "unit": "%",
+         "state": "neutral", "source": "FRED (BAMLC0A0CM)"},
+        {"key": "fed_assets", "label": "Fed Total Assets", "value": to_t(total_assets), "unit": "T",
+         "state": "neutral", "source": "FRED (WALCL)"},
+        {"key": "reserves", "label": "Reserve Balances", "value": to_t(reserves), "unit": "T",
+         "state": "neutral", "source": "FRED (WRESBAL)"},
+        {"key": "qt_cumulative", "label": "QT Cumulative", "value": to_b(qt_cum), "unit": "B",
+         "state": "neutral", "source": "Derived (Fed balance sheet)"},
+        {"key": "qt_pace", "label": "QT Monthly Pace", "value": to_b(qt_pace), "unit": "B",
+         "state": "neutral", "source": "Derived (Fed balance sheet)"},
+    ]
+
+    fed_assets_series = [
+        {"date": p["date"], "value": round(p["value"] / 1_000_000, 3)}
+        for p in _series(fed, value_col="total_assets")
+    ]
+    qt_series = [
+        {"date": p["date"], "value": round(p["value"] / 1_000, 1)}
+        for p in _series(fed, value_col="qt_cumulative")
+    ]
+
+    return {
+        "as_of": fed_date,
+        "metrics": metrics,
+        "charts": {
+            "credit_spreads": {
+                "hy": _series(hy_hist),
+                "ig": _series(ig_hist),
+            },
+            "fed_assets": fed_assets_series,
+            "qt_cumulative": qt_series,
+        },
+        "notes": {
+            "net_liquidity": (
+                "Net liquidity (Fed BS − TGA − RRP) needs the liquidity pipeline, "
+                "which isn't currently populated."
+            ),
+        },
+    }

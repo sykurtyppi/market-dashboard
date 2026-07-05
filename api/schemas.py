@@ -3,7 +3,7 @@
 These give the endpoints typed contracts: request/response validation, a
 populated OpenAPI schema at /openapi.json, and a basis for client generation.
 """
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -118,3 +118,48 @@ class RefreshResponse(BaseModel):
 
 class RefreshStatus(BaseModel):
     running: bool
+
+
+# --- Phase 2 pages ---
+
+class SectorRow(BaseModel):
+    ticker: str
+    name: Optional[str] = None
+    category: Optional[str] = None
+    change_pct: Optional[float] = None
+    price: Optional[float] = None
+    state: State
+
+
+class Rotation(BaseModel):
+    signal: Optional[str] = None
+    state: State
+    interpretation: Optional[str] = None
+    leading_sectors: List[str]
+
+
+class VixTenor(BaseModel):
+    maturity: str
+    days: int
+    value: float
+
+
+class SectorsResponse(BaseModel):
+    as_of: Optional[str] = None
+    sectors: List[SectorRow]
+    rotation: Rotation
+    vix_term: List[VixTenor]
+    vix_structure: Optional[str] = None
+
+
+class CreditCharts(BaseModel):
+    credit_spreads: CreditSpreads
+    fed_assets: List[Point]
+    qt_cumulative: List[Point]
+
+
+class CreditLiquidityResponse(BaseModel):
+    as_of: Optional[str] = None
+    metrics: List[Metric]
+    charts: CreditCharts
+    notes: Dict[str, str]
