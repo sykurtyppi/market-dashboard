@@ -133,6 +133,40 @@ export interface Repo {
   charts: { sofr_history: Point[]; rrp_history: Point[] };
 }
 
+export interface FedWatch {
+  as_of: string | null;
+  current_rate: string | null;
+  next_meeting: { date: string | null; days_until: number | null };
+  most_likely: { outcome: string | null; pct: number | null };
+  market_bias: string | null;
+  bias_state: State;
+  probabilities: { outcome: string; pct: number | null }[];
+  metrics: Metric[];
+  warnings: string[];
+}
+
+export interface AssetPerf {
+  ticker: string;
+  name: string | null;
+  change_pct: number | null;
+  state: State;
+}
+
+export interface Correlation {
+  pair: string | null;
+  correlation: number | null;
+  strength: string | null;
+  interpretation: string | null;
+}
+
+export interface CrossAsset {
+  as_of: string | null;
+  regime: { signal: string | null; state: State; description: string | null; confidence: number | null };
+  assets: AssetPerf[];
+  correlations: Correlation[];
+  warnings: string[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -146,4 +180,6 @@ export const getSectors = () => getJson<Sectors>("/api/sectors");
 export const getCreditLiquidity = () => getJson<CreditLiquidity>("/api/credit-liquidity");
 export const getTreasuryStress = () => getJson<TreasuryStress>("/api/treasury-stress");
 export const getRepo = () => getJson<Repo>("/api/repo");
+export const getFedWatch = () => getJson<FedWatch>("/api/fed-watch");
+export const getCrossAsset = () => getJson<CrossAsset>("/api/cross-asset");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");

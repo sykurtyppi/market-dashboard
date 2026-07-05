@@ -78,6 +78,13 @@ body {
 .nav-item.soon:hover { background: transparent; color: var(--ink-muted); }
 .nav-item.soon::after { content: ""; }
 
+/* ---------- Probability bars (Fed Watch) ---------- */
+.prob-row { display: grid; grid-template-columns: 130px 1fr 52px; gap: 12px; align-items: center; padding: 7px 0; }
+.prob-label { font-size: 13px; color: var(--ink-muted); }
+.prob-track { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.prob-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.prob-pct { font-size: 13px; text-align: right; }
+
 /* ---------- Inline notice / empty state ---------- */
 .notice { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 8px; font-size: 12.5px; border: 1px solid var(--warn); background: var(--warn-soft); color: var(--warn); }
 .empty-state { padding: 28px 16px; text-align: center; color: var(--ink-faint); font-size: 13px; }
