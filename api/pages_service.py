@@ -41,8 +41,10 @@ def build_volatility() -> Dict[str, Any]:
         "as_of": latest.get("date"),
         "regime": regime,
         "regime_note": (
-            "Implied above realized — premium is rich (sell-vol favorable)"
-            if (vrp is not None and vrp > 0)
+            "No VRP data available"
+            if vrp is None
+            else "Implied above realized — premium is rich (sell-vol favorable)"
+            if vrp > 0
             else "Realized above implied — recent turbulence"
         ),
         "metrics": metrics,
