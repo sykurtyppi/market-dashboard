@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import get_db, get_health
 from api.overview_service import build_overview
+from api.schemas import FreshnessDetail, HealthResponse, OverviewResponse
 
 logging.basicConfig(level=logging.INFO)
 
@@ -34,13 +35,12 @@ app.add_middleware(
 )
 
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthResponse)
 def health():
-    summary = get_health().get_health_summary()
-    return summary
+    return get_health().get_health_summary()
 
 
-@app.get("/api/freshness")
+@app.get("/api/freshness", response_model=FreshnessDetail)
 def freshness():
     snap = get_db().get_latest_snapshot(include_age=True) or {}
     return {
@@ -52,6 +52,6 @@ def freshness():
     }
 
 
-@app.get("/api/overview")
+@app.get("/api/overview", response_model=OverviewResponse)
 def overview():
     return build_overview()

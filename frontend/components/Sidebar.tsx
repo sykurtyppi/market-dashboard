@@ -60,7 +60,14 @@ export default function Sidebar() {
           <div className="nav-group" key={g.label}>
             <div className="nav-group-label">{g.label}</div>
             {g.items.map((it) => (
-              <a className="nav-item" href="#" key={it.label}>{it.icon}{it.label}</a>
+              <a
+                className="nav-item soon"
+                key={it.label}
+                aria-disabled="true"
+                title="Available in a later phase"
+              >
+                {it.icon}{it.label}
+              </a>
             ))}
           </div>
         ))}

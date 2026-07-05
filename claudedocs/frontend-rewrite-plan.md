@@ -57,12 +57,13 @@ update, mirroring today's "Update Data" button.
 
 | Layer | Choice | Rationale |
 |---|---|---|
-| API | **FastAPI** (Python) | Imports the existing collectors directly; async; auto OpenAPI docs; Pydantic response models give typed contracts the frontend consumes. |
+| API | **FastAPI** (Python) | Imports the existing collectors directly; async; auto OpenAPI docs. Pydantic response models added in Phase 0. |
 | Frontend | **Next.js (App Router) + TypeScript** | Mature, great DX, easy Vercel deploy, file-based routing maps cleanly to pages. |
 | Styling | **Tailwind CSS + CSS variables** | Design tokens as CSS vars; utility classes for speed; no component-library default look. |
-| Data fetching | **TanStack Query** | Caching, background revalidation, loading/error states out of the box (replaces Streamlit's implicit caching). |
-| Charts | **Plotly.js (react-plotly.js)** initially | Ports the existing Plotly figures fast for parity; wrapped in a themed config so they look designed, not default. Swap individual charts to a lighter lib later if needed. |
-| Icons | **Lucide** | Consistent line-icon set replacing all emoji. Status shown via semantic color dots, not glyphs. |
+| Data fetching | Server-Component `fetch` (Phase 0) → **TanStack Query** (Phase 1+) | Phase 0 fetches server-side with `cache: "no-store"`. TanStack Query comes with the first interactive/client feature (the Refresh button), for background revalidation and loading/error states. |
+| Charts | Hand-built SVG (Phase 0) → **Plotly.js** (Phase 1+) | Phase 0 renders lightweight themed SVG area/line charts. Plotly (ported from the existing figures) comes as chart richness grows — kept out of Phase 0 to keep the bundle small while validating the design. |
+| Fonts | **`geist` package (self-hosted)** | Geist Sans/Mono bundled locally — no build-time Google Fonts fetch, so builds work in offline/locked-down CI. |
+| Icons | **Inline SVG** (→ Lucide) | Line icons replacing all emoji; status shown via semantic color dots, not glyphs. Lucide can standardize the set later. |
 
 ---
 

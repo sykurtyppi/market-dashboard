@@ -1,36 +1,57 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Meridian — Market Risk (frontend)
 
-## Getting Started
+Custom frontend for the Market Risk Dashboard. Next.js (App Router) +
+TypeScript + Tailwind v4, talking to the FastAPI backend in [`../api`](../api).
 
-First, run the development server:
+Part of the Phase 0 rewrite that replaces the Streamlit UI. See
+[`../claudedocs/frontend-rewrite-plan.md`](../claudedocs/frontend-rewrite-plan.md).
+
+## Prerequisites
+
+- Node 18.18+ (developed on Node 24)
+- The Python API running (see below)
+
+## Run locally
+
+**1. Start the API** (from the repo root):
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# venv with requirements.txt installed
+venv/bin/uvicorn api.main:app --port 8000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+**2. Point the frontend at it.** Create `frontend/.env.local`:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+MARKET_API_URL=http://localhost:8000
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`MARKET_API_URL` is server-only (the Overview page fetches in a Server
+Component). Defaults to `http://localhost:8000` if unset. Use a different port
+if 8000 is taken (e.g. `http://localhost:8010`).
 
-## Learn More
+**3. Start the frontend:**
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:3000
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Scripts
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Dev server on :3000 |
+| `npm run build` | Production build (self-hosted fonts, no network needed) |
+| `npm start` | Serve the production build |
+| `npx tsc --noEmit` | Type-check |
 
-## Deploy on Vercel
+## Notes
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Fonts** are self-hosted via the `geist` package (`geist/font/*`), so
+  `npm run build` works in offline/locked-down CI without fetching Google Fonts.
+- **Data freshness**: the Overview fetch uses `cache: "no-store"` so market data
+  is never served stale from Next's cache.
+- **Design system** lives in `app/globals.css` (Swiss/data-terminal, light, no
+  emoji). Status is encoded with semantic color dots; figures use the mono face.
