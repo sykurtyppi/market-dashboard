@@ -20,15 +20,18 @@ from api.pages_service import (
     build_treasury_stress,
     build_volatility,
 )
+from api.flows_service import build_cot, build_options_flow
 from api.macro_service import build_cross_asset, build_fed_watch
 from api.sectors_service import build_sectors
 from api.schemas import (
     BreadthResponse,
+    COTResponse,
     CreditLiquidityResponse,
     CrossAssetResponse,
     FedWatchResponse,
     FreshnessDetail,
     HealthResponse,
+    OptionsFlowResponse,
     OverviewResponse,
     RefreshResponse,
     RefreshStatus,
@@ -124,6 +127,16 @@ def fed_watch():
 @app.get("/api/cross-asset", response_model=CrossAssetResponse)
 def cross_asset():
     return build_cross_asset()
+
+
+@app.get("/api/cot", response_model=COTResponse)
+def cot():
+    return build_cot()
+
+
+@app.get("/api/options-flow", response_model=OptionsFlowResponse)
+def options_flow():
+    return build_options_flow()
 
 
 def _run_refresh():

@@ -168,6 +168,41 @@ export interface CrossAsset {
   warnings: string[];
 }
 
+export interface COTPosition {
+  symbol: string;
+  name: string | null;
+  category: string | null;
+  date: string | null;
+  spec_net: number | null;
+  spec_net_change: number | null;
+  comm_net: number | null;
+  open_interest: number | null;
+}
+
+export interface COT {
+  as_of: string | null;
+  positions: COTPosition[];
+  warnings: string[];
+}
+
+export interface OptionsETF {
+  ticker: string;
+  price: number | null;
+  expiry: string | null;
+  dte: number | null;
+  put_call_ratio: number | null;
+  call_volume: number | null;
+  put_volume: number | null;
+  sentiment: string | null;
+  state: State;
+}
+
+export interface OptionsFlow {
+  as_of: string | null;
+  etfs: OptionsETF[];
+  warnings: string[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -183,4 +218,6 @@ export const getTreasuryStress = () => getJson<TreasuryStress>("/api/treasury-st
 export const getRepo = () => getJson<Repo>("/api/repo");
 export const getFedWatch = () => getJson<FedWatch>("/api/fed-watch");
 export const getCrossAsset = () => getJson<CrossAsset>("/api/cross-asset");
+export const getCot = () => getJson<COT>("/api/cot");
+export const getOptionsFlow = () => getJson<OptionsFlow>("/api/options-flow");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");
