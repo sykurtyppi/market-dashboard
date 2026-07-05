@@ -338,3 +338,60 @@ def test_fed_watch_fallback_data_warns_marks_degraded_and_not_cached(client):
         assert any("fallback" in w.lower() for w in body["warnings"])
         assert "fed_watch" not in svc._cache  # degraded response not cached
     svc._cache.clear()
+
+
+# --- Phase 5 pages (positioning & flows, live — collectors mocked) ---
+
+def test_cot_returns_expected_shape(client):
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.cot_collector.COTCollector") as MockCOT:
+        MockCOT.return_value.get_positioning_summary.return_value = {
+            "timestamp": "2026-07-05T00:00:00",
+            "positions": {
+                "ES": {"name": "S&P 500 E-mini", "category": "equity", "date": "2026-06-23",
+                       "spec_net": -35448, "spec_net_change": 158530, "comm_net": -87130,
+                       "open_interest": 1980254},
+            },
+        }
+        r = client.get("/api/cot")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["positions"]) == 1
+    assert body["positions"][0]["symbol"] == "ES"
+    assert body["positions"][0]["spec_net"] == -35448
+
+
+def test_cot_empty_data_warns_and_not_cached(client):
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.cot_collector.COTCollector") as MockCOT:
+        MockCOT.return_value.get_positioning_summary.return_value = {}
+        r = client.get("/api/cot")
+        body = r.json()
+        assert r.status_code == 200
+        assert body["positions"] == []
+        assert any("unavailable" in w.lower() for w in body["warnings"])
+        assert "cot" not in svc._cache
+    svc._cache.clear()
+
+
+def test_options_flow_returns_expected_shape(client):
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.options_flow_collector.OptionsFlowCollector") as MockOF:
+        MockOF.return_value.get_market_options_summary.return_value = {
+            "timestamp": "2026-07-05T00:00:00",
+            "spy": {"ticker": "SPY", "current_price": 744.0, "expiry": "2026-07-06", "dte": 1,
+                    "total_call_volume": 900000, "total_put_volume": 850000,
+                    "put_call_ratio": 0.94, "sentiment": "BULLISH", "status": "ok"},
+            "qqq": {"status": "error"},  # dropped
+        }
+        r = client.get("/api/options-flow")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["etfs"]) == 1  # only the ok one
+    assert body["etfs"][0]["ticker"] == "SPY"
+    assert body["etfs"][0]["state"] == "good"  # BULLISH -> good

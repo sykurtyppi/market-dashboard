@@ -30,9 +30,9 @@ const GROUPS: Group[] = [
     { label: "Fed Watch", icon: I.bars, href: "/fed-watch" },
   ]},
   { label: "Positioning", items: [
-    { label: "COT Positioning", icon: I.flow },
+    { label: "COT Positioning", icon: I.flow, href: "/cot" },
     { label: "CTA Flow", icon: I.flow },
-    { label: "Options Flow", icon: I.wave },
+    { label: "Options Flow", icon: I.wave, href: "/options-flow" },
     { label: "Institutional Flow", icon: I.bars },
   ]},
   { label: "Macro & Breadth", items: [

@@ -253,3 +253,40 @@ class CrossAssetResponse(BaseModel):
     assets: List[AssetPerf]
     correlations: List[Correlation]
     warnings: List[str] = Field(default_factory=list)
+
+
+# --- Phase 5 pages (positioning & flows, live) ---
+
+class COTPosition(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    category: Optional[str] = None
+    date: Optional[str] = None
+    spec_net: Optional[float] = None
+    spec_net_change: Optional[float] = None
+    comm_net: Optional[float] = None
+    open_interest: Optional[float] = None
+
+
+class COTResponse(BaseModel):
+    as_of: Optional[str] = None
+    positions: List[COTPosition]
+    warnings: List[str] = Field(default_factory=list)
+
+
+class OptionsETF(BaseModel):
+    ticker: str
+    price: Optional[float] = None
+    expiry: Optional[str] = None
+    dte: Optional[int] = None
+    put_call_ratio: Optional[float] = None
+    call_volume: Optional[float] = None
+    put_volume: Optional[float] = None
+    sentiment: Optional[str] = None
+    state: State
+
+
+class OptionsFlowResponse(BaseModel):
+    as_of: Optional[str] = None
+    etfs: List[OptionsETF]
+    warnings: List[str] = Field(default_factory=list)
