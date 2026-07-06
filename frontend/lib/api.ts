@@ -240,6 +240,38 @@ export interface EconomicCalendar {
   warnings: string[];
 }
 
+export interface Sentiment {
+  as_of: string | null;
+  fear_greed: { score: number | null; rating: string | null; state: State };
+  put_call_ratio: number | null;
+  warnings: string[];
+}
+
+export interface Left {
+  as_of: string | null;
+  signal: string | null;
+  state: State;
+  metrics: Metric[];
+  charts: { spread: Point[]; ema: Point[] };
+  warnings: string[];
+}
+
+export interface CTAPosition {
+  symbol: string;
+  position: string | null;
+  exposure: number | null;
+  state: State;
+}
+
+export interface CTA {
+  as_of: string | null;
+  positions: CTAPosition[];
+  long_count: number;
+  short_count: number;
+  flat_count: number;
+  warnings: string[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -259,4 +291,7 @@ export const getCot = () => getJson<COT>("/api/cot");
 export const getOptionsFlow = () => getJson<OptionsFlow>("/api/options-flow");
 export const getInstitutional = () => getJson<Institutional>("/api/institutional");
 export const getEconomicCalendar = () => getJson<EconomicCalendar>("/api/economic-calendar");
+export const getSentiment = () => getJson<Sentiment>("/api/sentiment");
+export const getLeft = () => getJson<Left>("/api/left");
+export const getCta = () => getJson<CTA>("/api/cta");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");

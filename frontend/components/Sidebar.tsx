@@ -31,7 +31,7 @@ const GROUPS: Group[] = [
   ]},
   { label: "Positioning", items: [
     { label: "COT Positioning", icon: I.flow, href: "/cot" },
-    { label: "CTA Flow", icon: I.flow },
+    { label: "CTA Flow", icon: I.flow, href: "/cta" },
     { label: "Options Flow", icon: I.wave, href: "/options-flow" },
     { label: "Institutional Flow", icon: I.bars, href: "/institutional" },
   ]},
@@ -39,8 +39,8 @@ const GROUPS: Group[] = [
     { label: "Cross-Asset", icon: I.globe, href: "/cross-asset" },
     { label: "Economic Calendar", icon: I.bars, href: "/economic-calendar" },
     { label: "Market Breadth", icon: I.wave, href: "/breadth" },
-    { label: "LEFT Strategy", icon: I.flow },
-    { label: "Sentiment", icon: I.globe },
+    { label: "LEFT Strategy", icon: I.flow, href: "/left" },
+    { label: "Sentiment", icon: I.globe, href: "/sentiment" },
   ]},
   { label: "System", items: [
     { label: "Settings", icon: I.gear },

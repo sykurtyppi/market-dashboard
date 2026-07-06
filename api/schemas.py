@@ -350,3 +350,48 @@ class EconomicCalendarResponse(BaseModel):
     as_of: Optional[str] = None
     events: List[EconomicEvent]
     warnings: List[str] = Field(default_factory=list)
+
+
+# --- Final pages: Sentiment, LEFT Strategy, CTA Flow ---
+
+class FearGreed(BaseModel):
+    score: Optional[float] = None
+    rating: Optional[str] = None
+    state: State = "neutral"
+
+
+class SentimentResponse(BaseModel):
+    as_of: Optional[str] = None
+    fear_greed: FearGreed
+    put_call_ratio: Optional[float] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class LeftCharts(BaseModel):
+    spread: List[Point]
+    ema: List[Point]
+
+
+class LeftResponse(BaseModel):
+    as_of: Optional[str] = None
+    signal: Optional[str] = None
+    state: State = "neutral"
+    metrics: List[Metric]
+    charts: LeftCharts
+    warnings: List[str] = Field(default_factory=list)
+
+
+class CTAPosition(BaseModel):
+    symbol: str
+    position: Optional[str] = None
+    exposure: Optional[float] = None
+    state: State
+
+
+class CTAResponse(BaseModel):
+    as_of: Optional[str] = None
+    positions: List[CTAPosition]
+    long_count: int = 0
+    short_count: int = 0
+    flat_count: int = 0
+    warnings: List[str] = Field(default_factory=list)
