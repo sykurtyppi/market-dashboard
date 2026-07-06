@@ -83,7 +83,7 @@ def _signal_state(signal: str | None, sentiment: str | None = None) -> str:
         return "good"
     if s in ("BEARISH", "WEAK", "STRESS"):
         return "crit"
-    if s in ("ELEVATED", "CAUTION", "TIGHTENING"):
+    if s in ("ELEVATED", "CAUTION", "CAUTIOUS", "TIGHTENING"):
         return "warn"
     if s in ("NEUTRAL", "NORMAL", "LOW", "MIXED"):
         return "neutral"
