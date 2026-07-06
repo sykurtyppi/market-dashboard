@@ -473,6 +473,20 @@ def test_institutional_returns_expected_shape(client):
     assert body["auctions"]["state"] == "good"  # Strong -> good
 
 
+def test_institutional_signal_state_mapping():
+    # The mapper must classify the real collector signal vocabulary, including
+    # insider "CAUTIOUS" -> warn (not neutral).
+    from api.flows_service import _signal_state
+    assert _signal_state("BEARISH") == "crit"
+    assert _signal_state("BULLISH") == "good"
+    assert _signal_state("CAUTIOUS") == "warn"
+    assert _signal_state("ELEVATED") == "warn"
+    assert _signal_state("NORMAL") == "neutral"
+    assert _signal_state("NEUTRAL") == "neutral"
+    # Falls back to prose sentiment only when no signal is present.
+    assert _signal_state(None, "BULLISH") == "good"
+
+
 def test_fomc_2026_dates_match_official_calendar():
     # Regression: 2026 FOMC decision days must match the official Fed calendar
     # (Oct 27-28 and Dec 8-9, not the earlier wrong Nov 4 / Dec 16).
