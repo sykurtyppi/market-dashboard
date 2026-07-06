@@ -33,11 +33,11 @@ const GROUPS: Group[] = [
     { label: "COT Positioning", icon: I.flow, href: "/cot" },
     { label: "CTA Flow", icon: I.flow },
     { label: "Options Flow", icon: I.wave, href: "/options-flow" },
-    { label: "Institutional Flow", icon: I.bars },
+    { label: "Institutional Flow", icon: I.bars, href: "/institutional" },
   ]},
   { label: "Macro & Breadth", items: [
     { label: "Cross-Asset", icon: I.globe, href: "/cross-asset" },
-    { label: "Economic Calendar", icon: I.bars },
+    { label: "Economic Calendar", icon: I.bars, href: "/economic-calendar" },
     { label: "Market Breadth", icon: I.wave, href: "/breadth" },
     { label: "LEFT Strategy", icon: I.flow },
     { label: "Sentiment", icon: I.globe },

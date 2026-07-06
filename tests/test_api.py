@@ -438,3 +438,80 @@ def test_options_flow_empty_data_warns_and_not_cached(client):
         assert any("unavailable" in w.lower() for w in body["warnings"])
         assert "options_flow" not in svc._cache
     svc._cache.clear()
+
+
+# --- Phase 6 pages (Institutional Flow, Economic Calendar — collectors mocked) ---
+
+def test_institutional_returns_expected_shape(client):
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.dark_pool_collector.DarkPoolCollector") as MockDP, \
+         patch("data_collectors.insider_trading_collector.InsiderTradingCollector") as MockIns, \
+         patch("data_collectors.treasury_auction_collector.TreasuryAuctionCollector") as MockAu:
+        MockDP.return_value.get_dark_pool_summary.return_value = {
+            "avg_dark_pool_pct": 38.0, "etf_avg_pct": 40.0, "stock_avg_pct": 36.0,
+            "sentiment": "Normal Activity", "interpretation": "...", "last_updated": "2026-07-05"}
+        MockIns.return_value.get_insider_summary.return_value = {
+            "total_transactions": 30, "buy_count": 5, "sell_count": 25,
+            "buy_sell_ratio": 0.2, "sentiment": "BEARISH", "period_days": 30}
+        MockAu.return_value.get_auction_summary.return_value = {
+            "avg_bid_to_cover": 2.48, "avg_indirect_pct": 66.9, "avg_direct_pct": 18.8,
+            "auction_count": 3, "weak_auctions": 0, "strong_auctions": 1, "health": "Strong Demand"}
+        r = client.get("/api/institutional")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["warnings"] == []
+    assert body["dark_pool"]["avg_pct"] == 38.0
+    assert body["insider"]["state"] == "crit"  # BEARISH -> crit
+    assert body["auctions"]["state"] == "good"  # Strong -> good
+
+
+def test_institutional_partial_warns_and_not_cached(client):
+    import api.flows_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.dark_pool_collector.DarkPoolCollector") as MockDP, \
+         patch("data_collectors.insider_trading_collector.InsiderTradingCollector") as MockIns, \
+         patch("data_collectors.treasury_auction_collector.TreasuryAuctionCollector") as MockAu:
+        MockDP.return_value.get_dark_pool_summary.return_value = {"avg_dark_pool_pct": 38.0}
+        MockIns.return_value.get_insider_summary.return_value = {}  # missing
+        MockAu.return_value.get_auction_summary.return_value = {}   # missing
+        r = client.get("/api/institutional")
+        body = r.json()
+        assert r.status_code == 200
+        assert body["insider"] is None and body["auctions"] is None
+        assert any("partially unavailable" in w.lower() for w in body["warnings"])
+        assert "institutional" not in svc._cache
+    svc._cache.clear()
+
+
+def test_economic_calendar_returns_expected_shape(client):
+    import api.macro_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.economic_calendar_collector.EconomicCalendarCollector") as MockEC:
+        MockEC.return_value.get_upcoming_events.return_value = [
+            {"name": "CPI (Inflation)", "date": "2026-07-13", "importance": "high",
+             "category": "Inflation", "actual": 333.9, "forecast": None, "previous": 332.4,
+             "yoy_change": 4.27, "unit": "% YoY"},
+        ]
+        r = client.get("/api/economic-calendar")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["events"]) == 1
+    assert body["events"][0]["name"] == "CPI (Inflation)"
+    assert body["events"][0]["importance"] == "high"
+
+
+def test_economic_calendar_empty_warns_and_not_cached(client):
+    import api.macro_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.economic_calendar_collector.EconomicCalendarCollector") as MockEC:
+        MockEC.return_value.get_upcoming_events.return_value = []
+        r = client.get("/api/economic-calendar")
+        body = r.json()
+        assert r.status_code == 200
+        assert body["events"] == []
+        assert any("unavailable" in w.lower() for w in body["warnings"])
+        assert "economic_calendar" not in svc._cache
+    svc._cache.clear()

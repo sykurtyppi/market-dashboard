@@ -20,17 +20,23 @@ from api.pages_service import (
     build_treasury_stress,
     build_volatility,
 )
-from api.flows_service import build_cot, build_options_flow
-from api.macro_service import build_cross_asset, build_fed_watch
+from api.flows_service import build_cot, build_institutional, build_options_flow
+from api.macro_service import (
+    build_cross_asset,
+    build_economic_calendar,
+    build_fed_watch,
+)
 from api.sectors_service import build_sectors
 from api.schemas import (
     BreadthResponse,
     COTResponse,
     CreditLiquidityResponse,
     CrossAssetResponse,
+    EconomicCalendarResponse,
     FedWatchResponse,
     FreshnessDetail,
     HealthResponse,
+    InstitutionalResponse,
     OptionsFlowResponse,
     OverviewResponse,
     RefreshResponse,
@@ -137,6 +143,16 @@ def cot():
 @app.get("/api/options-flow", response_model=OptionsFlowResponse)
 def options_flow():
     return build_options_flow()
+
+
+@app.get("/api/institutional", response_model=InstitutionalResponse)
+def institutional():
+    return build_institutional()
+
+
+@app.get("/api/economic-calendar", response_model=EconomicCalendarResponse)
+def economic_calendar():
+    return build_economic_calendar()
 
 
 def _run_refresh():
