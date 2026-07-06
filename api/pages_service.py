@@ -3,6 +3,7 @@ Liquidity, Treasury Stress, Repo Market).
 
 All read cached SQLite history — no live collector calls per request.
 """
+from statistics import mean, pstdev
 from typing import Any, Dict, List
 
 from api.deps import get_db
@@ -22,6 +23,41 @@ def _asc(df):
     return df.sort_values(date_col).reset_index(drop=True)
 
 
+def _vrp_stats(hist, current_vrp: float | None) -> Dict[str, Any]:
+    if hist is None or hist.empty or "vrp" not in hist.columns:
+        return {
+            "avg_vrp": None,
+            "std_dev": None,
+            "current_percentile": None,
+            "max_vrp": None,
+            "min_vrp": None,
+            "observations": 0,
+        }
+
+    values = [_num(v) for v in hist["vrp"].tolist()]
+    values = [v for v in values if v is not None]
+    if not values:
+        return {
+            "avg_vrp": None,
+            "std_dev": None,
+            "current_percentile": None,
+            "max_vrp": None,
+            "min_vrp": None,
+            "observations": 0,
+        }
+
+    current = current_vrp if current_vrp is not None else values[-1]
+    percentile = (sum(1 for v in values if v < current) / len(values)) * 100
+    return {
+        "avg_vrp": round(mean(values), 2),
+        "std_dev": round(pstdev(values), 2) if len(values) > 1 else 0.0,
+        "current_percentile": round(percentile, 1),
+        "max_vrp": round(max(values), 2),
+        "min_vrp": round(min(values), 2),
+        "observations": len(values),
+    }
+
+
 def _vrp_state(vrp: float | None) -> str:
     if vrp is None:
         return "neutral"
@@ -31,7 +67,7 @@ def _vrp_state(vrp: float | None) -> str:
 def build_volatility() -> Dict[str, Any]:
     db = get_db()
     latest = db.get_latest_vrp() or {}
-    hist = db.get_vrp_history(days=180)
+    hist = _asc(db.get_vrp_history(days=180))
 
     vix = _num(latest.get("vix"))
     rv = _num(latest.get("realized_vol"))
@@ -62,6 +98,7 @@ def build_volatility() -> Dict[str, Any]:
             else "Realized above implied — recent turbulence"
         ),
         "metrics": metrics,
+        "stats": _vrp_stats(hist, vrp),
         "charts": {
             "vrp_history": _series(hist, value_col="vrp"),
             "vix": _series(hist, value_col="vix"),

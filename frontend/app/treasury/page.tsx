@@ -41,14 +41,14 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
 
         <section className="grid-2">
           <Panel title="MOVE Index" sub="1Y">
-            <AreaChart points={data.charts.move_history} color="var(--accent)" />
+            <AreaChart points={data.charts.move_history} color="var(--accent)" label="MOVE" />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />MOVE</span>
               <span style={{ color: "var(--ink-faint)" }}>&lt;80 calm · 80–120 normal · 120–150 elevated · &gt;150 stress</span>
             </div>
           </Panel>
           <Panel title="Historical Percentile" sub="1Y">
-            <AreaChart points={data.charts.percentile_history} color="var(--warn)" />
+            <AreaChart points={data.charts.percentile_history} color="var(--warn)" label="Percentile" unit="%" />
             <div className="legend">
               <span><i style={{ background: "var(--warn)" }} />Percentile</span>
             </div>

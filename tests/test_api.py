@@ -71,9 +71,11 @@ def test_volatility_returns_expected_shape(client):
     r = client.get("/api/volatility")
     assert r.status_code == 200
     body = r.json()
-    assert {"regime_note", "metrics", "charts"}.issubset(body)
+    assert {"regime_note", "metrics", "charts", "stats"}.issubset(body)
     for key in ("vrp_history", "vix", "realized_vol"):
         assert key in body["charts"]
+    for key in ("avg_vrp", "std_dev", "current_percentile", "max_vrp", "min_vrp", "observations"):
+        assert key in body["stats"]
     valid = {"good", "warn", "crit", "neutral"}
     assert all(m["state"] in valid for m in body["metrics"])
 

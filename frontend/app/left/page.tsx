@@ -41,8 +41,8 @@ function Content({ data, freshness }: { data: Left; freshness: Freshness }) {
         <Section title="Spread vs Trend" aside="2Y · %">
           <Panel title="HYG OAS vs 330-day EMA">
             <MultiLineChart series={[
-              { points: data.charts.spread, color: "var(--crit)" },
-              { points: data.charts.ema, color: "var(--accent)" },
+              { points: data.charts.spread, color: "var(--crit)", label: "HYG OAS" },
+              { points: data.charts.ema, color: "var(--accent)", label: "330d EMA" },
             ]} />
             <div className="legend">
               <span><i style={{ background: "var(--crit)" }} />HYG OAS</span>

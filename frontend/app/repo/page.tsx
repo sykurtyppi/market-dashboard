@@ -41,14 +41,14 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
 
         <section className="grid-2">
           <Panel title="SOFR" sub="1Y · %">
-            <AreaChart points={data.charts.sofr_history} color="var(--accent)" />
+            <AreaChart points={data.charts.sofr_history} color="var(--accent)" label="SOFR" />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />SOFR</span>
               <span style={{ color: "var(--ink-faint)" }}>Secured Overnight Financing Rate</span>
             </div>
           </Panel>
           <Panel title="Overnight RRP Volume" sub="1Y">
-            <AreaChart points={data.charts.rrp_history} color="var(--good)" />
+            <AreaChart points={data.charts.rrp_history} color="var(--good)" label="Overnight RRP" />
             <div className="legend">
               <span><i style={{ background: "var(--good)" }} />RRP</span>
               <span style={{ color: "var(--ink-faint)" }}>Reverse-repo take-up (liquidity buffer)</span>

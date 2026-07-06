@@ -91,11 +91,21 @@ class VolatilityCharts(BaseModel):
     realized_vol: List[Point]
 
 
+class VolatilityStats(BaseModel):
+    avg_vrp: Optional[float] = None
+    std_dev: Optional[float] = None
+    current_percentile: Optional[float] = None
+    max_vrp: Optional[float] = None
+    min_vrp: Optional[float] = None
+    observations: int = 0
+
+
 class VolatilityResponse(BaseModel):
     as_of: Optional[str] = None
     regime: Optional[str] = None
     regime_note: str
     metrics: List[Metric]
+    stats: VolatilityStats
     charts: VolatilityCharts
 
 

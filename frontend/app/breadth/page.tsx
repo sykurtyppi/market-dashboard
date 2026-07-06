@@ -18,14 +18,14 @@ function Content({ data, freshness }: { data: Breadth; freshness: Freshness }) {
 
         <section className="grid-2">
           <Panel title="Advance–Decline Line" sub="120d">
-            <AreaChart points={data.charts.ad_line} color="var(--accent)" />
+            <AreaChart points={data.charts.ad_line} color="var(--accent)" label="A/D line" />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />Cumulative A/D</span>
               <span style={{ color: "var(--ink-faint)" }}>Rising = broad participation</span>
             </div>
           </Panel>
           <Panel title="McClellan Oscillator" sub="120d">
-            <AreaChart points={data.charts.mcclellan} color="var(--good)" />
+            <AreaChart points={data.charts.mcclellan} color="var(--good)" label="McClellan" />
             <div className="legend">
               <span><i style={{ background: "var(--good)" }} />McClellan</span>
               <span style={{ color: "var(--ink-faint)" }}>Above zero = positive breadth momentum</span>
@@ -35,7 +35,7 @@ function Content({ data, freshness }: { data: Breadth; freshness: Freshness }) {
 
         <Section title="Breadth Percentage" aside="120d">
           <Panel title="Advancers as % of active issues">
-            <AreaChart points={data.charts.breadth_pct} color="var(--accent)" />
+            <AreaChart points={data.charts.breadth_pct} color="var(--accent)" label="Advancers" unit="%" />
           </Panel>
         </Section>
       </div>

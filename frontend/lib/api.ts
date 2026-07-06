@@ -66,6 +66,14 @@ export interface Volatility {
   regime: string | null;
   regime_note: string;
   metrics: Metric[];
+  stats: {
+    avg_vrp: number | null;
+    std_dev: number | null;
+    current_percentile: number | null;
+    max_vrp: number | null;
+    min_vrp: number | null;
+    observations: number;
+  };
   charts: { vrp_history: Point[]; vix: Point[]; realized_vol: Point[] };
 }
 
