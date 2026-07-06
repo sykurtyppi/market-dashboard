@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Point } from "@/lib/api";
+import type { Point } from "@/lib/api";
 import VolatilityChart from "@/components/VolatilityChart";
 
 type Range = "1M" | "3M" | "6M" | "ALL";
@@ -132,7 +132,7 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 14 }}>
-        <StatCard label="Avg VRP" value={fmt(stats.avg)} note="Mean over selected range" />
+        <StatCard label="Avg VRP" value={fmt(stats.avg)} note="Mean over plotted range" />
         <StatCard label="VRP Std Dev" value={fmt(stats.std)} note="Dispersion of the spread" />
         <StatCard label="Current Percentile" value={fmt(stats.percentile, "%")} note="Low = realized vol is rich" />
         <StatCard label="Max / Min VRP" value={fmt(stats.max)} note={`Min ${fmt(stats.min)}`} />
