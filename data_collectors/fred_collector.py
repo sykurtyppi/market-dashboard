@@ -127,7 +127,7 @@ class FREDCollector:
         
         indicators = {
             'credit_spread_hy': 'BAMLH0A0HYM2',    # High Yield OAS
-            'credit_spread_ig': 'BAMLC0A0CMEY',    # Investment Grade OAS
+            'credit_spread_ig': 'BAMLC0A0CM',      # Investment Grade OAS (spread, not the *EY yield)
             'treasury_10y': 'DGS10',                # 10-Year Treasury
             'treasury_3m': 'DGS3MO',                # 3-Month Treasury
             'treasury_2y': 'DGS2',                  # 2-Year Treasury
@@ -254,7 +254,7 @@ class FREDCollector:
 
         indicators = {
             'credit_spread_hy': 'BAMLH0A0HYM2',
-            'credit_spread_ig': 'BAMLC0A0CMEY',
+            'credit_spread_ig': 'BAMLC0A0CM',   # IG OAS (spread), not BAMLC0A0CMEY (yield)
             'treasury_10y': 'DGS10',
             'treasury_2y': 'DGS2',
             'fed_funds': 'DFF',
