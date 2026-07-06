@@ -364,6 +364,7 @@ class SentimentResponse(BaseModel):
     as_of: Optional[str] = None
     fear_greed: FearGreed
     put_call_ratio: Optional[float] = None
+    put_call_source: Optional[str] = None
     warnings: List[str] = Field(default_factory=list)
 
 
