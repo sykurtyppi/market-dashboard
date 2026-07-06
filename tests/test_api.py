@@ -736,3 +736,16 @@ def test_settings_accepts_correct_token_and_marks_protected(client, monkeypatch)
     body = r.json()
     assert body["protected"] is True
     assert body["warnings"] == []
+
+
+def test_volatility_chart_series_are_date_aligned(client):
+    # VIX / realized / VRP are zipped by index on the frontend, so the three
+    # chart series must share dates position-for-position. Guards against the
+    # per-column dropna/downsample desync _aligned_series was added to prevent.
+    r = client.get("/api/volatility")
+    assert r.status_code == 200
+    c = r.json()["charts"]
+    vix_d = [p["date"] for p in c["vix"]]
+    rv_d = [p["date"] for p in c["realized_vol"]]
+    vrp_d = [p["date"] for p in c["vrp_history"]]
+    assert vix_d == rv_d == vrp_d, "vix/realized/vrp chart series must be date-aligned"

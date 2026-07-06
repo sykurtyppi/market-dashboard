@@ -40,7 +40,9 @@ function niceTicks(min: number, max: number, count: number): number[] {
   const first = Math.ceil(min / step) * step;
   const ticks: number[] = [];
   for (let v = first; v <= max + step * 0.001; v += step) ticks.push(Number(v.toFixed(4)));
-  return ticks;
+  // Flat data (min == max) can yield zero ticks; fall back to the value itself
+  // so the axis still shows a gridline/label rather than rendering bare.
+  return ticks.length ? ticks : [Number(min.toFixed(2))];
 }
 
 interface VolatilityChartProps {
@@ -97,12 +99,16 @@ export default function VolatilityChart({ vix, realizedVol, vrp }: VolatilityCha
 
   const onMove = (e: MouseEvent<HTMLDivElement>) => {
     const b = e.currentTarget.getBoundingClientRect();
+    if (b.width <= 0) return;  // zero-width (hidden/collapsed) → NaN ratio
     const ratio = Math.max(0, Math.min(1, (e.clientX - b.left) / b.width));
     const i = Math.round(ratio * (n - 1));
     setHover({ i, xPct: xi(i) });
   };
 
-  const hi = hover?.i ?? null;
+  // Clamp the stored hover index against the *current* series length. Clicking a
+  // range button shrinks the arrays without a mousemove, so a stale hover.i can
+  // exceed n — deref'ing vixPts[hi] would otherwise crash the tooltip render.
+  const hi = hover && Number.isInteger(hover.i) && hover.i >= 0 && hover.i < n ? hover.i : null;
   const hVix = hi !== null ? vixPts[hi].value : null;
   const hRv = hi !== null ? rvPts[hi].value : null;
   const hVrp = hi !== null ? vrpPts[hi].value : null;
@@ -122,8 +128,11 @@ export default function VolatilityChart({ vix, realizedVol, vrp }: VolatilityCha
     color, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", pointerEvents: "none", boxShadow: "0 1px 2px rgba(22,24,29,.05)",
   });
 
+  const summary = `VIX vs realized volatility with VRP spread, ${n} points. ` +
+    `Latest: VIX ${lastVix.toFixed(2)} percent, realized ${lastRv.toFixed(2)} percent, VRP ${lastVrp.toFixed(2)} points.`;
+
   return (
-    <div style={{ position: "relative", paddingLeft: 40, paddingBottom: 22, paddingTop: 6 }}>
+    <div role="img" aria-label={summary} style={{ position: "relative", paddingLeft: 40, paddingBottom: 22, paddingTop: 6 }}>
       <div style={{ position: "relative" }}>
         {/* ---- Top plot: VIX vs realized ---- */}
         <div style={{ position: "relative", height: MAIN_H }}>
