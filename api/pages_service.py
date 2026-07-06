@@ -10,6 +10,40 @@ from api.deps import get_db
 from api.overview_service import _num, _series
 
 
+def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, List[Dict[str, Any]]]:
+    """Build several [{date, value}] series that share dates index-for-index.
+
+    Charts that compare columns (VIX vs realized vs VRP) zip the series by index
+    on the frontend, so they must stay aligned. Dropping NaNs and downsampling
+    each column independently (as _series does) can desync them when the columns
+    have different NaN patterns — so keep only rows where *all* requested columns
+    are present, then downsample once on a shared index.
+    """
+    empty = {c: [] for c in cols}
+    if hist is None or getattr(hist, "empty", True):
+        return empty
+    date_col = "date" if "date" in hist.columns else hist.columns[0]
+    present = [c for c in cols if c in hist.columns]
+    if not present:
+        return empty
+    clean = hist[[date_col, *present]].dropna().reset_index(drop=True)
+    if clean.empty:
+        return empty
+    if len(clean) > max_points:
+        step = len(clean) / max_points
+        idx = sorted({int(i * step) for i in range(max_points)} | {len(clean) - 1})
+        clean = clean.iloc[idx]
+    out: Dict[str, List[Dict[str, Any]]] = {c: [] for c in cols}
+    for _, row in clean.iterrows():
+        d = row[date_col]
+        d_str = str(d.date()) if hasattr(d, "date") else str(d)
+        for c in present:
+            v = _num(row[c])
+            if v is not None:
+                out[c].append({"date": d_str, "value": v})
+    return out
+
+
 def _asc(df):
     """Normalize a history frame to ascending-by-date order.
 
@@ -68,8 +102,9 @@ def build_volatility() -> Dict[str, Any]:
     db = get_db()
     latest = db.get_latest_vrp() or {}
     # Fetch a wide window so the frontend range control (1M/3M/6M/All) has full
-    # history to filter; _series downsamples to <=180 points for the payload.
+    # history to filter; downsampling to <=180 points happens in _aligned_series.
     hist = _asc(db.get_vrp_history(days=730))
+    aligned = _aligned_series(hist, ["vix", "realized_vol", "vrp"])
 
     vix = _num(latest.get("vix"))
     rv = _num(latest.get("realized_vol"))
@@ -101,10 +136,10 @@ def build_volatility() -> Dict[str, Any]:
         ),
         "metrics": metrics,
         "stats": _vrp_stats(hist, vrp),
+        # Aligned so the frontend can zip vix/realized/vrp by index safely.
         "charts": {
-            "vrp_history": _series(hist, value_col="vrp"),
-            "vix": _series(hist, value_col="vix"),
-            "realized_vol": _series(hist, value_col="realized_vol"),
+            k: aligned[src]
+            for k, src in (("vrp_history", "vrp"), ("vix", "vix"), ("realized_vol", "realized_vol"))
         },
     }
 

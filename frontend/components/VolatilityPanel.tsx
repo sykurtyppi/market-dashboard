@@ -24,8 +24,23 @@ function filterByRange(points: Point[], anchor: number, days: number): Point[] {
 }
 
 function fmt(value: number | null, unit = ""): string {
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return `${value.toFixed(2)}${unit}`;
+}
+
+// Largest gap (in days) between consecutive plotted points, so we can warn when
+// the series interpolates across a real collection outage rather than silently
+// drawing a smooth line over it.
+function maxGapDays(points: Point[]): number {
+  let max = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const prev = new Date(points[i - 1].date).getTime();
+    const cur = new Date(points[i].date).getTime();
+    if (Number.isFinite(prev) && Number.isFinite(cur)) {
+      max = Math.max(max, (cur - prev) / DAY_MS);
+    }
+  }
+  return max;
 }
 
 type Stats = { avg: number | null; std: number | null; percentile: number | null; max: number | null; min: number | null; count: number };
@@ -71,11 +86,15 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
   const [range, setRange] = useState<Range>("ALL");
   const days = RANGES.find((r) => r.key === range)?.days ?? Infinity;
 
-  const anchor = Math.max(0, ...[...vix, ...realizedVol, ...vrp].map((p) => new Date(p.date).getTime()));
+  // Only finite timestamps — one unparseable date must not poison the anchor
+  // (NaN would silently blank every finite range while "All" still renders).
+  const times = [...vix, ...realizedVol, ...vrp].map((p) => new Date(p.date).getTime()).filter(Number.isFinite);
+  const anchor = times.length ? Math.max(...times) : 0;
   const fVix = filterByRange(vix, anchor, days);
   const fRv = filterByRange(realizedVol, anchor, days);
   const fVrp = filterByRange(vrp, anchor, days);
   const stats = computeStats(fVrp);
+  const gapDays = maxGapDays(fVrp);
 
   // A range needs >=2 points to draw a line. With sparse/gappy history a short
   // window can be empty — disable those so the control never lands on a blank
@@ -123,6 +142,13 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
       </div>
 
       <VolatilityChart vix={fVix} realizedVol={fRv} vrp={fVrp} />
+
+      {gapDays > 30 ? (
+        <div style={{ marginTop: 10, padding: "7px 11px", borderRadius: 7, border: "1px solid var(--warn)", background: "var(--warn-soft)", color: "var(--warn)", fontSize: 11.5, display: "inline-flex", alignItems: "center", gap: 7 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--warn)", flex: "none" }} />
+          Series has a {Math.round(gapDays)}-day gap — the line interpolates across missing data. Stats reflect only the points shown.
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11.5, color: "var(--ink-muted)", flexWrap: "wrap" }}>
         <span style={legendItem}><i style={swatch("var(--accent)")} />VIX implied vol</span>
