@@ -59,11 +59,10 @@ def build_system_health() -> Dict[str, Any]:
     }
 
 
-# Secret-bearing keys in config.yaml that must never be echoed to a client.
-_SECRET_CONFIG_KEYS = {"fred_api_key", "smtp_password", "smtp_server", "email_address"}
-
-
 def _read_config_yaml() -> Dict[str, Any]:
+    # config.yaml holds secrets (fred_api_key, smtp_password, …) alongside
+    # non-secret settings, so build_settings() reads only specific non-secret
+    # keys from this rather than passing the file through wholesale.
     path = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
     try:
         with open(path, "r") as f:
