@@ -122,12 +122,12 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
         </div>
       </div>
 
-      <VolatilityChart vix={fVix} realizedVol={fRv} />
+      <VolatilityChart vix={fVix} realizedVol={fRv} vrp={fVrp} />
 
       <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11.5, color: "var(--ink-muted)", flexWrap: "wrap" }}>
         <span style={legendItem}><i style={swatch("var(--accent)")} />VIX implied vol</span>
         <span style={legendItem}><i style={swatch("var(--warn)", true)} />Realized vol 21d</span>
-        <span style={legendItem}><i style={{ width: 12, height: 8, background: "var(--accent)", opacity: 0.14, display: "inline-block", borderRadius: 2 }} />VRP (shaded gap)</span>
+        <span style={legendItem}><i style={swatch("var(--good)")} />VRP spread (lower panel)</span>
         <span style={{ color: "var(--ink-faint)" }}>{stats.count} obs</span>
       </div>
 
