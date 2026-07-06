@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Point } from "@/lib/api";
-import { VRPCompositeChart } from "@/components/Charts";
+import VolatilityChart from "@/components/VolatilityChart";
 
 type Range = "1M" | "3M" | "6M" | "ALL";
 
@@ -49,12 +49,14 @@ function computeStats(vrp: Point[]): Stats {
   };
 }
 
+// Inline-styled so the panel renders correctly even when a stale dev-server
+// stylesheet is missing the newer class rules.
 function StatCard({ label, value, note }: { label: string; value: string; note: string }) {
   return (
-    <div className="stat-card">
-      <div className="k">{label}</div>
-      <div className="v mono">{value}</div>
-      <div className="note">{note}</div>
+    <div style={{ border: "1px solid var(--line)", borderRadius: 9, padding: "11px 12px", background: "#fafbfc" }}>
+      <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".07em", color: "var(--ink-faint)", fontWeight: 650 }}>{label}</div>
+      <div className="mono" style={{ marginTop: 6, fontSize: 22, lineHeight: 1, fontWeight: 500, letterSpacing: "-.02em" }}>{value}</div>
+      <div style={{ marginTop: 6, fontSize: 11, color: "var(--ink-faint)" }}>{note}</div>
     </div>
   );
 }
@@ -82,22 +84,36 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
     RANGES.map((r) => [r.key, filterByRange(vrp, anchor, r.days).length]),
   );
 
+  const legendItem: React.CSSProperties = { display: "inline-flex", alignItems: "center", gap: 6 };
+  const swatch = (color: string, dashed = false): React.CSSProperties =>
+    dashed
+      ? { width: 12, height: 0, borderTop: `2px dashed ${color}`, display: "inline-block" }
+      : { width: 12, height: 2, borderRadius: 2, background: color, display: "inline-block" };
+
   return (
     <div className="panel">
-      <div className="panel-head">
-        <span className="t">VIX vs Realized Vol &amp; VRP Spread</span>
-        <div className="range-select" role="group" aria-label="Chart time range">
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-.01em" }}>VIX vs Realized Vol &amp; VRP Spread</span>
+        <div style={{ display: "inline-flex", gap: 2, padding: 2, background: "var(--ground)", border: "1px solid var(--line)", borderRadius: 8 }} role="group" aria-label="Chart time range">
           {RANGES.map((r) => {
             const disabled = (rangeCounts.get(r.key) ?? 0) < 2;
+            const active = range === r.key;
             return (
               <button
                 key={r.key}
                 type="button"
-                className={`range-btn${range === r.key ? " active" : ""}`}
-                aria-pressed={range === r.key}
+                aria-pressed={active}
                 disabled={disabled}
                 title={disabled ? "Not enough history in this window" : undefined}
                 onClick={() => setRange(r.key)}
+                style={{
+                  fontSize: 11.5, padding: "3px 10px", borderRadius: 6, border: "none",
+                  background: active ? "var(--surface)" : "transparent",
+                  color: disabled ? "var(--line-strong)" : active ? "var(--accent-ink)" : "var(--ink-muted)",
+                  fontWeight: 550, cursor: disabled ? "not-allowed" : "pointer",
+                  fontVariantNumeric: "tabular-nums",
+                  boxShadow: active ? "0 1px 2px rgba(22,24,29,.08)" : "none",
+                }}
               >
                 {r.label}
               </button>
@@ -106,16 +122,16 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
         </div>
       </div>
 
-      <VRPCompositeChart vix={fVix} realizedVol={fRv} vrp={fVrp} />
+      <VolatilityChart vix={fVix} realizedVol={fRv} />
 
-      <div className="legend">
-        <span><i style={{ background: "var(--crit)" }} />VIX implied vol</span>
-        <span><i style={{ background: "var(--accent)" }} />Realized vol 21d</span>
-        <span><i style={{ background: "var(--good)" }} />VRP spread</span>
-        <span style={{ color: "var(--ink-faint)" }}>{stats.count} obs · zero line = implied equals realized</span>
+      <div style={{ display: "flex", gap: 14, marginTop: 12, fontSize: 11.5, color: "var(--ink-muted)", flexWrap: "wrap" }}>
+        <span style={legendItem}><i style={swatch("var(--accent)")} />VIX implied vol</span>
+        <span style={legendItem}><i style={swatch("var(--warn)", true)} />Realized vol 21d</span>
+        <span style={legendItem}><i style={{ width: 12, height: 8, background: "var(--accent)", opacity: 0.14, display: "inline-block", borderRadius: 2 }} />VRP (shaded gap)</span>
+        <span style={{ color: "var(--ink-faint)" }}>{stats.count} obs</span>
       </div>
 
-      <div className="stat-grid">
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 14 }}>
         <StatCard label="Avg VRP" value={fmt(stats.avg)} note="Mean over selected range" />
         <StatCard label="VRP Std Dev" value={fmt(stats.std)} note="Dispersion of the spread" />
         <StatCard label="Current Percentile" value={fmt(stats.percentile, "%")} note="Low = realized vol is rich" />
