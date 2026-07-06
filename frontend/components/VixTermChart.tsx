@@ -20,11 +20,14 @@ function niceTicks(min: number, max: number, count: number): number[] {
   const first = Math.ceil(min / step) * step;
   const ticks: number[] = [];
   for (let v = first; v <= max + step * 0.001; v += step) ticks.push(Number(v.toFixed(4)));
-  return ticks;
+  return ticks.length ? ticks : [Number(min.toFixed(2))];
 }
 
 export default function VixTermChart({ term }: { term: VixTenor[] }) {
-  const pts = term.filter((t) => typeof t.value === "number");
+  // Number.isFinite (not typeof — NaN is typeof "number"), and sort by maturity
+  // so the curve reflects the real 9D->30D->3M progression even if the API
+  // returns tenors out of order.
+  const pts = term.filter((t) => Number.isFinite(t.value)).slice().sort((a, b) => a.days - b.days);
   if (pts.length < 2) {
     return (
       <div style={{ height: 220, display: "grid", placeItems: "center", color: "var(--ink-faint)", fontSize: 12 }}>
@@ -49,8 +52,11 @@ export default function VixTermChart({ term }: { term: VixTenor[] }) {
   const valueLabel: CSSProperties = { position: "absolute", fontSize: 12, fontWeight: 600, color: "var(--ink)", fontVariantNumeric: "tabular-nums", pointerEvents: "none", whiteSpace: "nowrap", transform: "translate(-50%, -100%)" };
   const tenorLabel: CSSProperties = { position: "absolute", bottom: -20, fontSize: 11, color: "var(--ink-muted)", fontWeight: 550, pointerEvents: "none", whiteSpace: "nowrap", transform: "translateX(-50%)" };
 
+  const shape = pts[n - 1].value > pts[0].value ? "contango (upward)" : pts[n - 1].value < pts[0].value ? "backwardation (downward)" : "flat";
+  const summary = `VIX term structure, ${shape}: ` + pts.map((t) => `${t.maturity} ${t.value.toFixed(2)}`).join(", ") + ".";
+
   return (
-    <div style={{ position: "relative", paddingLeft: 36, paddingBottom: 22, paddingTop: 20 }}>
+    <div role="img" aria-label={summary} style={{ position: "relative", paddingLeft: 36, paddingBottom: 22, paddingTop: 20 }}>
       <div style={{ position: "relative", height: 200 }}>
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block", overflow: "visible" }} aria-hidden>
           {ticks.map((t) => (
