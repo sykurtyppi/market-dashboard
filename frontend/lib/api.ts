@@ -203,6 +203,43 @@ export interface OptionsFlow {
   warnings: string[];
 }
 
+export interface Institutional {
+  as_of: string | null;
+  dark_pool: {
+    avg_pct: number | null; etf_pct: number | null; stock_pct: number | null;
+    sentiment: string | null; state: State; interpretation: string | null; week_ending: string | null;
+  } | null;
+  insider: {
+    total_transactions: number | null; buy_count: number | null; sell_count: number | null;
+    buy_sell_ratio: number | null; sentiment: string | null; state: State; period_days: number | null;
+  } | null;
+  auctions: {
+    avg_bid_to_cover: number | null; avg_indirect_pct: number | null; avg_direct_pct: number | null;
+    auction_count: number | null; weak_auctions: number | null; strong_auctions: number | null;
+    health: string | null; state: State;
+  } | null;
+  warnings: string[];
+}
+
+export interface EconomicEvent {
+  name: string | null;
+  date: string | null;
+  days_until: number | null;
+  importance: string | null;
+  category: string | null;
+  actual: number | null;
+  forecast: number | null;
+  previous: number | null;
+  yoy_change: number | null;
+  unit: string | null;
+}
+
+export interface EconomicCalendar {
+  as_of: string | null;
+  events: EconomicEvent[];
+  warnings: string[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -220,4 +257,6 @@ export const getFedWatch = () => getJson<FedWatch>("/api/fed-watch");
 export const getCrossAsset = () => getJson<CrossAsset>("/api/cross-asset");
 export const getCot = () => getJson<COT>("/api/cot");
 export const getOptionsFlow = () => getJson<OptionsFlow>("/api/options-flow");
+export const getInstitutional = () => getJson<Institutional>("/api/institutional");
+export const getEconomicCalendar = () => getJson<EconomicCalendar>("/api/economic-calendar");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");

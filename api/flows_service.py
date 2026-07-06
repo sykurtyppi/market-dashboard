@@ -117,3 +117,99 @@ def build_options_flow() -> Dict[str, Any]:
         _build_options_flow,
         lambda d: len(d.get("etfs", [])) == len(_EXPECTED_ETFS),
     )
+
+
+# ---------------- Institutional Flow (dark pool + insider + auctions) ----------------
+
+def _health_state(v: str | None) -> str:
+    s = (v or "").upper()
+    if "STRONG" in s or "HEALTHY" in s:
+        return "good"
+    if "WEAK" in s or "STRESS" in s:
+        return "crit"
+    return "neutral"
+
+
+def _build_institutional() -> Dict[str, Any]:
+    from data_collectors.dark_pool_collector import DarkPoolCollector
+    from data_collectors.insider_trading_collector import InsiderTradingCollector
+    from data_collectors.treasury_auction_collector import TreasuryAuctionCollector
+
+    warnings: list[str] = []
+    missing: list[str] = []
+
+    def _safe(fn):
+        try:
+            return fn() or {}
+        except Exception:
+            return {}
+
+    dp = _safe(DarkPoolCollector().get_dark_pool_summary)
+    ins = _safe(InsiderTradingCollector().get_insider_summary)
+    au = _safe(TreasuryAuctionCollector().get_auction_summary)
+
+    dark_pool = None
+    if dp:
+        dark_pool = {
+            "avg_pct": _num(dp.get("avg_dark_pool_pct")),
+            "etf_pct": _num(dp.get("etf_avg_pct")),
+            "stock_pct": _num(dp.get("stock_avg_pct")),
+            "sentiment": dp.get("sentiment"),
+            "state": _sentiment_state(dp.get("sentiment")),
+            "interpretation": dp.get("interpretation"),
+            "week_ending": dp.get("week_ending"),
+        }
+    else:
+        missing.append("Dark Pool")
+
+    insider = None
+    if ins:
+        insider = {
+            "total_transactions": _num(ins.get("total_transactions")),
+            "buy_count": _num(ins.get("buy_count")),
+            "sell_count": _num(ins.get("sell_count")),
+            "buy_sell_ratio": _num(ins.get("buy_sell_ratio")),
+            "sentiment": ins.get("sentiment"),
+            "state": _sentiment_state(ins.get("sentiment")),
+            "period_days": _num(ins.get("period_days")),
+        }
+    else:
+        missing.append("Insider")
+
+    auctions = None
+    if au:
+        auctions = {
+            "avg_bid_to_cover": _num(au.get("avg_bid_to_cover")),
+            "avg_indirect_pct": _num(au.get("avg_indirect_pct")),
+            "avg_direct_pct": _num(au.get("avg_direct_pct")),
+            "auction_count": _num(au.get("auction_count")),
+            "weak_auctions": _num(au.get("weak_auctions")),
+            "strong_auctions": _num(au.get("strong_auctions")),
+            "health": au.get("health"),
+            "state": _health_state(au.get("health")),
+        }
+    else:
+        missing.append("Treasury Auctions")
+
+    if not (dark_pool or insider or auctions):
+        warnings.append("Institutional flow data unavailable.")
+    elif missing:
+        warnings.append(f"Institutional data partially unavailable: {', '.join(missing)}.")
+
+    return {
+        "as_of": dp.get("last_updated") or ins.get("last_updated"),
+        "dark_pool": dark_pool,
+        "insider": insider,
+        "auctions": auctions,
+        "warnings": warnings,
+    }
+
+
+def build_institutional() -> Dict[str, Any]:
+    # Cache only a complete fetch (all three sections present); partial results
+    # retry on the next request.
+    return _cached(
+        "institutional",
+        _build_institutional,
+        lambda d: all(d.get(k) for k in ("dark_pool", "insider", "auctions")),
+    )

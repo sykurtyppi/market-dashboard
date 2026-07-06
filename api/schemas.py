@@ -290,3 +290,63 @@ class OptionsFlowResponse(BaseModel):
     as_of: Optional[str] = None
     etfs: List[OptionsETF]
     warnings: List[str] = Field(default_factory=list)
+
+
+# --- Phase 6 pages ---
+
+class DarkPool(BaseModel):
+    avg_pct: Optional[float] = None
+    etf_pct: Optional[float] = None
+    stock_pct: Optional[float] = None
+    sentiment: Optional[str] = None
+    state: State = "neutral"
+    interpretation: Optional[str] = None
+    week_ending: Optional[str] = None
+
+
+class Insider(BaseModel):
+    total_transactions: Optional[float] = None
+    buy_count: Optional[float] = None
+    sell_count: Optional[float] = None
+    buy_sell_ratio: Optional[float] = None
+    sentiment: Optional[str] = None
+    state: State = "neutral"
+    period_days: Optional[float] = None
+
+
+class Auctions(BaseModel):
+    avg_bid_to_cover: Optional[float] = None
+    avg_indirect_pct: Optional[float] = None
+    avg_direct_pct: Optional[float] = None
+    auction_count: Optional[float] = None
+    weak_auctions: Optional[float] = None
+    strong_auctions: Optional[float] = None
+    health: Optional[str] = None
+    state: State = "neutral"
+
+
+class InstitutionalResponse(BaseModel):
+    as_of: Optional[str] = None
+    dark_pool: Optional[DarkPool] = None
+    insider: Optional[Insider] = None
+    auctions: Optional[Auctions] = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class EconomicEvent(BaseModel):
+    name: Optional[str] = None
+    date: Optional[str] = None
+    days_until: Optional[int] = None
+    importance: Optional[str] = None
+    category: Optional[str] = None
+    actual: Optional[float] = None
+    forecast: Optional[float] = None
+    previous: Optional[float] = None
+    yoy_change: Optional[float] = None
+    unit: Optional[str] = None
+
+
+class EconomicCalendarResponse(BaseModel):
+    as_of: Optional[str] = None
+    events: List[EconomicEvent]
+    warnings: List[str] = Field(default_factory=list)

@@ -181,3 +181,52 @@ def _build_cross_asset() -> Dict[str, Any]:
 
 def build_cross_asset() -> Dict[str, Any]:
     return _cached("cross_asset", _build_cross_asset, lambda d: bool(d.get("assets")))
+
+
+# ---------------- Economic Calendar ----------------
+
+def _field(e: Any, key: str) -> Any:
+    return e.get(key) if isinstance(e, dict) else getattr(e, key, None)
+
+
+def _build_economic_calendar() -> Dict[str, Any]:
+    from data_collectors.economic_calendar_collector import EconomicCalendarCollector
+
+    warnings: list[str] = []
+    try:
+        raw = EconomicCalendarCollector().get_upcoming_events() or []
+    except Exception:
+        raw = []
+    if not raw:
+        warnings.append("Economic calendar unavailable.")
+
+    events = []
+    for e in raw:
+        imp = _field(e, "importance")
+        imp_str = getattr(imp, "value", None) or (str(imp) if imp is not None else None)
+        d = _field(e, "date")
+        date_str = d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else (str(d) if d else None)
+        days_until = None
+        if hasattr(d, "date"):
+            try:
+                days_until = (d.date() - datetime.now().date()).days
+            except Exception:
+                days_until = None
+        events.append({
+            "name": _field(e, "name"),
+            "date": date_str,
+            "days_until": days_until,
+            "importance": imp_str,
+            "category": _field(e, "category"),
+            "actual": _num(_field(e, "actual")),
+            "forecast": _num(_field(e, "forecast")),
+            "previous": _num(_field(e, "previous")),
+            "yoy_change": _num(_field(e, "yoy_change")),
+            "unit": _field(e, "unit"),
+        })
+
+    return {"as_of": datetime.now().strftime("%Y-%m-%d %H:%M"), "events": events, "warnings": warnings}
+
+
+def build_economic_calendar() -> Dict[str, Any]:
+    return _cached("economic_calendar", _build_economic_calendar, lambda d: bool(d.get("events")))
