@@ -18,7 +18,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
 
         <section className="grid-2">
           <Panel title="Credit Spreads" sub="1Y · %">
-            <MultiLineChart series={[
+            <MultiLineChart unit="%" series={[
               { points: data.charts.credit_spreads.hy, color: "var(--crit)" },
               { points: data.charts.credit_spreads.ig, color: "var(--accent)" },
             ]} />
