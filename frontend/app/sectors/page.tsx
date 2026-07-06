@@ -1,6 +1,6 @@
 import { getSectors, getFreshness, Sectors, Freshness, SectorRow } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { AreaChart } from "@/components/Charts";
+import VixTermChart from "@/components/VixTermChart";
 import { Section, Panel } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +28,6 @@ function SectorTableRow({ s }: { s: SectorRow }) {
 
 function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
   const r = data.rotation;
-  const curve = data.vix_term.map((t) => ({ date: t.maturity, value: t.value }));
   return (
     <>
       <Topbar title="Sectors & VIX" subtitle="Sector rotation & VIX term structure" freshness={freshness} />
@@ -61,12 +60,7 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
 
         <section className="grid-2">
           <Panel title="VIX Term Structure" sub={data.vix_structure ?? undefined}>
-            <AreaChart points={curve} color="var(--accent)" label="VIX tenor" />
-            <div className="legend">
-              {data.vix_term.map((t) => (
-                <span key={t.maturity} className="mono">{t.maturity}: {t.value.toFixed(2)}</span>
-              ))}
-            </div>
+            <VixTermChart term={data.vix_term} />
           </Panel>
           <Panel title="Sector Performance" sub="1d">
             <div className="table-wrap" style={{ border: "none" }}>
