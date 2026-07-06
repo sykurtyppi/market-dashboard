@@ -66,7 +66,7 @@ function OverviewContent({ data }: { data: Overview }) {
 
         <section className="grid-2">
           <Panel title="Volatility Risk Premium" sub="180d">
-            <AreaChart points={data.charts.vrp_history} color="var(--accent)" />
+            <AreaChart points={data.charts.vrp_history} color="var(--accent)" label="VRP" />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />VRP</span>
               <span style={{ color: "var(--ink-faint)" }}>Zero line = fair value · negative = rich realized vol</span>
@@ -74,8 +74,8 @@ function OverviewContent({ data }: { data: Overview }) {
           </Panel>
           <Panel title="Credit Spreads" sub="1Y · %">
             <MultiLineChart series={[
-              { points: data.charts.credit_spreads.hy, color: "var(--crit)" },
-              { points: data.charts.credit_spreads.ig, color: "var(--accent)" },
+              { points: data.charts.credit_spreads.hy, color: "var(--crit)", label: "HY spread" },
+              { points: data.charts.credit_spreads.ig, color: "var(--accent)", label: "IG spread" },
             ]} />
             <div className="legend">
               <span><i style={{ background: "var(--crit)" }} />HY (BAMLH0A0HYM2)</span>

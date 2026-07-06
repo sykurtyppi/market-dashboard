@@ -19,8 +19,8 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
         <section className="grid-2">
           <Panel title="Credit Spreads" sub="1Y · %">
             <MultiLineChart unit="%" series={[
-              { points: data.charts.credit_spreads.hy, color: "var(--crit)" },
-              { points: data.charts.credit_spreads.ig, color: "var(--accent)" },
+              { points: data.charts.credit_spreads.hy, color: "var(--crit)", label: "HY spread" },
+              { points: data.charts.credit_spreads.ig, color: "var(--accent)", label: "IG spread" },
             ]} />
             <div className="legend">
               <span><i style={{ background: "var(--crit)" }} />HY (BAMLH0A0HYM2)</span>
@@ -28,7 +28,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
             </div>
           </Panel>
           <Panel title="Fed Total Assets" sub="$T">
-            <AreaChart points={data.charts.fed_assets} color="var(--accent)" />
+            <AreaChart points={data.charts.fed_assets} color="var(--accent)" label="Fed assets" />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />Balance sheet ($T)</span>
               <span style={{ color: "var(--ink-faint)" }}>Falling = quantitative tightening</span>
@@ -38,7 +38,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
 
         <Section title="Quantitative Tightening" aside="cumulative $B">
           <Panel title="QT Cumulative Runoff">
-            <AreaChart points={data.charts.qt_cumulative} color="var(--warn)" />
+            <AreaChart points={data.charts.qt_cumulative} color="var(--warn)" label="QT runoff" />
           </Panel>
         </Section>
 

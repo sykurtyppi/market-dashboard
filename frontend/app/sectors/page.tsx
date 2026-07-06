@@ -61,7 +61,7 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
 
         <section className="grid-2">
           <Panel title="VIX Term Structure" sub={data.vix_structure ?? undefined}>
-            <AreaChart points={curve} color="var(--accent)" />
+            <AreaChart points={curve} color="var(--accent)" label="VIX tenor" />
             <div className="legend">
               {data.vix_term.map((t) => (
                 <span key={t.maturity} className="mono">{t.maturity}: {t.value.toFixed(2)}</span>

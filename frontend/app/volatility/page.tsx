@@ -1,11 +1,35 @@
 import { getVolatility, getFreshness, Volatility, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { AreaChart, MultiLineChart } from "@/components/Charts";
+import { VRPCompositeChart } from "@/components/Charts";
 import { MetricCard, Section, Panel } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
+function stat(value: number | null, unit = "") {
+  if (value === null || value === undefined) return "—";
+  return `${value.toFixed(2)}${unit}`;
+}
+
+function VrpStat({ label, value, unit, note }: { label: string; value: number | null; unit?: string; note: string }) {
+  return (
+    <div className="stat-card">
+      <div className="k">{label}</div>
+      <div className="v mono">{stat(value, unit)}</div>
+      <div className="note">{note}</div>
+    </div>
+  );
+}
+
 function Content({ data, freshness }: { data: Volatility; freshness: Freshness }) {
+  const stats = data.stats ?? {
+    avg_vrp: null,
+    std_dev: null,
+    current_percentile: null,
+    max_vrp: null,
+    min_vrp: null,
+    observations: 0,
+  };
+
   return (
     <>
       <Topbar title="Volatility & VRP" subtitle="Volatility risk premium & regime" freshness={freshness} />
@@ -36,25 +60,25 @@ function Content({ data, freshness }: { data: Volatility; freshness: Freshness }
           </div>
         </Section>
 
-        <section className="grid-2">
-          <Panel title="Implied vs Realized Volatility" sub="180d">
-            <MultiLineChart series={[
-              { points: data.charts.vix, color: "var(--accent)" },
-              { points: data.charts.realized_vol, color: "var(--warn)" },
-            ]} />
-            <div className="legend">
-              <span><i style={{ background: "var(--accent)" }} />Implied (VIX)</span>
-              <span><i style={{ background: "var(--warn)" }} />Realized (21d)</span>
-            </div>
-          </Panel>
-          <Panel title="Volatility Risk Premium" sub="180d">
-            <AreaChart points={data.charts.vrp_history} color="var(--accent)" />
-            <div className="legend">
-              <span><i style={{ background: "var(--accent)" }} />VRP</span>
-              <span style={{ color: "var(--ink-faint)" }}>Positive = implied above realized (premium rich)</span>
-            </div>
-          </Panel>
-        </section>
+        <Panel title="VIX vs Realized Vol & VRP Spread" sub={`${stats.observations || 180} observations · hover for history`}>
+          <VRPCompositeChart
+            vix={data.charts.vix}
+            realizedVol={data.charts.realized_vol}
+            vrp={data.charts.vrp_history}
+          />
+          <div className="legend">
+            <span><i style={{ background: "var(--crit)" }} />VIX implied vol</span>
+            <span><i style={{ background: "var(--accent)" }} />Realized vol 21d</span>
+            <span><i style={{ background: "var(--good)" }} />VRP spread</span>
+            <span style={{ color: "var(--ink-faint)" }}>Zero line = implied equals realized</span>
+          </div>
+          <div className="stat-grid">
+            <VrpStat label="Avg VRP" value={stats.avg_vrp} note="Mean over visible history" />
+            <VrpStat label="VRP Std Dev" value={stats.std_dev} note="Dispersion of the spread" />
+            <VrpStat label="Current Percentile" value={stats.current_percentile} unit="%" note="Low = realized vol is rich" />
+            <VrpStat label="Max / Min VRP" value={stats.max_vrp} note={`Min ${stat(stats.min_vrp)}`} />
+          </div>
+        </Panel>
       </div>
     </>
   );
