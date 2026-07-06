@@ -67,7 +67,9 @@ def _vrp_state(vrp: float | None) -> str:
 def build_volatility() -> Dict[str, Any]:
     db = get_db()
     latest = db.get_latest_vrp() or {}
-    hist = _asc(db.get_vrp_history(days=180))
+    # Fetch a wide window so the frontend range control (1M/3M/6M/All) has full
+    # history to filter; _series downsamples to <=180 points for the payload.
+    hist = _asc(db.get_vrp_history(days=730))
 
     vix = _num(latest.get("vix"))
     rv = _num(latest.get("realized_vol"))

@@ -249,18 +249,19 @@ export function VRPCompositeChart({
     <div className="chart-wrap interactive vrp-composite">
       <svg className="chart tall" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden>
         <GridLines />
-        <line x1="0" y1={vrpScale.y(0)} x2={W} y2={vrpScale.y(0)} stroke="var(--line-strong)" strokeWidth="1" strokeDasharray="3 3" />
-        <path d={areaPath(vrp, vrpScale)} fill="var(--good)" fillOpacity="0.10" />
-        <path d={linePath(vrp, vrpScale)} fill="none" stroke="var(--good)" strokeWidth="2.4" />
-        <path d={linePath(vix, volScale)} fill="none" stroke="var(--crit)" strokeWidth="2" />
-        <path d={linePath(realizedVol, volScale)} fill="none" stroke="var(--accent)" strokeWidth="2" strokeDasharray="5 4" />
-        <circle cx={W} cy={volScale.y(lastVix.value)} r="3.2" fill="var(--crit)" />
-        <circle cx={W} cy={volScale.y(lastRv.value)} r="3.2" fill="var(--accent)" />
-        <circle cx={W} cy={vrpScale.y(lastVrp.value)} r="4" fill="var(--good)" stroke="var(--surface)" strokeWidth="1" />
+        <line x1="0" y1={vrpScale.y(0)} x2={W} y2={vrpScale.y(0)} stroke="var(--line-strong)" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+        <path d={areaPath(vrp, vrpScale)} fill="var(--good)" fillOpacity="0.08" />
+        {/* vector-effect keeps strokes at true 1.5px despite the non-uniform SVG stretch */}
+        <path d={linePath(vrp, vrpScale)} fill="none" stroke="var(--good)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <path d={linePath(vix, volScale)} fill="none" stroke="var(--crit)" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <path d={linePath(realizedVol, volScale)} fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeDasharray="4 5" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        <circle cx={W} cy={volScale.y(lastVix.value)} r="2.4" fill="var(--crit)" />
+        <circle cx={W} cy={volScale.y(lastRv.value)} r="2.4" fill="var(--accent)" />
+        <circle cx={W} cy={vrpScale.y(lastVrp.value)} r="2.8" fill="var(--good)" stroke="var(--surface)" strokeWidth="1" />
         {hover ? (
           <g className="chart-focus">
-            <line x1={hover.x} y1="0" x2={hover.x} y2={H} />
-            {hoverDots.map((v) => <circle key={v.label} cx={hover.x} cy={v.y} r="4" fill={v.color} />)}
+            <line x1={hover.x} y1="0" x2={hover.x} y2={H} vectorEffect="non-scaling-stroke" />
+            {hoverDots.map((v) => <circle key={v.label} cx={hover.x} cy={v.y} r="3" fill={v.color} />)}
           </g>
         ) : null}
         <rect
