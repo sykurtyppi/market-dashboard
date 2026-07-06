@@ -153,7 +153,7 @@ endpoints — no token needed for the polling steps.)
 name: Scheduled data refresh
 on:
   schedule:
-    - cron: "30 21 * * 1-5"   # 21:30 UTC weekdays ≈ 16:30 ET (config update_time)
+    - cron: "30 21 * * 1-5"   # 21:30 UTC weekdays = 16:30 ET (EST) / 17:30 ET (EDT)
   workflow_dispatch: {}
 jobs:
   refresh:
@@ -193,9 +193,11 @@ jobs:
 > `jq` is preinstalled on `ubuntu-latest`. For a stricter gate, add a step that
 > checks `GET /api/system-health` and fails if `overall_status` is `down`.
 >
-> Timing note: `config/config.yaml` sets `update_time: "16:30"` ET. The cron
-> above approximates that in UTC; adjust for DST if you want exact market-close
-> alignment (or refresh twice daily — the lock makes extra calls safe).
+> Timing note: `config/config.yaml` sets `update_time: "16:30"` ET. GitHub cron
+> is fixed-UTC and does **not** follow DST, so `21:30 UTC` lands at 16:30 ET in
+> winter (EST) but 17:30 ET in summer (EDT). One hour after close is harmless;
+> if you want tighter summer alignment use `20:30 UTC`, or just refresh twice
+> daily — the `_refresh_lock` makes extra calls safe.
 
 ---
 
