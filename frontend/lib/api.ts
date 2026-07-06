@@ -273,6 +273,48 @@ export interface CTA {
   warnings: string[];
 }
 
+export interface HealthSource {
+  key: string;
+  name: string;
+  status: string;
+  state: State;
+  last_update: string | null;
+  age_hours: number | null;
+  message: string;
+}
+
+export interface SystemHealth {
+  overall_status: string;
+  overall_state: State;
+  as_of: string | null;
+  sources: HealthSource[];
+  summary: Record<string, number>;
+  total_sources: number;
+}
+
+export interface CredentialStatus {
+  name: string;
+  configured: boolean;
+  source: string | null;
+}
+
+export interface ConfigItem {
+  label: string;
+  value: string;
+}
+
+export interface ConfigGroup {
+  title: string;
+  items: ConfigItem[];
+}
+
+export interface Settings {
+  protected: boolean;
+  credentials: CredentialStatus[];
+  config: ConfigGroup[];
+  warnings: string[];
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
@@ -296,3 +338,16 @@ export const getSentiment = () => getJson<Sentiment>("/api/sentiment");
 export const getLeft = () => getJson<Left>("/api/left");
 export const getCta = () => getJson<CTA>("/api/cta");
 export const getFreshness = () => getJson<Freshness>("/api/freshness");
+export const getSystemHealth = () => getJson<SystemHealth>("/api/system-health");
+
+// Settings can be token-gated. These fetchers run server-side, so the
+// server-only MARKET_API_TOKEN is forwarded as X-API-Token and never reaches
+// the browser — matching the refresh route-handler pattern.
+export async function getSettings(): Promise<Settings> {
+  const headers: Record<string, string> = {};
+  const token = process.env.MARKET_API_TOKEN;
+  if (token) headers["X-API-Token"] = token;
+  const res = await fetch(`${API_BASE}/api/settings`, { cache: "no-store", headers });
+  if (!res.ok) throw new Error(`API ${res.status}: /api/settings`);
+  return res.json() as Promise<Settings>;
+}
