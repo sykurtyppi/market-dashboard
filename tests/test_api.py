@@ -643,3 +643,94 @@ def test_cta_empty_warns_and_not_cached(client):
         assert any("unavailable" in w.lower() for w in body["warnings"])
         assert "cta" not in svc._cache
     svc._cache.clear()
+
+
+# ---------------- Admin: System Health ----------------
+
+def _health_summary(**overrides):
+    base = {
+        "overall_status": "stale",
+        "timestamp": "2026-07-06T09:00:00",
+        "sources": {
+            "database": {"name": "Database", "status": "healthy",
+                         "last_update": "2026-07-06T09:00:00", "message": "OK", "age_hours": 0.1},
+            "vix": {"name": "VIX", "status": "stale",
+                    "last_update": "2026-07-05T00:00:00", "message": "Stale", "age_hours": 33.3},
+            "liquidity_net": {"name": "Net Liquidity", "status": "down",
+                              "last_update": None, "message": "No data", "age_hours": None},
+        },
+        "summary": {"healthy": 1, "stale": 1, "degraded": 0, "down": 1, "unknown": 0},
+        "total_sources": 3,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_system_health_returns_expected_shape(client):
+    fake = SimpleNamespace(get_health_summary=lambda: _health_summary())
+    with patch("api.admin_service.get_health", lambda: fake):
+        r = client.get("/api/system-health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["overall_status"] == "stale"
+    assert body["overall_state"] == "warn"       # stale -> warn
+    assert body["total_sources"] == 3
+    by_name = {s["name"]: s for s in body["sources"]}
+    assert by_name["Database"]["state"] == "good"        # healthy -> good
+    assert by_name["VIX"]["state"] == "warn"             # stale -> warn
+    assert by_name["Net Liquidity"]["state"] == "crit"   # down -> crit
+
+
+def test_system_health_orders_worst_first(client):
+    fake = SimpleNamespace(get_health_summary=lambda: _health_summary())
+    with patch("api.admin_service.get_health", lambda: fake):
+        r = client.get("/api/system-health")
+    states = [s["state"] for s in r.json()["sources"]]
+    # crit before warn before good; no ordering regressions
+    rank = {"crit": 0, "warn": 1, "neutral": 2, "good": 3}
+    assert states == sorted(states, key=lambda s: rank[s])
+    assert states[0] == "crit"
+
+
+# ---------------- Admin: Settings ----------------
+
+def test_settings_reports_credential_presence_without_values(client, monkeypatch):
+    monkeypatch.delenv("MARKET_API_TOKEN", raising=False)
+    fake_secrets = {
+        "FRED_API_KEY": {"configured": True, "source": "environment"},
+        "POLYGON_API_KEY": {"configured": False, "source": None},
+    }
+    with patch("utils.secrets_helper.get_all_secrets", lambda: fake_secrets):
+        r = client.get("/api/settings")
+    assert r.status_code == 200
+    body = r.json()
+    fred = next(c for c in body["credentials"] if c["name"] == "FRED_API_KEY")
+    assert fred["configured"] is True
+    assert fred["source"] == "environment"
+    # A credential entry exposes presence only — never a value field.
+    assert set(fred.keys()) == {"name", "configured", "source"}
+    assert body["config"], "config groups should be populated"
+
+
+def test_settings_flags_unprotected_when_no_token(client, monkeypatch):
+    monkeypatch.delenv("MARKET_API_TOKEN", raising=False)
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["protected"] is False
+    assert any("MARKET_API_TOKEN" in w for w in body["warnings"])
+
+
+def test_settings_rejects_bad_token_when_configured(client, monkeypatch):
+    monkeypatch.setenv("MARKET_API_TOKEN", "secret")
+    assert client.get("/api/settings").status_code == 401                       # no header
+    assert client.get("/api/settings", headers={"X-API-Token": "no"}).status_code == 401
+
+
+def test_settings_accepts_correct_token_and_marks_protected(client, monkeypatch):
+    monkeypatch.setenv("MARKET_API_TOKEN", "secret")
+    r = client.get("/api/settings", headers={"X-API-Token": "secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["protected"] is True
+    assert body["warnings"] == []

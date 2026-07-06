@@ -43,8 +43,8 @@ const GROUPS: Group[] = [
     { label: "Sentiment", icon: I.globe, href: "/sentiment" },
   ]},
   { label: "System", items: [
-    { label: "Settings", icon: I.gear },
-    { label: "System Health", icon: I.wave },
+    { label: "Settings", icon: I.gear, href: "/settings" },
+    { label: "System Health", icon: I.wave, href: "/system-health" },
   ]},
 ];
 

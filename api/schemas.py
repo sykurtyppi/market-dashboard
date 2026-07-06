@@ -396,3 +396,49 @@ class CTAResponse(BaseModel):
     short_count: int = 0
     flat_count: int = 0
     warnings: List[str] = Field(default_factory=list)
+
+
+# --- Admin pages: System Health, Settings ---
+
+class HealthSource(BaseModel):
+    key: str
+    name: str
+    status: str  # raw backend status: healthy/stale/degraded/down/unknown
+    state: State  # mapped to the UI's semantic dot
+    last_update: Optional[str] = None
+    age_hours: Optional[float] = None
+    message: str = ""
+
+
+class SystemHealthResponse(BaseModel):
+    overall_status: str
+    overall_state: State = "neutral"
+    as_of: Optional[str] = None
+    sources: List[HealthSource]
+    summary: Dict[str, int] = Field(default_factory=dict)
+    total_sources: int = 0
+
+
+class CredentialStatus(BaseModel):
+    name: str
+    configured: bool
+    source: Optional[str] = None  # "environment" | "streamlit_secrets" | None
+
+
+class ConfigItem(BaseModel):
+    label: str
+    value: str
+
+
+class ConfigGroup(BaseModel):
+    title: str
+    items: List[ConfigItem]
+
+
+class SettingsResponse(BaseModel):
+    # `protected` tells the UI whether the backend actually enforces a token on
+    # this endpoint, so it never implies auth that isn't configured.
+    protected: bool = False
+    credentials: List[CredentialStatus]
+    config: List[ConfigGroup]
+    warnings: List[str] = Field(default_factory=list)

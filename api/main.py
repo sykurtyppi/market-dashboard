@@ -8,9 +8,10 @@ import logging
 import os
 import threading
 
-from fastapi import BackgroundTasks, FastAPI, Header, Response, status
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.admin_service import build_settings, build_system_health
 from api.deps import get_db, get_health
 from api.overview_service import build_overview
 from api.pages_service import (
@@ -47,6 +48,8 @@ from api.schemas import (
     RepoResponse,
     SectorsResponse,
     SentimentResponse,
+    SettingsResponse,
+    SystemHealthResponse,
     TreasuryResponse,
     VolatilityResponse,
 )
@@ -172,6 +175,26 @@ def left():
 @app.get("/api/cta", response_model=CTAResponse)
 def cta():
     return build_cta()
+
+
+@app.get("/api/system-health", response_model=SystemHealthResponse)
+def system_health():
+    return build_system_health()
+
+
+@app.get("/api/settings", response_model=SettingsResponse)
+def settings(x_api_token: str | None = Header(default=None)):
+    """Operational configuration and credential presence.
+
+    Reveals which data-source credentials are configured (never their values)
+    plus non-secret runtime/model settings. When MARKET_API_TOKEN is set the
+    caller must supply it via X-API-Token; otherwise the endpoint is open and
+    the response's `protected` flag reports that honestly.
+    """
+    expected = os.getenv("MARKET_API_TOKEN")
+    if expected and x_api_token != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Token")
+    return build_settings()
 
 
 def _run_refresh():
