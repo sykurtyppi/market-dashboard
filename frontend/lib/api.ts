@@ -244,6 +244,7 @@ export interface Sentiment {
   as_of: string | null;
   fear_greed: { score: number | null; rating: string | null; state: State };
   put_call_ratio: number | null;
+  put_call_source: string | null;
   warnings: string[];
 }
 

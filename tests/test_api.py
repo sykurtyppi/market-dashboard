@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -563,6 +564,26 @@ def test_sentiment_returns_expected_shape(client):
     body = r.json()
     assert body["fear_greed"]["score"] == 34.0
     assert body["fear_greed"]["state"] == "warn"  # fear -> warn
+    # put/call must report which snapshot field it actually used
+    if body["put_call_ratio"] is not None:
+        assert body["put_call_source"] in ("CBOE equity", "SPY proxy", "Best available")
+
+
+def test_sentiment_put_call_prefers_cboe_over_legacy(client, monkeypatch):
+    # When the true CBOE equity ratio is present, use it and label it as such —
+    # not the legacy best-available field.
+    import api.signals_service as svc
+    svc._cache.clear()
+    fake_db = SimpleNamespace(get_latest_snapshot=lambda *a, **k: {
+        "cboe_equity_pc": 0.72, "spy_put_call": 0.9, "put_call_ratio": 0.95})
+    monkeypatch.setattr(svc, "get_db", lambda: fake_db)
+    with patch("data_collectors.fear_greed_collector.FearGreedCollector") as MockFG:
+        MockFG.return_value.get_fear_greed_score.return_value = {"score": 50.0, "rating": "Neutral"}
+        r = client.get("/api/sentiment")
+    svc._cache.clear()
+    body = r.json()
+    assert body["put_call_ratio"] == 0.72
+    assert body["put_call_source"] == "CBOE equity"
 
 
 def test_left_returns_expected_shape(client):
@@ -592,11 +613,11 @@ def test_left_returns_expected_shape(client):
 def test_cta_returns_expected_shape(client):
     import api.signals_service as svc
     import pandas as pd
-    from types import SimpleNamespace
     svc._cache.clear()
     result = SimpleNamespace(
         latest_state={"SPY": "LONG", "GLD": "SHORT", "EEM": "FLAT"},
         latest_exposure=pd.Series({"SPY": 0.8, "GLD": -0.5, "EEM": 0.0}),
+        summary={"latest_date": "2026-07-06"},
     )
     with patch("data_collectors.cta_collector_cloud.CTACollectorCloud") as MockCTA:
         MockCTA.return_value.get_cta_analysis.return_value = result
@@ -604,6 +625,7 @@ def test_cta_returns_expected_shape(client):
     svc._cache.clear()
     assert r.status_code == 200
     body = r.json()
+    assert body["as_of"] == "2026-07-06"  # from summary.latest_date, not None
     assert body["long_count"] == 1 and body["short_count"] == 1 and body["flat_count"] == 1
     spy = next(p for p in body["positions"] if p["symbol"] == "SPY")
     assert spy["state"] == "good" and spy["exposure"] == 0.8

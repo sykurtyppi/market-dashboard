@@ -32,7 +32,7 @@ function Content({ data, freshness }: { data: Sentiment; freshness: Freshness })
               <span className="v mono" style={{ fontSize: 20 }}>
                 {data.put_call_ratio === null ? "—" : data.put_call_ratio.toFixed(3)}
               </span>
-              <span className="note">CBOE equity P/C</span>
+              <span className="note">{data.put_call_source ? `${data.put_call_source} P/C` : "Put/Call ratio"}</span>
             </div>
             <div className="regime-cell">
               <span className="k">Read</span>

@@ -46,9 +46,22 @@ def _build_sentiment() -> Dict[str, Any]:
     if score is None:
         warnings.append("Fear & Greed data unavailable (CNN).")
 
-    # Put/Call comes from the latest daily snapshot (cached SQLite).
+    # Put/Call comes from the latest daily snapshot (cached SQLite). Prefer the
+    # true CBOE equity ratio, then the SPY proxy, then the legacy best-available
+    # field — and report which one so the UI doesn't mislabel it.
     snap = get_db().get_latest_snapshot() or {}
-    put_call = _num(snap.get("put_call_ratio"))
+    put_call = None
+    put_call_source = None
+    for field, label in (
+        ("cboe_equity_pc", "CBOE equity"),
+        ("spy_put_call", "SPY proxy"),
+        ("put_call_ratio", "Best available"),
+    ):
+        v = _num(snap.get(field))
+        if v is not None:
+            put_call = v
+            put_call_source = label
+            break
 
     return {
         "as_of": fg.get("timestamp"),
@@ -58,6 +71,7 @@ def _build_sentiment() -> Dict[str, Any]:
             "state": _fg_state(score),
         },
         "put_call_ratio": put_call,
+        "put_call_source": put_call_source,
         "warnings": warnings,
     }
 
@@ -150,6 +164,9 @@ def _build_cta() -> Dict[str, Any]:
 
     latest_state = getattr(result, "latest_state", None) or {}
     latest_exposure = getattr(result, "latest_exposure", None)
+    summary = getattr(result, "summary", None) or {}
+    latest_date = summary.get("latest_date")
+    as_of = str(latest_date) if latest_date is not None else None
 
     if not latest_state:
         warnings.append("CTA positioning data unavailable (Yahoo Finance).")
@@ -178,7 +195,7 @@ def _build_cta() -> Dict[str, Any]:
         })
 
     return {
-        "as_of": None,
+        "as_of": as_of,
         "positions": positions,
         "long_count": longs,
         "short_count": shorts,
