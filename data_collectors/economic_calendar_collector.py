@@ -89,6 +89,9 @@ FOMC_DATES_2025 = [
     datetime(2025, 12, 17),
 ]
 
+# Decision (second) day of each 2026 FOMC meeting, per the official Federal
+# Reserve calendar: Jan 27-28, Mar 17-18, Apr 28-29, Jun 16-17, Jul 28-29,
+# Sep 15-16, Oct 27-28, Dec 8-9.
 FOMC_DATES_2026 = [
     datetime(2026, 1, 28),
     datetime(2026, 3, 18),
@@ -96,8 +99,8 @@ FOMC_DATES_2026 = [
     datetime(2026, 6, 17),
     datetime(2026, 7, 29),
     datetime(2026, 9, 16),
-    datetime(2026, 11, 4),
-    datetime(2026, 12, 16),
+    datetime(2026, 10, 28),
+    datetime(2026, 12, 9),
 ]
 
 ALL_FOMC_DATES = FOMC_DATES_2024 + FOMC_DATES_2025 + FOMC_DATES_2026

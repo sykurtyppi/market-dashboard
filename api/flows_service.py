@@ -71,6 +71,25 @@ def _sentiment_state(sentiment: str | None) -> str:
     return "neutral"
 
 
+def _signal_state(signal: str | None, sentiment: str | None = None) -> str:
+    """Map a machine-readable collector `signal` to a semantic state.
+
+    Institutional collectors expose a clean `signal` enum (BULLISH / BEARISH /
+    NEUTRAL / NORMAL / ELEVATED / …) alongside descriptive prose in `sentiment`.
+    Prefer the signal; fall back to sentiment only if no signal is present.
+    """
+    s = (signal or "").upper()
+    if s in ("BULLISH", "STRONG"):
+        return "good"
+    if s in ("BEARISH", "WEAK", "STRESS"):
+        return "crit"
+    if s in ("ELEVATED", "CAUTION", "TIGHTENING"):
+        return "warn"
+    if s in ("NEUTRAL", "NORMAL", "LOW", "MIXED"):
+        return "neutral"
+    return _sentiment_state(sentiment)
+
+
 def _build_options_flow() -> Dict[str, Any]:
     from data_collectors.options_flow_collector import OptionsFlowCollector
 
@@ -155,7 +174,7 @@ def _build_institutional() -> Dict[str, Any]:
             "etf_pct": _num(dp.get("etf_avg_pct")),
             "stock_pct": _num(dp.get("stock_avg_pct")),
             "sentiment": dp.get("sentiment"),
-            "state": _sentiment_state(dp.get("sentiment")),
+            "state": _signal_state(dp.get("signal"), dp.get("sentiment")),
             "interpretation": dp.get("interpretation"),
             "week_ending": dp.get("week_ending"),
         }
@@ -170,7 +189,7 @@ def _build_institutional() -> Dict[str, Any]:
             "sell_count": _num(ins.get("sell_count")),
             "buy_sell_ratio": _num(ins.get("buy_sell_ratio")),
             "sentiment": ins.get("sentiment"),
-            "state": _sentiment_state(ins.get("sentiment")),
+            "state": _signal_state(ins.get("signal"), ins.get("sentiment")),
             "period_days": _num(ins.get("period_days")),
         }
     else:

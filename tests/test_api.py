@@ -448,12 +448,16 @@ def test_institutional_returns_expected_shape(client):
     with patch("data_collectors.dark_pool_collector.DarkPoolCollector") as MockDP, \
          patch("data_collectors.insider_trading_collector.InsiderTradingCollector") as MockIns, \
          patch("data_collectors.treasury_auction_collector.TreasuryAuctionCollector") as MockAu:
+        # Realistic payloads: state comes from the machine-readable `signal`,
+        # not the descriptive `sentiment` prose.
         MockDP.return_value.get_dark_pool_summary.return_value = {
             "avg_dark_pool_pct": 38.0, "etf_avg_pct": 40.0, "stock_avg_pct": 36.0,
-            "sentiment": "Normal Activity", "interpretation": "...", "last_updated": "2026-07-05"}
+            "signal": "NORMAL", "sentiment": "Normal Activity",
+            "interpretation": "...", "last_updated": "2026-07-05"}
         MockIns.return_value.get_insider_summary.return_value = {
             "total_transactions": 30, "buy_count": 5, "sell_count": 25,
-            "buy_sell_ratio": 0.2, "sentiment": "BEARISH", "period_days": 30}
+            "buy_sell_ratio": 0.2, "signal": "BEARISH",
+            "sentiment": "More selling than buying - Some profit taking", "period_days": 30}
         MockAu.return_value.get_auction_summary.return_value = {
             "avg_bid_to_cover": 2.48, "avg_indirect_pct": 66.9, "avg_direct_pct": 18.8,
             "auction_count": 3, "weak_auctions": 0, "strong_auctions": 1, "health": "Strong Demand"}
@@ -463,8 +467,22 @@ def test_institutional_returns_expected_shape(client):
     body = r.json()
     assert body["warnings"] == []
     assert body["dark_pool"]["avg_pct"] == 38.0
-    assert body["insider"]["state"] == "crit"  # BEARISH -> crit
+    assert body["dark_pool"]["state"] == "neutral"  # NORMAL signal
+    # BEARISH signal despite prose sentiment -> crit (the bug this guards)
+    assert body["insider"]["state"] == "crit"
     assert body["auctions"]["state"] == "good"  # Strong -> good
+
+
+def test_fomc_2026_dates_match_official_calendar():
+    # Regression: 2026 FOMC decision days must match the official Fed calendar
+    # (Oct 27-28 and Dec 8-9, not the earlier wrong Nov 4 / Dec 16).
+    from datetime import datetime
+    from data_collectors.economic_calendar_collector import FOMC_DATES_2026
+    assert datetime(2026, 9, 16) in FOMC_DATES_2026
+    assert datetime(2026, 10, 28) in FOMC_DATES_2026
+    assert datetime(2026, 12, 9) in FOMC_DATES_2026
+    assert datetime(2026, 11, 4) not in FOMC_DATES_2026
+    assert datetime(2026, 12, 16) not in FOMC_DATES_2026
 
 
 def test_institutional_partial_warns_and_not_cached(client):
