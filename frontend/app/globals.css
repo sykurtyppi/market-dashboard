@@ -148,6 +148,13 @@ body {
 .chart-tooltip-row i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .chart-tooltip-row b { color: var(--ink); font-weight: 600; }
 .vrp-composite .chart-tag { right: 6px; }
+.range-select { display: inline-flex; gap: 2px; padding: 2px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; }
+.range-btn { font-size: 11.5px; padding: 3px 10px; border-radius: 6px; border: none; background: transparent; color: var(--ink-muted); cursor: pointer; font-weight: 550; font-variant-numeric: tabular-nums; }
+.range-btn:hover { color: var(--ink); }
+.range-btn.active { background: var(--surface); color: var(--accent-ink); box-shadow: 0 1px 2px rgba(22,24,29,.08); }
+.range-btn:disabled { color: var(--line-strong); cursor: not-allowed; }
+.range-btn:disabled:hover { color: var(--line-strong); }
+.range-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
 .stat-card { border: 1px solid var(--line); border-radius: 9px; padding: 11px 12px; background: #fafbfc; }
 .stat-card .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-faint); font-weight: 650; }
