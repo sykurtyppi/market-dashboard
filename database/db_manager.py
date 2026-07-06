@@ -206,6 +206,34 @@ class DatabaseManager:
                     # Column might already exist or other error
                     logger.debug(f"Migration note for {col_name}: {e}")
 
+        # Enforce indicator uniqueness. Databases created before the
+        # UNIQUE(indicator_name, date) constraint was added to `indicators` let
+        # INSERT OR REPLACE run without a conflict target, so every refresh
+        # appended a new row instead of replacing — silently accumulating
+        # duplicates (and letting stale values shadow corrected ones). Guarded on
+        # the named index so this deduplicate-then-constrain runs exactly once.
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_indicators_name_date'"
+        )
+        if not cursor.fetchone():
+            # Keep the most recent row (highest id) per name+date, drop the rest.
+            cursor.execute(
+                """
+                DELETE FROM indicators
+                WHERE id NOT IN (
+                    SELECT MAX(id) FROM indicators GROUP BY indicator_name, date
+                )
+                """
+            )
+            removed = cursor.rowcount
+            cursor.execute(
+                "CREATE UNIQUE INDEX idx_indicators_name_date ON indicators(indicator_name, date)"
+            )
+            logger.info(
+                "Migrated indicators table: removed %s duplicate rows, added unique index",
+                removed,
+            )
+
         conn.commit()
     
     # ========================================
