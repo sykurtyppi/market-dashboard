@@ -27,9 +27,11 @@ from api.macro_service import (
     build_fed_watch,
 )
 from api.sectors_service import build_sectors
+from api.signals_service import build_cta, build_left, build_sentiment
 from api.schemas import (
     BreadthResponse,
     COTResponse,
+    CTAResponse,
     CreditLiquidityResponse,
     CrossAssetResponse,
     EconomicCalendarResponse,
@@ -37,12 +39,14 @@ from api.schemas import (
     FreshnessDetail,
     HealthResponse,
     InstitutionalResponse,
+    LeftResponse,
     OptionsFlowResponse,
     OverviewResponse,
     RefreshResponse,
     RefreshStatus,
     RepoResponse,
     SectorsResponse,
+    SentimentResponse,
     TreasuryResponse,
     VolatilityResponse,
 )
@@ -153,6 +157,21 @@ def institutional():
 @app.get("/api/economic-calendar", response_model=EconomicCalendarResponse)
 def economic_calendar():
     return build_economic_calendar()
+
+
+@app.get("/api/sentiment", response_model=SentimentResponse)
+def sentiment():
+    return build_sentiment()
+
+
+@app.get("/api/left", response_model=LeftResponse)
+def left():
+    return build_left()
+
+
+@app.get("/api/cta", response_model=CTAResponse)
+def cta():
+    return build_cta()
 
 
 def _run_refresh():

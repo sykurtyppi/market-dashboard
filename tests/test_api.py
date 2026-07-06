@@ -547,3 +547,77 @@ def test_economic_calendar_empty_warns_and_not_cached(client):
         assert any("unavailable" in w.lower() for w in body["warnings"])
         assert "economic_calendar" not in svc._cache
     svc._cache.clear()
+
+
+# --- Final pages: Sentiment, LEFT, CTA (collectors mocked) ---
+
+def test_sentiment_returns_expected_shape(client):
+    import api.signals_service as svc
+    svc._cache.clear()
+    with patch("data_collectors.fear_greed_collector.FearGreedCollector") as MockFG:
+        MockFG.return_value.get_fear_greed_score.return_value = {
+            "score": 34.0, "rating": "Fear", "timestamp": "2026-07-06T00:00:00"}
+        r = client.get("/api/sentiment")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fear_greed"]["score"] == 34.0
+    assert body["fear_greed"]["state"] == "warn"  # fear -> warn
+
+
+def test_left_returns_expected_shape(client):
+    import api.signals_service as svc
+    import pandas as pd
+    svc._cache.clear()
+    hyg = pd.DataFrame({"date": pd.bdate_range("2023-01-02", periods=5),
+                        "BAMLH0A0HYM2": [3.0, 2.9, 2.8, 2.75, 2.75]})
+    with patch("data_collectors.fred_collector.FREDCollector") as MockFRED, \
+         patch("processors.left_strategy.LEFTStrategy") as MockLEFT:
+        MockFRED.return_value.get_series.return_value = hyg
+        MockLEFT.return_value.calculate_signal.return_value = {
+            "signal": "BUY", "strength": 60.0, "current_spread": 2.75,
+            "ema_330": 2.95, "pct_from_ema": -6.8, "date": "2026-07-02"}
+        MockLEFT.return_value.get_historical_signals.return_value = pd.DataFrame(
+            {"date": pd.bdate_range("2023-01-02", periods=3), "spread": [3.0, 2.9, 2.8],
+             "ema_330": [3.1, 3.05, 3.0]})
+        r = client.get("/api/left")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["signal"] == "BUY"
+    assert body["state"] == "good"  # BUY -> good
+    assert len(body["charts"]["spread"]) == 3
+
+
+def test_cta_returns_expected_shape(client):
+    import api.signals_service as svc
+    import pandas as pd
+    from types import SimpleNamespace
+    svc._cache.clear()
+    result = SimpleNamespace(
+        latest_state={"SPY": "LONG", "GLD": "SHORT", "EEM": "FLAT"},
+        latest_exposure=pd.Series({"SPY": 0.8, "GLD": -0.5, "EEM": 0.0}),
+    )
+    with patch("data_collectors.cta_collector_cloud.CTACollectorCloud") as MockCTA:
+        MockCTA.return_value.get_cta_analysis.return_value = result
+        r = client.get("/api/cta")
+    svc._cache.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["long_count"] == 1 and body["short_count"] == 1 and body["flat_count"] == 1
+    spy = next(p for p in body["positions"] if p["symbol"] == "SPY")
+    assert spy["state"] == "good" and spy["exposure"] == 0.8
+
+
+def test_cta_empty_warns_and_not_cached(client):
+    import api.signals_service as svc
+    from types import SimpleNamespace
+    svc._cache.clear()
+    with patch("data_collectors.cta_collector_cloud.CTACollectorCloud") as MockCTA:
+        MockCTA.return_value.get_cta_analysis.return_value = SimpleNamespace(latest_state={}, latest_exposure=None)
+        r = client.get("/api/cta")
+        body = r.json()
+        assert body["positions"] == []
+        assert any("unavailable" in w.lower() for w in body["warnings"])
+        assert "cta" not in svc._cache
+    svc._cache.clear()
