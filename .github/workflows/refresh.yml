@@ -1,0 +1,91 @@
+# Scheduled data refresh — trigger, then VERIFY.
+#
+# POST /api/refresh returns as soon as the background task starts, so a 200 is
+# "refresh began", not "data updated". A cron that only checks the status code
+# would report success while silently serving stale data. This workflow polls
+# the run to completion and then gates on actual freshness + system health
+# (docs/cutover-plan.md §5).
+#
+# Cadence: twice each weekday. GitHub cron is fixed-UTC (no DST): 14:00 UTC is
+# ~09:00/10:00 ET (after the open), 21:30 UTC is ~16:30/17:30 ET (after the
+# close). The backend's _refresh_lock makes overlapping/extra runs safe.
+#
+# Repo secrets required: BACKEND_URL (https://<render-host>, no trailing
+# slash), MARKET_API_TOKEN (same value as the backend env).
+
+name: Scheduled data refresh
+on:
+  schedule:
+    - cron: "0 14 * * 1-5"
+    - cron: "30 21 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      BACKEND_URL: ${{ secrets.BACKEND_URL }}
+      MARKET_API_TOKEN: ${{ secrets.MARKET_API_TOKEN }}
+    steps:
+      # The `secrets` context is not available in a job-level `if`, so gate via
+      # a step output instead. Skipping (not failing) keeps the schedule green
+      # until the backend is provisioned and secrets are set (cutover Phase D).
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -z "$BACKEND_URL" ] || [ -z "$MARKET_API_TOKEN" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::BACKEND_URL / MARKET_API_TOKEN secrets not set — skipping until cutover Phase D"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger refresh
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "X-API-Token: $MARKET_API_TOKEN" \
+            "$BACKEND_URL/api/refresh")
+          echo "refresh trigger -> HTTP $code"
+          # 401 = bad/missing token; anything non-200 fails here
+          test "$code" = "200"
+
+      - name: Wait for the background refresh to finish
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          running=true
+          for i in $(seq 1 60); do          # up to ~20 min (60 x 20s)
+            running=$(curl -s "$BACKEND_URL/api/refresh/status" | jq -r '.running')
+            echo "poll $i: running=$running"
+            [ "$running" = "false" ] && break
+            sleep 20
+          done
+          if [ "$running" != "false" ]; then
+            echo "::error::refresh did not complete within timeout"
+            exit 1
+          fi
+
+      - name: Gate on data freshness
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          body=$(curl -s "$BACKEND_URL/api/freshness")
+          echo "$body"
+          fresh=$(echo "$body" | jq -r '.is_fresh')
+          if [ "$fresh" != "true" ]; then
+            echo "::error::refresh completed but data is not fresh — update likely failed"
+            exit 1
+          fi
+
+      - name: Check system health
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          body=$(curl -s "$BACKEND_URL/api/system-health")
+          status=$(echo "$body" | jq -r '.overall_status')
+          echo "overall_status=$status"
+          if [ "$status" = "down" ]; then
+            echo "::error::system health reports down after refresh"
+            exit 1
+          fi
+          if [ "$status" != "healthy" ]; then
+            echo "::warning::system health is '$status' after refresh — some sources degraded"
+          fi

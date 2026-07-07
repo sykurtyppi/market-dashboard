@@ -1,7 +1,7 @@
 # Deployment Cutover Plan — Streamlit → FastAPI + Next.js
 
-**Status:** Draft for review. No infrastructure touched. Nothing here has been provisioned.
-**Author:** Claude Code · **Date:** 2026-07-06 · **Revision:** 2 (tightened refresh verification, DB seeding & backup)
+**Status:** Decisions made (§9); config artifacts committed (`render.yaml`, `.github/workflows/refresh.yml`). Infrastructure not yet provisioned — Phase A–D pending.
+**Author:** Claude Code · **Date:** 2026-07-06 · **Revision:** 3 (§9 decisions recorded; deploy artifacts added)
 
 This plan describes how to take the completed custom frontend (16 analysis pages
 + Settings + System Health) from local-only to a deployed stack, keep its data
@@ -147,7 +147,9 @@ stale data. The workflow must therefore **poll to completion and gate on
 freshness**. (`/api/refresh/status` and `/api/freshness` are open, non-secret
 endpoints — no token needed for the polling steps.)
 
-**New file to add (when we execute):** `.github/workflows/refresh.yml`
+**Committed as `.github/workflows/refresh.yml`** (twice-daily cadence per §9,
+plus a system-health step that fails on `down` and warns on `degraded`). The
+sketch below is the original single-run design for reference:
 
 ```yaml
 name: Scheduled data refresh
@@ -294,15 +296,19 @@ value (daily history) is **not regenerable** by a fresh refresh. Protect it:
 
 ---
 
-## 9. Open decisions for you
+## 9. Decisions (settled 2026-07-07)
 
-1. **Backend host:** Render (recommended) vs Railway vs VPS.
-2. **Custom domain?** If yes, which host owns DNS (Vercel is easiest for the
-   frontend).
-3. **Refresh cadence:** once daily at ~market close, or twice (open + close)?
-   The lock makes extra runs safe.
-4. **Streamlit:** unlist-and-keep for a while (recommended), or hard-retire once
-   verified?
+1. **Backend host: Render** — Web Service (starter) + Render Disk. Blueprint
+   committed as `render.yaml`.
+2. **Domain: default Vercel URL for now.** A custom domain can be attached
+   later with zero code changes.
+3. **Refresh cadence: twice each weekday** — 14:00 UTC (after the open) and
+   21:30 UTC (after the close). Workflow committed as
+   `.github/workflows/refresh.yml`; the `_refresh_lock` makes extra runs safe.
+4. **Streamlit: unlist-and-keep** as rollback for a couple of weeks after the
+   new stack is verified live, then delete.
 
-Once these are settled I can execute Phase A–D, adding `render.yaml` (or Railway
-config) and `.github/workflows/refresh.yml` as real files in a PR.
+With the artifacts committed, what remains is Phase A–D execution (§6) — the
+provisioning steps that need dashboard access: create the Render service from
+the blueprint, set the secrets, seed the DB, deploy the Vercel project, add the
+two repo secrets, and run the refresh workflow once by hand.
