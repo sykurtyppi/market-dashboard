@@ -1,6 +1,8 @@
 import { getSentiment, getFreshness, Sentiment, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section, fmtAsOf } from "@/components/ui";
+import GapNotice from "@/components/GapNotice";
+import { AreaChart } from "@/components/Charts";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +49,25 @@ function Content({ data, freshness }: { data: Sentiment; freshness: Freshness })
             </div>
           </div>
         </Section>
+
+        <section className="grid-2">
+          <Panel title="Fear & Greed History" sub="1Y">
+            <AreaChart points={data.charts.fear_greed_history} color="var(--warn)" label="F&G" />
+            <GapNotice points={data.charts.fear_greed_history} />
+            <div className="legend">
+              <span><i style={{ background: "var(--warn)" }} />CNN Fear &amp; Greed</span>
+              <span style={{ color: "var(--ink-faint)" }}>&lt;25 extreme fear · 45–55 neutral · &gt;78 extreme greed</span>
+            </div>
+          </Panel>
+          <Panel title="Put / Call History" sub="1Y">
+            <AreaChart points={data.charts.put_call_history} color="var(--accent)" label="P/C" />
+            <GapNotice points={data.charts.put_call_history} />
+            <div className="legend">
+              <span><i style={{ background: "var(--accent)" }} />Best-available P/C</span>
+              <span style={{ color: "var(--ink-faint)" }}>Above ~1.0 defensive · below ~0.7 complacent</span>
+            </div>
+          </Panel>
+        </section>
       </div>
     </>
   );

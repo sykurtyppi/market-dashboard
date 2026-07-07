@@ -576,8 +576,10 @@ def test_sentiment_put_call_prefers_cboe_over_legacy(client, monkeypatch):
     # not the legacy best-available field.
     import api.signals_service as svc
     svc._cache.clear()
-    fake_db = SimpleNamespace(get_latest_snapshot=lambda *a, **k: {
-        "cboe_equity_pc": 0.72, "spy_put_call": 0.9, "put_call_ratio": 0.95})
+    fake_db = SimpleNamespace(
+        get_latest_snapshot=lambda *a, **k: {
+            "cboe_equity_pc": 0.72, "spy_put_call": 0.9, "put_call_ratio": 0.95},
+        get_snapshot_history=lambda *a, **k: None)
     monkeypatch.setattr(svc, "get_db", lambda: fake_db)
     with patch("data_collectors.fear_greed_collector.FearGreedCollector") as MockFG:
         MockFG.return_value.get_fear_greed_score.return_value = {"score": 50.0, "rating": "Neutral"}
@@ -806,3 +808,34 @@ def test_cached_pages_all_expose_warnings(client):
         assert r.status_code == 200, path
         body = r.json()
         assert isinstance(body.get("warnings"), list), f"{path} missing warnings[]"
+
+
+def test_sentiment_includes_history_charts(client):
+    # The sentiment page was a single strip with no history; the payload now
+    # carries F&G and put/call series from the daily snapshots so the page can
+    # chart where sentiment has been. Schema must not strip the field.
+    with patch("data_collectors.fear_greed_collector.FearGreedCollector.get_fear_greed_score",
+               return_value={"score": 50, "rating": "Neutral", "timestamp": "2026-07-07"}):
+        r = client.get("/api/sentiment")
+    assert r.status_code == 200
+    body = r.json()
+    assert "charts" in body, "sentiment payload missing charts"
+    for key in ("fear_greed_history", "put_call_history"):
+        assert isinstance(body["charts"].get(key), list), f"missing {key}"
+    # With snapshot history in the DB the series carry real points
+    if body["charts"]["fear_greed_history"]:
+        p = body["charts"]["fear_greed_history"][0]
+        assert "date" in p and "value" in p
+
+
+def test_treasury_percentile_is_not_constant_fallback(client):
+    # The collector's div-by-zero fallback stored a constant 50.0 percentile in
+    # every row — a flat line charted as real data. The service now computes
+    # percentile rank from the stored MOVE levels when the column is degenerate.
+    r = client.get("/api/treasury-stress")
+    assert r.status_code == 200
+    series = r.json()["charts"]["percentile_history"]
+    if len(series) >= 20:
+        values = {p["value"] for p in series}
+        assert values != {50.0}, "percentile history is the constant fallback"
+        assert len(values) > 1, "percentile history is constant"

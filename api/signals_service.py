@@ -63,6 +63,13 @@ def _build_sentiment() -> Dict[str, Any]:
             put_call_source = label
             break
 
+    # History from the daily snapshots (cached SQLite) so the page can show
+    # where sentiment has been, not just where it is. The stored history has
+    # known collection gaps — the frontend's GapNotice flags them honestly.
+    hist = get_db().get_snapshot_history(days=365)
+    fg_series = _series(hist, value_col="fear_greed_score")
+    pc_series = _series(hist, value_col="put_call_ratio")
+
     return {
         "as_of": fg.get("timestamp"),
         "fear_greed": {
@@ -72,6 +79,10 @@ def _build_sentiment() -> Dict[str, Any]:
         },
         "put_call_ratio": put_call,
         "put_call_source": put_call_source,
+        "charts": {
+            "fear_greed_history": fg_series,
+            "put_call_history": pc_series,
+        },
         "warnings": warnings,
     }
 

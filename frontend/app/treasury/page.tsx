@@ -2,7 +2,7 @@ import { getTreasuryStress, getFreshness, TreasuryStress, Freshness } from "@/li
 import Topbar from "@/components/Topbar";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
-import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -25,27 +25,25 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
               </span>
               <span className="note">{data.regime_note}</span>
             </div>
-            <div className="regime-cell" style={{ display: "flex", gap: 24, alignItems: "center" }}>
+            {/* Strip cells carry the state dot and source so the old duplicate
+                "Key Indicators" cards (same numbers, same sources) could go. */}
+            <div className="regime-cell" style={{ display: "flex", gap: 32, alignItems: "center" }}>
               {data.metrics.map((m) => (
                 <div key={m.key}>
                   <span className="k">{m.label}</span>
                   <div className="v mono" style={{ fontSize: 22, marginTop: 6 }}>
-                    {m.value === null ? "—" : m.unit === "%" ? `${m.value.toFixed(1)}%` : m.value.toFixed(1)}
+                    <span className={`dot ${m.state}`} />
+                    {m.value === null ? "—" : `${m.value.toFixed(1)}${m.unit}`}
                   </div>
+                  <span className="note">{m.source}</span>
                 </div>
               ))}
             </div>
           </div>
         </Section>
 
-        <Section title="Key Indicators">
-          <div className="metrics">
-            {data.metrics.map((m) => <MetricCard key={m.key} m={m} />)}
-          </div>
-        </Section>
-
         <section className="grid-2">
-          <Panel title="MOVE Index" sub="1Y">
+          <Panel title="MOVE Index" sub="2Y">
             <AreaChart points={data.charts.move_history} color="var(--accent)" label="MOVE" />
             <GapNotice points={data.charts.move_history} />
             <div className="legend">
@@ -53,7 +51,7 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
               <span style={{ color: "var(--ink-faint)" }}>&lt;80 calm · 80–120 normal · 120–150 elevated · &gt;150 stress</span>
             </div>
           </Panel>
-          <Panel title="Historical Percentile" sub="1Y">
+          <Panel title="Historical Percentile" sub="2Y">
             <AreaChart points={data.charts.percentile_history} color="var(--warn)" label="Percentile" unit="%" />
             <GapNotice points={data.charts.percentile_history} />
             <div className="legend">

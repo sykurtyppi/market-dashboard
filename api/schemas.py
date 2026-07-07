@@ -376,11 +376,17 @@ class FearGreed(BaseModel):
     state: State = "neutral"
 
 
+class SentimentCharts(BaseModel):
+    fear_greed_history: List[Point] = Field(default_factory=list)
+    put_call_history: List[Point] = Field(default_factory=list)
+
+
 class SentimentResponse(BaseModel):
     as_of: Optional[str] = None
     fear_greed: FearGreed
     put_call_ratio: Optional[float] = None
     put_call_source: Optional[str] = None
+    charts: SentimentCharts = Field(default_factory=SentimentCharts)
     warnings: List[str] = Field(default_factory=list)
 
 
