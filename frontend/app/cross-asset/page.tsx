@@ -1,8 +1,15 @@
 import { getCrossAsset, getFreshness, CrossAsset, Freshness, AssetPerf, Correlation } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section, Panel } from "@/components/ui";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
+
+// The backend regime signal is a raw enum (RISK_ON, RISK_OFF, MIXED) — render
+// it as a human label instead of leaking the internal constant.
+function fmtSignal(signal: string | null): string {
+  if (!signal) return "—";
+  return signal.replace(/_/g, "-").toLowerCase().replace(/(^|-)[a-z]/g, (c) => c.toUpperCase());
+}
 
 function assetColor(state: string): string {
   if (state === "good") return "var(--good)";
@@ -46,12 +53,12 @@ function Content({ data, freshness }: { data: CrossAsset; freshness: Freshness }
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Market Regime" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
+        <Section title="Market Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1fr 2fr" }}>
             <div className="regime-cell lead">
               <span className="k">Regime</span>
               <span className="v" style={{ fontSize: 20, marginTop: 4 }}>
-                <span className={`dot ${r.state}`} />{r.signal ?? "—"}
+                <span className={`dot ${r.state}`} />{fmtSignal(r.signal)}
               </span>
               <span className="note mono">
                 {r.confidence != null ? `${r.confidence.toFixed(0)}% confidence` : ""}

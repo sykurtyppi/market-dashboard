@@ -1,7 +1,7 @@
 import { getRepo, getFreshness, Repo, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
 import { AreaChart } from "@/components/Charts";
-import { MetricCard, Section, Panel } from "@/components/ui";
+import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,7 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
     <>
       <Topbar title="Repo Market" subtitle="SOFR & overnight funding" freshness={freshness} />
       <div className="content">
-        <Section title="Funding Regime" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
+        <Section title="Funding Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.2fr 2fr" }}>
             <div className="regime-cell lead">
               <span className="k">Liquidity</span>

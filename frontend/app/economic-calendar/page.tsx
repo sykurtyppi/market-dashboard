@@ -1,6 +1,6 @@
 import { getEconomicCalendar, getFreshness, EconomicCalendar, EconomicEvent, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section, Panel } from "@/components/ui";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +39,7 @@ function Content({ data, freshness }: { data: EconomicCalendar; freshness: Fresh
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Upcoming Events" aside={<span className="mono">{data.as_of ? String(data.as_of).slice(0, 10) : "—"}</span>}>
+        <Section title="Upcoming Events" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <Panel title="Releases & Meetings">
             <div className="table-wrap" style={{ border: "none" }}>
               <table>

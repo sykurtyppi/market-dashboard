@@ -1,7 +1,7 @@
 import { getCreditLiquidity, getFreshness, CreditLiquidity, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
 import { AreaChart, MultiLineChart } from "@/components/Charts";
-import { MetricCard, Section, Panel } from "@/components/ui";
+import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
     <>
       <Topbar title="Credit & Liquidity" subtitle="Credit spreads & Fed balance sheet" freshness={freshness} />
       <div className="content">
-        <Section title="Current Levels" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
+        <Section title="Current Levels" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="metrics">
             {data.metrics.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>

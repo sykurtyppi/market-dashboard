@@ -1,6 +1,6 @@
 import { getCot, getFreshness, COT, COTPosition, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section, Panel } from "@/components/ui";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ function Content({ data, freshness }: { data: COT; freshness: Freshness }) {
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Net Positioning" aside={<span className="mono">{data.as_of ? String(data.as_of).slice(0, 10) : "—"}</span>}>
+        <Section title="Net Positioning" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <Panel title="Speculators vs Commercials" sub="net contracts">
             <div className="table-wrap" style={{ border: "none" }}>
               <table>

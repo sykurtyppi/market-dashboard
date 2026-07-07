@@ -1,7 +1,7 @@
 import { getVolatility, getFreshness, Volatility, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
 import VolatilityPanel from "@/components/VolatilityPanel";
-import { MetricCard, Section } from "@/components/ui";
+import { MetricCard, Section, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,7 @@ function Content({ data, freshness }: { data: Volatility; freshness: Freshness }
     <>
       <Topbar title="Volatility & VRP" subtitle="Volatility risk premium & regime" freshness={freshness} />
       <div className="content">
-        <Section title="VRP Regime" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
+        <Section title="VRP Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.4fr repeat(4, 1fr)" }}>
             <div className="regime-cell lead">
               <span className="k">Regime</span>
