@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { API_BASE } from "@/lib/api";
+import { backendFetch, describeApiError } from "@/lib/api";
 
 // Same-origin proxy so the client can trigger a refresh without knowing the
 // backend URL (kept server-only) or dealing with CORS. Forwards the server-only
@@ -11,11 +11,10 @@ export async function POST() {
     const token = process.env.MARKET_API_TOKEN;
     if (token) headers["X-API-Token"] = token;
 
-    const res = await fetch(`${API_BASE}/api/refresh`, { method: "POST", headers });
+    const res = await backendFetch("/api/refresh", { method: "POST", headers });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ status: "error", detail: message }, { status: 502 });
+    return NextResponse.json({ status: "error", detail: describeApiError(error, "/api/refresh").message }, { status: 502 });
   }
 }

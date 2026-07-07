@@ -323,10 +323,42 @@ export interface Settings {
   warnings: string[];
 }
 
+// Every backend request times out rather than hanging a page render
+// indefinitely — a wedged backend (accepts the connection, never responds)
+// must surface as a clear error, not a blank page until some infra-level
+// timeout fires.
+const API_TIMEOUT_MS = 10_000;
+
+export function backendFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(`${API_BASE}${path}`, { cache: "no-store", ...init, signal: AbortSignal.timeout(API_TIMEOUT_MS) });
+}
+
+// Translate fetch's raw failures into actionable messages. Verified shapes:
+// AbortSignal.timeout rejects with DOMException name "TimeoutError";
+// connection-refused rejects with TypeError "fetch failed".
+export function describeApiError(error: unknown, path: string): Error {
+  if (error instanceof DOMException && error.name === "TimeoutError") {
+    return new Error(`API timed out after ${API_TIMEOUT_MS / 1000}s: ${path} — the backend is not responding`);
+  }
+  const message = error instanceof Error ? error.message : "Unknown error";
+  return new Error(`Cannot reach API (${message}): ${path}`);
+}
+
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  let res: Response;
+  try {
+    res = await backendFetch(path);
+  } catch (error: unknown) {
+    throw describeApiError(error, path);
+  }
   if (!res.ok) throw new Error(`API ${res.status}: ${path}`);
-  return res.json() as Promise<T>;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    // 200 with a non-JSON body (proxy error page, truncated stream) is an
+    // infra problem, not an app bug — say so instead of leaking a SyntaxError.
+    throw new Error(`API returned invalid JSON (status ${res.status}): ${path}`);
+  }
 }
 
 export const getOverview = () => getJson<Overview>("/api/overview");
@@ -355,7 +387,16 @@ export async function getSettings(): Promise<Settings> {
   const headers: Record<string, string> = {};
   const token = process.env.MARKET_API_TOKEN;
   if (token) headers["X-API-Token"] = token;
-  const res = await fetch(`${API_BASE}/api/settings`, { cache: "no-store", headers });
+  let res: Response;
+  try {
+    res = await backendFetch("/api/settings", { headers });
+  } catch (error: unknown) {
+    throw describeApiError(error, "/api/settings");
+  }
   if (!res.ok) throw new Error(`API ${res.status}: /api/settings`);
-  return res.json() as Promise<Settings>;
+  try {
+    return (await res.json()) as Settings;
+  } catch {
+    throw new Error(`API returned invalid JSON (status ${res.status}): /api/settings`);
+  }
 }
