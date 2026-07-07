@@ -571,6 +571,30 @@ def test_sentiment_returns_expected_shape(client):
         assert body["put_call_source"] in ("CBOE equity", "SPY proxy", "Best available")
 
 
+def test_sentiment_put_call_history_uses_row_level_source_priority(client, monkeypatch):
+    import api.signals_service as svc
+    import pandas as pd
+    svc._cache.clear()
+    hist = pd.DataFrame({
+        "date": pd.to_datetime(["2026-07-01", "2026-07-02", "2026-07-03"]),
+        "cboe_equity_pc": [0.71, None, None],
+        "spy_put_call": [0.91, 0.82, None],
+        "put_call_ratio": [1.11, 1.12, 0.93],
+    })
+    fake_db = SimpleNamespace(
+        get_latest_snapshot=lambda *a, **k: {"put_call_ratio": 0.93},
+        get_snapshot_history=lambda *a, **k: hist,
+    )
+    monkeypatch.setattr(svc, "get_db", lambda: fake_db)
+    with patch("data_collectors.fear_greed_collector.FearGreedCollector") as MockFG:
+        MockFG.return_value.get_fear_greed_score.return_value = {"score": 50.0, "rating": "Neutral"}
+        r = client.get("/api/sentiment")
+    svc._cache.clear()
+    assert r.status_code == 200
+    series = r.json()["charts"]["put_call_history"]
+    assert [p["value"] for p in series] == [0.71, 0.82, 0.93]
+
+
 def test_sentiment_put_call_prefers_cboe_over_legacy(client, monkeypatch):
     # When the true CBOE equity ratio is present, use it and label it as such —
     # not the legacy best-available field.
