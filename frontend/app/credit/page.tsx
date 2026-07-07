@@ -1,5 +1,6 @@
 import { getCreditLiquidity, getFreshness, CreditLiquidity, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart, MultiLineChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
@@ -55,6 +56,16 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
             Note: {data.notes.net_liquidity}
           </p>
         ) : null}
+        <Explainer
+          title="How to read this — credit & liquidity"
+          intro="Credit spreads are the extra yield corporate bonds pay over Treasuries — the market's price on default risk, and one of the earliest stress signals."
+          points={[
+            { label: "HY spread:", text: "high-yield (junk) premium. Below 3% is calm, 3–5% warrants caution, above 5% is stress." },
+            { label: "IG spread:", text: "the investment-grade equivalent — moves less, but widening in step with HY confirms the signal." },
+            { label: "Fed balance sheet / QT:", text: "falling total assets drain liquidity from the system; the QT panel shows the cumulative runoff since the window began." },
+          ]}
+          caveat="FRED series update with about a one-business-day lag. Not investment advice."
+        />
       </div>
     </>
   );

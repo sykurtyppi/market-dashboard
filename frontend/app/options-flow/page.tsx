@@ -1,5 +1,6 @@
 import { getOptionsFlow, getFreshness, OptionsFlow, OptionsETF, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import { Section, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +57,16 @@ function Content({ data, freshness }: { data: OptionsFlow; freshness: Freshness 
             Put/Call ratio above ~1.0 leans defensive; below ~0.7 leans complacent. Sentiment blends volume and near-the-money open interest.
           </p>
         </Section>
+        <Explainer
+          title="How to read this — options flow"
+          intro="Nearest-expiry index-ETF options are where hedging and speculation show up first."
+          points={[
+            { label: "Put/Call ratio:", text: "above ~1.0 leans defensive (more puts bought); below ~0.7 leans complacent." },
+            { label: "Volume split bar:", text: "call (green) versus put (red) share of total volume at a glance." },
+            { label: "Sentiment tag:", text: "blends volume with near-the-money open interest, so it can disagree with the raw ratio — open interest carries positioning the day's volume doesn't." },
+          ]}
+          caveat="0–1DTE flows dominate these figures and shift fast intraday."
+        />
       </div>
     </>
   );

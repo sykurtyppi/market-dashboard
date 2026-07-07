@@ -1,5 +1,6 @@
 import { getLeft, getFreshness, Left, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import GapNotice from "@/components/GapNotice";
 import { MultiLineChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
@@ -22,7 +23,7 @@ function Content({ data, freshness }: { data: Left; freshness: Freshness }) {
               <span className="v" style={{ fontSize: 24, marginTop: 6 }}>
                 <span className={`dot ${data.state}`} />{data.signal ?? "—"}
               </span>
-              <span className="note">Buy when spread crosses below its 330-day EMA</span>
+              <span className="note">Buy at ≤0.65× the 330d EMA · sell at ≥1.40×</span>
             </div>
             <div className="regime-cell" style={{ display: "flex", alignItems: "center" }}>
               <span className="note" style={{ fontSize: 12.5 }}>
@@ -52,6 +53,17 @@ function Content({ data, freshness }: { data: Left; freshness: Freshness }) {
             </div>
           </Panel>
         </Section>
+        <Explainer
+          title="How to read this — the LEFT model"
+          intro="LEFT is a trend model on high-yield credit spreads (HY OAS) versus their 330-day EMA. It trades the ratio of spread to trend, not the crossing itself."
+          points={[
+            { label: "BUY:", text: "spread at or below 0.65× the EMA — deeply below trend, historically a supportive backdrop." },
+            { label: "SELL:", text: "spread at or above 1.40× the EMA — stress overriding the trend." },
+            { label: "NEUTRAL:", text: "anywhere between the bands. The spread can sit below its EMA (negative % from EMA) and still be neutral — it hasn't reached the 35%-below entry band." },
+            { label: "Signal strength:", text: "0–100 position within or beyond the bands." },
+          ]}
+          caveat="Model heuristics, not investment advice."
+        />
       </div>
     </>
   );

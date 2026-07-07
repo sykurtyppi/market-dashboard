@@ -1,5 +1,6 @@
 import { getEconomicCalendar, getFreshness, EconomicCalendar, EconomicEvent, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -76,6 +77,16 @@ function Content({ data, freshness }: { data: EconomicCalendar; freshness: Fresh
             </div>
           </Panel>
         </Section>
+        <Explainer
+          title="How to read this — the calendar"
+          intro="Upcoming macro releases that move rates and risk assets."
+          points={[
+            { label: "Latest / Prior:", text: "the raw released levels — e.g. the CPI index value itself, not a percentage." },
+            { label: "Δ YoY:", text: "the year-over-year change — the number the headlines quote." },
+            { label: "Importance:", text: "red = typically market-moving, amber = notable, grey = background." },
+          ]}
+          caveat="Dates are scheduled release dates and can shift."
+        />
       </div>
     </>
   );

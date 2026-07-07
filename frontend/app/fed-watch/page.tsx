@@ -1,5 +1,6 @@
 import { getFedWatch, getFreshness, FedWatch, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -63,6 +64,16 @@ function Content({ data, freshness }: { data: FedWatch; freshness: Freshness }) 
             </div>
           </Panel>
         </section>
+        <Explainer
+          title="How to read this — rate probabilities"
+          intro="Everything here is implied by fed funds futures pricing — it is what the market expects, not a forecast by this dashboard."
+          points={[
+            { label: "Probabilities:", text: "derived from the futures-implied rate versus the current target range for the next FOMC meeting." },
+            { label: "EFFR vs midpoint:", text: "where the effective rate actually trades inside the target range." },
+            { label: "Terminal rate:", text: "the endpoint the futures curve prices for this cycle." },
+          ]}
+          caveat="When futures data is unavailable the probability panel shows a fallback estimate and is labeled as such."
+        />
       </div>
     </>
   );

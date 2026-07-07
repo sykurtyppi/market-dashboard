@@ -1,5 +1,6 @@
 import { getSentiment, getFreshness, Sentiment, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
@@ -68,6 +69,16 @@ function Content({ data, freshness }: { data: Sentiment; freshness: Freshness })
             </div>
           </Panel>
         </section>
+        <Explainer
+          title="How to read this — sentiment"
+          intro="Sentiment extremes are contrarian signals — crowds tend to be most wrong at turning points."
+          points={[
+            { label: "Fear & Greed:", text: "below 25 is extreme fear (historically a contrarian buy zone); above 78 is extreme greed (froth risk)." },
+            { label: "Put/Call:", text: "above ~1.0 shows defensive positioning; below ~0.7 shows complacency." },
+            { label: "Live vs snapshot:", text: "this page reads CNN live; the Overview shows the last daily snapshot — they can differ when the snapshot is older." },
+          ]}
+          caveat="Not investment advice."
+        />
       </div>
     </>
   );

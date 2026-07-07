@@ -1,5 +1,6 @@
 import { getTreasuryStress, getFreshness, TreasuryStress, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
@@ -59,6 +60,15 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
             </div>
           </Panel>
         </section>
+        <Explainer
+          title="How to read this — the MOVE index"
+          intro="The MOVE index is the bond market's VIX: implied volatility of Treasury options. Treasury stress tends to lead risk assets when funding and collateral markets tighten."
+          points={[
+            { label: "Levels:", text: "below 80 calm · 80–120 normal · 120–150 elevated · above 150 stress." },
+            { label: "Percentile (2Y):", text: "where today's MOVE sits versus the last two years — a low percentile means calm by recent standards, whatever the absolute level." },
+          ]}
+          caveat="Not investment advice."
+        />
       </div>
     </>
   );

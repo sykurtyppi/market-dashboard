@@ -1,5 +1,6 @@
 import { getSectors, getFreshness, Sectors, Freshness, SectorRow } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import VixTermChart from "@/components/VixTermChart";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
 
@@ -79,6 +80,16 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
             </div>
           </Panel>
         </section>
+        <Explainer
+          title="How to read this — rotation & the VIX curve"
+          intro="Sector leadership and the shape of the VIX curve both say what the market is pricing next."
+          points={[
+            { label: "Rotation:", text: "cyclicals (tech, industrials, discretionary) leading = risk appetite; defensives (utilities, staples, health care) leading = caution." },
+            { label: "VIX term structure:", text: "upward-sloping (contango) is the calm norm — future uncertainty priced above today's. Inverted (backwardation) means the market fears something near-term." },
+            { label: "Tenors:", text: "9D vs 30D vs 3M — the front of the curve prices immediate event risk." },
+          ]}
+          caveat="Not investment advice."
+        />
       </div>
     </>
   );
