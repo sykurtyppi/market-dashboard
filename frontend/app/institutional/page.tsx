@@ -1,6 +1,6 @@
 import { getInstitutional, getFreshness, Institutional, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section, Panel } from "@/components/ui";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 import { ReactNode } from "react";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ function Content({ data, freshness }: { data: Institutional; freshness: Freshnes
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Institutional Activity" aside={<span className="mono">{data.as_of ? String(data.as_of).slice(0, 10) : "—"}</span>}>
+        <Section title="Institutional Activity" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <section className="grid-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
             <Panel title="Dark Pool" sub={dp ? undefined : "unavailable"}>
               {dp ? (

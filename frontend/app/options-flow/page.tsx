@@ -1,6 +1,6 @@
 import { getOptionsFlow, getFreshness, OptionsFlow, OptionsETF, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section } from "@/components/ui";
+import { Section, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +33,7 @@ function Content({ data, freshness }: { data: OptionsFlow; freshness: Freshness 
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Nearest-Expiry Flow" aside={<span className="mono">{data.as_of ? String(data.as_of).slice(0, 16).replace("T", " ") : "—"}</span>}>
+        <Section title="Nearest-Expiry Flow" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           {data.etfs.length > 0 ? (
             <div className="metrics" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
               {data.etfs.map((e) => <EtfCard key={e.ticker} e={e} />)}

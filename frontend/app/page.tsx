@@ -1,7 +1,7 @@
 import { getOverview, RegimeComponent, DetailRow, Overview } from "@/lib/api";
 import Topbar from "@/components/Topbar";
 import { AreaChart, MultiLineChart } from "@/components/Charts";
-import { MetricCard, Section, Panel } from "@/components/ui";
+import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +42,7 @@ function OverviewContent({ data }: { data: Overview }) {
     <>
       <Topbar title="Overview" subtitle="Market regime & key risk indicators" freshness={data.freshness} />
       <div className="content">
-        <Section title="Market Regime" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
+        <Section title="Market Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime">
             <div className="regime-cell lead">
               <span className="k">Composite Risk</span>

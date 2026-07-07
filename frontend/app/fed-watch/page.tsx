@@ -1,11 +1,10 @@
 import { getFedWatch, getFreshness, FedWatch, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { MetricCard, Section, Panel } from "@/components/ui";
+import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
 function Content({ data, freshness }: { data: FedWatch; freshness: Freshness }) {
-  const maxPct = Math.max(1, ...data.probabilities.map((p) => p.pct ?? 0));
   return (
     <>
       <Topbar title="Fed Watch" subtitle="Rate probabilities & policy path" freshness={freshness} />
@@ -14,7 +13,7 @@ function Content({ data, freshness }: { data: FedWatch; freshness: Freshness }) 
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Policy Rate" aside={<span className="mono">{data.as_of ?? "—"}</span>}>
+        <Section title="Policy Rate" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.3fr 1fr 1fr" }}>
             <div className="regime-cell lead">
               <span className="k">Target Range</span>
@@ -46,8 +45,10 @@ function Content({ data, freshness }: { data: FedWatch; freshness: Freshness }) 
               data.probabilities.map((p) => (
                 <div className="prob-row" key={p.outcome}>
                   <span className="prob-label">{p.outcome}</span>
+                  {/* Absolute %, not normalized to the max — a 96% probability
+                      must not render as a 100% (certain-looking) bar. */}
                   <span className="prob-track">
-                    <span className="prob-fill" style={{ width: `${((p.pct ?? 0) / maxPct) * 100}%` }} />
+                    <span className="prob-fill" style={{ width: `${Math.min(100, Math.max(0, p.pct ?? 0))}%` }} />
                   </span>
                   <span className="prob-pct mono">{p.pct != null ? `${p.pct.toFixed(0)}%` : "—"}</span>
                 </div>

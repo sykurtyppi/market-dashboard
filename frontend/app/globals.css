@@ -82,7 +82,10 @@ body {
 .prob-row { display: grid; grid-template-columns: 130px 1fr 52px; gap: 12px; align-items: center; padding: 7px 0; }
 .prob-label { font-size: 13px; color: var(--ink-muted); }
 .prob-track { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
-.prob-fill { height: 100%; background: var(--accent); border-radius: 4px; }
+/* display:block is load-bearing: the fill is a <span> inside the track, and
+   width/height are ignored on inline elements — the bars render empty without it.
+   (The track itself only renders because it's a grid item, which blockifies.) */
+.prob-fill { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
 .prob-pct { font-size: 13px; text-align: right; }
 
 /* ---------- Inline notice / empty state ---------- */
@@ -112,7 +115,9 @@ body {
 .regime-scale i { position: absolute; top: -3px; width: 2px; height: 11px; background: var(--ink); border-radius: 2px; }
 .regime-cell .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-faint); font-weight: 600; }
 .regime-cell .v { display: flex; align-items: center; gap: 7px; margin-top: 9px; font-weight: 550; font-size: 14px; }
-.regime-cell .note { font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; }
+/* block, or a note that follows an inline .k label glues onto it ("READFear") */
+.regime-cell .note { display: block; font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; }
+.note .dot { margin-right: 6px; }
 
 /* ---------- Metric cards ---------- */
 .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
@@ -121,7 +126,10 @@ body {
 .card .v { font-size: 26px; font-weight: 500; letter-spacing: -0.02em; margin-top: 8px; }
 .card .v .u { font-size: 15px; color: var(--ink-faint); }
 .card .row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; margin-top: 2px; }
-.card .caption { font-size: 11px; color: var(--ink-faint); margin-top: 9px; display: flex; align-items: center; gap: 6px; }
+/* base .caption: panels (e.g. Institutional) use it outside .card, where the
+   old .card-scoped rule left the status dot glued to its text */
+.caption { display: flex; align-items: center; gap: 6px; }
+.card .caption { font-size: 11px; color: var(--ink-faint); margin-top: 9px; }
 .spark { display: block; width: 92px; height: 30px; }
 
 /* ---------- Panels / charts ---------- */

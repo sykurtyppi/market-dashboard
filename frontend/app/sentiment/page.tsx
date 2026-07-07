@@ -1,6 +1,6 @@
 import { getSentiment, getFreshness, Sentiment, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
-import { Section } from "@/components/ui";
+import { Section, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,7 @@ function Content({ data, freshness }: { data: Sentiment; freshness: Freshness })
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
 
-        <Section title="Market Sentiment" aside={<span className="mono">{data.as_of ? String(data.as_of).slice(0, 10) : "—"}</span>}>
+        <Section title="Market Sentiment" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.4fr 1fr 1fr" }}>
             <div className="regime-cell lead">
               <span className="k">Fear &amp; Greed</span>
