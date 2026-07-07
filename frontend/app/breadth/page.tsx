@@ -1,5 +1,6 @@
 import { getBreadth, getFreshness, Breadth, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
@@ -46,6 +47,16 @@ function Content({ data, freshness }: { data: Breadth; freshness: Freshness }) {
             <GapNotice points={data.charts.breadth_pct} />
           </Panel>
         </Section>
+        <Explainer
+          title="How to read this — market breadth"
+          intro="Breadth measures how many stocks participate in a move — a rally on narrow leadership is more fragile than one with broad participation."
+          points={[
+            { label: "Breadth %:", text: "share of sampled stocks advancing on the day. Above ~55% is healthy participation; below ~45% is weak." },
+            { label: "A/D line:", text: "cumulative advancers minus decliners. Rising with the index confirms the trend; falling while the index rises is a divergence that often precedes weakness." },
+            { label: "McClellan oscillator:", text: "EMA(19) − EMA(39) of net advances. Above zero = improving momentum; below −50 = washout conditions." },
+          ]}
+          caveat="Computed from a ~100-stock S&P 500 sample. Not investment advice."
+        />
       </div>
     </>
   );

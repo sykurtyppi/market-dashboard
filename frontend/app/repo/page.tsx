@@ -1,5 +1,6 @@
 import { getRepo, getFreshness, Repo, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
@@ -60,6 +61,16 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
             </div>
           </Panel>
         </section>
+        <Explainer
+          title="How to read this — repo & funding"
+          intro="The repo market is where banks and funds borrow cash overnight against Treasury collateral — the plumbing underneath everything else. Stress shows here before it shows in equities."
+          points={[
+            { label: "SOFR:", text: "the secured overnight financing rate. Spikes relative to its recent range signal funding stress." },
+            { label: "SOFR z-score:", text: "distance from the 252-day norm; beyond ±2 is unusual." },
+            { label: "RRP:", text: "cash parked at the Fed's reverse-repo facility. A large buffer absorbs shocks; near zero means less cushion when funding tightens." },
+          ]}
+          caveat="Not investment advice."
+        />
       </div>
     </>
   );

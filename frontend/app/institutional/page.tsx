@@ -1,5 +1,6 @@
 import { getInstitutional, getFreshness, Institutional, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
 import { ReactNode } from "react";
 
@@ -69,6 +70,16 @@ function Content({ data, freshness }: { data: Institutional; freshness: Freshnes
             </Panel>
           </section>
         </Section>
+        <Explainer
+          title="How to read this — institutional flow"
+          intro="Three windows into what large players are doing, each from a different source."
+          points={[
+            { label: "Dark pool:", text: "share of volume executed off-exchange. Elevated levels suggest quiet institutional accumulation or distribution." },
+            { label: "Insider activity:", text: "aggregate corporate insider buys versus sells over the period — insiders as a group tend to buy value and sell into strength." },
+            { label: "Treasury auctions:", text: "bid-to-cover measures demand (higher is stronger); weak auctions pressure yields upward." },
+          ]}
+          caveat="Sources update on different schedules (weekly or rolling windows)."
+        />
       </div>
     </>
   );

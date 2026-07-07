@@ -1,5 +1,6 @@
 import { getCrossAsset, getFreshness, CrossAsset, Freshness, AssetPerf, Correlation } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -98,6 +99,16 @@ function Content({ data, freshness }: { data: CrossAsset; freshness: Freshness }
             </div>
           </Panel>
         </section>
+        <Explainer
+          title="How to read this — cross-asset regime"
+          intro="Different assets moving together (or apart) reveal the market's regime better than any single index."
+          points={[
+            { label: "Regime:", text: "equities up with defensives (bonds, gold, dollar) down reads risk-on; the reverse reads risk-off. Confidence reflects how cleanly the assets agree." },
+            { label: "1D vs 1M:", text: "the daily move versus the one-month trend. A red day inside a green month is noise; both columns aligned is signal." },
+            { label: "Correlations:", text: "stock–bond correlation negative means diversification is working; strongly positive means both are being driven by rates." },
+          ]}
+          caveat="Prices from Yahoo Finance. Not investment advice."
+        />
       </div>
     </>
   );

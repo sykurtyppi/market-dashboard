@@ -1,5 +1,6 @@
 import { getCot, getFreshness, COT, COTPosition, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import Explainer from "@/components/Explainer";
 import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -63,6 +64,17 @@ function Content({ data, freshness }: { data: COT; freshness: Freshness }) {
             </div>
           </Panel>
         </Section>
+        <Explainer
+          title="How to read this — COT positioning"
+          intro="The CFTC's weekly Commitments of Traders report shows who holds futures positions — and extremes in speculative positioning often precede reversals."
+          points={[
+            { label: "Spec net:", text: "net position of large speculators (funds, CTAs) — trend followers by nature." },
+            { label: "Comm net:", text: "net position of commercials (hedgers), usually the other side of the specs." },
+            { label: "Δ Spec:", text: "week-over-week change — whether positioning is being built or unwound." },
+            { label: "Open interest:", text: "total outstanding contracts, for sizing the net numbers." },
+          ]}
+          caveat="The report lags: Tuesday's positions are published Friday."
+        />
       </div>
     </>
   );

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Point } from "@/lib/api";
 import VolatilityChart from "@/components/VolatilityChart";
 import { maxGapDays } from "@/components/GapNotice";
+import Explainer, { Term } from "@/components/Explainer";
 
 type Range = "1M" | "3M" | "6M" | "ALL";
 
@@ -155,36 +156,28 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
   );
 }
 
-// Collapsible explainer for non-experts — the new-frontend equivalent of the
-// old Streamlit "How to Use VRP" expander. Native <details> so it's accessible
-// and needs no JS; inline-styled so it survives a stale dev-server stylesheet.
+// The new-frontend equivalent of the old Streamlit "How to Use VRP" expander,
+// built on the shared Explainer so every page's guide looks the same.
 function VrpExplainer() {
-  const term: React.CSSProperties = { color: "var(--ink)", fontWeight: 600 };
   return (
-    <details style={{ marginTop: 14, border: "1px solid var(--line)", borderRadius: 9, background: "var(--surface)" }}>
-      <summary style={{ cursor: "pointer", padding: "10px 14px", fontSize: 12.5, fontWeight: 600, color: "var(--ink)" }}>
-        How to read this — what is the VRP?
-      </summary>
-      <div style={{ padding: "2px 14px 14px", fontSize: 12.5, color: "var(--ink-muted)", lineHeight: 1.6 }}>
-        <p style={{ margin: "0 0 10px" }}>
-          The <span style={term}>Volatility Risk Premium</span> is the gap between <em>implied</em> volatility
-          (what the VIX prices options at) and <em>realized</em> volatility (how much the S&amp;P 500 actually moved over
-          the last 21 days): <span style={term}>VRP = VIX − realized</span>.
-        </p>
-        <p style={{ margin: "0 0 10px" }}>
-          <span style={term}>Reading the chart.</span> The top panel plots VIX and realized vol on the same scale —
-          when the VIX line sits above realized, options are pricing in more movement than actually occurred (a premium).
-          The lower panel shows that spread directly, against a zero line.
-        </p>
-        <ul style={{ margin: "0 0 8px", paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5 }}>
-          <li><span style={term}>High (above ~4):</span> options expensive relative to actual moves — historically a supportive, risk-on backdrop (favors selling volatility).</li>
-          <li><span style={term}>Neutral (~0 to 4):</span> options roughly fairly priced; balanced risk/reward.</li>
-          <li><span style={term}>Negative (below 0):</span> realized volatility is outrunning implied — the market may be underpricing risk (favors buying protection, trimming exposure).</li>
-        </ul>
-        <p style={{ margin: 0, color: "var(--ink-faint)", fontSize: 11.5 }}>
-          Bands are the dashboard&apos;s model heuristics, not investment advice.
-        </p>
-      </div>
-    </details>
+    <div style={{ marginTop: 14 }}>
+      <Explainer
+        title="How to read this — what is the VRP?"
+        intro={
+          <>
+            The <Term>Volatility Risk Premium</Term> is the gap between <em>implied</em> volatility
+            (what the VIX prices options at) and <em>realized</em> volatility (how much the S&amp;P 500 actually
+            moved over the last 21 days): <Term>VRP = VIX − realized</Term>.
+          </>
+        }
+        points={[
+          { label: "Reading the chart.", text: "The top panel plots VIX and realized vol on the same scale — VIX above realized means options price in more movement than occurred (a premium). The lower panel shows that spread directly, against a zero line." },
+          { label: "High (above ~4):", text: "options expensive relative to actual moves — historically a supportive, risk-on backdrop (favors selling volatility)." },
+          { label: "Neutral (~0 to 4):", text: "options roughly fairly priced; balanced risk/reward." },
+          { label: "Negative (below 0):", text: "realized volatility is outrunning implied — the market may be underpricing risk (favors buying protection, trimming exposure)." },
+        ]}
+        caveat="Bands are the dashboard's model heuristics, not investment advice."
+      />
+    </div>
   );
 }
