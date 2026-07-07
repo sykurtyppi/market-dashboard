@@ -20,6 +20,34 @@ def _cached(key: str, fn: Callable[[], Any], ok: Callable[[Any], bool]) -> Any:
     return data
 
 
+def _snapshot_fallback_series(hist, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    """Build a history series using row-level source priority.
+
+    Daily snapshots can carry several P/C fields. The headline sentiment metric
+    prefers CBOE equity > SPY proxy > legacy best-available; the chart should
+    use the same priority per date so its label is honest.
+    """
+    if hist is None or hist.empty:
+        return []
+    if "date" not in hist.columns:
+        return []
+
+    out: list[dict[str, Any]] = []
+    for _, row in hist.iterrows():
+        value = None
+        for field in fields:
+            if field in hist.columns:
+                value = _num(row.get(field))
+                if value is not None:
+                    break
+        if value is None:
+            continue
+        d = row["date"]
+        d_str = str(d.date()) if hasattr(d, "date") else str(d)
+        out.append({"date": d_str, "value": value})
+    return out
+
+
 # ---------------- Sentiment ----------------
 
 def _fg_state(score: float | None) -> str:
@@ -68,7 +96,7 @@ def _build_sentiment() -> Dict[str, Any]:
     # known collection gaps — the frontend's GapNotice flags them honestly.
     hist = get_db().get_snapshot_history(days=365)
     fg_series = _series(hist, value_col="fear_greed_score")
-    pc_series = _series(hist, value_col="put_call_ratio")
+    pc_series = _snapshot_fallback_series(hist, ("cboe_equity_pc", "spy_put_call", "put_call_ratio"))
 
     return {
         "as_of": fg.get("timestamp"),
