@@ -1,0 +1,39 @@
+# Render Blueprint — FastAPI backend with a persistent disk for the SQLite DB.
+#
+# The one architectural constraint (docs/cutover-plan.md §1): the API serves
+# data/market_data.db and the token-gated POST /api/refresh writes it from
+# inside the same process — so the service needs a real disk mounted exactly
+# where the app's relative `data/` path resolves. Render checks the repo out at
+# /opt/render/project/src and runs from there, hence the mountPath below.
+#
+# NOTE: a Render Disk requires a paid instance (starter); the free tier has no
+# persistent disk and would lose the DB on every restart.
+
+services:
+  - type: web
+    name: market-dashboard-api
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    disk:
+      name: market-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.4
+      # Secrets are set in the Render dashboard (sync: false = prompted on
+      # blueprint apply, never stored in git).
+      - key: FRED_API_KEY
+        sync: false
+      - key: NASDAQ_DATA_LINK_KEY
+        sync: false
+      # Same value must go to the Vercel project env and the GitHub Actions
+      # repo secrets — it gates POST /api/refresh and GET /api/settings.
+      - key: MARKET_API_TOKEN
+        sync: false
+      # Comma-separated CORS allowlist, e.g. https://<your-app>.vercel.app
+      - key: FRONTEND_ORIGINS
+        sync: false
