@@ -17,15 +17,17 @@ function assetColor(state: string): string {
   return "var(--ink-muted)";
 }
 
+function pct(v: number | null): string {
+  return v === null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
+}
+
 function AssetRow({ a }: { a: AssetPerf }) {
-  const c = a.change_pct;
   return (
     <tr>
       <td className="mono" style={{ fontWeight: 600 }}>{a.ticker}</td>
       <td>{a.name}</td>
-      <td className="num mono" style={{ color: assetColor(a.state) }}>
-        {c === null ? "—" : `${c > 0 ? "+" : ""}${c.toFixed(2)}%`}
-      </td>
+      <td className="num mono" style={{ color: assetColor(a.state) }}>{pct(a.change_1d_pct)}</td>
+      <td className="num mono" style={{ color: "var(--ink-muted)" }}>{pct(a.change_1m_pct)}</td>
     </tr>
   );
 }
@@ -71,15 +73,15 @@ function Content({ data, freshness }: { data: CrossAsset; freshness: Freshness }
         </Section>
 
         <section className="grid-2">
-          <Panel title="Asset Performance" sub="1d">
+          <Panel title="Asset Performance" sub="1D · 1M">
             <div className="table-wrap" style={{ border: "none" }}>
               <table>
-                <thead><tr><th>Ticker</th><th>Asset</th><th className="num">1d</th></tr></thead>
+                <thead><tr><th>Ticker</th><th>Asset</th><th className="num">1D</th><th className="num">1M</th></tr></thead>
                 <tbody>
                   {data.assets.length > 0 ? (
                     data.assets.map((a) => <AssetRow key={a.ticker} a={a} />)
                   ) : (
-                    <tr><td colSpan={3}><div className="empty-state">Asset data unavailable.</div></td></tr>
+                    <tr><td colSpan={4}><div className="empty-state">Asset data unavailable.</div></td></tr>
                   )}
                 </tbody>
               </table>

@@ -145,12 +145,17 @@ def _build_cross_asset() -> Dict[str, Any]:
     if not perf:
         warnings.append("Cross-asset price data unavailable (Yahoo Finance).")
 
+    # The collector's change_pct spans its whole fetch window (1mo default) —
+    # it was previously surfaced under a "1d" column header. Emit both horizons
+    # explicitly so the frontend can't mislabel them; state colors on the true
+    # daily move.
     assets = [
         {
             "ticker": ticker,
             "name": d.get("name"),
-            "change_pct": _num(d.get("change_pct")),
-            "state": _change_state(_num(d.get("change_pct"))),
+            "change_1d_pct": _num(d.get("change_1d_pct")),
+            "change_1m_pct": _num(d.get("change_pct")),
+            "state": _change_state(_num(d.get("change_1d_pct"))),
         }
         for ticker, d in perf.items()
     ]

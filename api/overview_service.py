@@ -142,7 +142,7 @@ def build_overview() -> Dict[str, Any]:
         {"key": "ten_y", "label": "10Y Treasury", "value": ten_y, "unit": "%",
          "state": "neutral", "source": "FRED (DGS10)"},
         {"key": "fear_greed", "label": "Fear & Greed", "value": fg, "unit": "",
-         "state": _sentiment_state(fg), "source": "CNN Fear & Greed"},
+         "state": _sentiment_state(fg), "source": "CNN Fear & Greed (snapshot)"},
         {"key": "vrp", "label": "VRP (21d)", "value": vrp, "unit": "",
          "state": "neutral", "source": "Implied − realized vol"},
         {"key": "contango", "label": "VIX Contango", "value": contango, "unit": "%",

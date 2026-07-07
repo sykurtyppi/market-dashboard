@@ -23,9 +23,16 @@ export default function Topbar({ title, subtitle, freshness }: TopbarProps) {
         <div className="crumb">{subtitle}</div>
       </div>
       <div className="topbar-right">
-        <span className="freshness">
+        {/* This pill reports the age of the latest daily snapshot; individual
+            sources can be older or newer — System Health has per-source ages.
+            The title makes that scope explicit so the two never look like
+            contradictory claims. */}
+        <span
+          className="freshness"
+          title="Age of the latest daily data snapshot. Some panels fetch live; per-source ages are on System Health."
+        >
           <span className={`dot ${dot}`} />
-          {label} · updated {freshness.age}
+          {label} · snapshot {freshness.age}
         </span>
         <RefreshButton />
         <button className="btn" type="button" disabled title="Coming in a later phase">

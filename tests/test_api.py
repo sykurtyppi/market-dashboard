@@ -304,8 +304,12 @@ def test_cross_asset_returns_expected_shape(client):
             "regime": "Risk-On", "color": "#4CAF50", "description": "Cyclicals bid", "confidence": 70,
         }
         MockCA.return_value.get_asset_performance_summary.return_value = {
-            "SPY": {"name": "S&P 500", "price": 744.0, "change_pct": 1.0},
-            "VIX": {"name": "VIX", "price": 15.0, "change_pct": -3.0},
+            # change_pct spans the collector's whole fetch window (1mo default);
+            # change_1d_pct is the true daily move — the API must emit BOTH under
+            # explicit names so neither can be mislabeled (the old single field
+            # was a 1-month change surfaced under a "1d" column: oil "-22.79%").
+            "SPY": {"name": "S&P 500", "price": 744.0, "change_pct": 4.0, "change_1d_pct": 1.0},
+            "VIX": {"name": "VIX", "price": 15.0, "change_pct": -12.0, "change_1d_pct": -3.0},
         }
         MockCA.return_value.get_key_correlations.return_value = [
             {"pair": "Stock-Bond", "correlation": 0.42, "strength": "Moderate", "interpretation": "..."},
@@ -316,7 +320,10 @@ def test_cross_asset_returns_expected_shape(client):
     body = r.json()
     assert body["regime"]["state"] == "good"  # Risk-On -> good
     assert len(body["assets"]) == 2
-    assert body["assets"][0]["state"] == "good"  # SPY +1%
+    spy = next(a for a in body["assets"] if a["ticker"] == "SPY")
+    assert spy["change_1d_pct"] == 1.0
+    assert spy["change_1m_pct"] == 4.0
+    assert spy["state"] == "good"  # colored on the 1d move
     assert len(body["correlations"]) == 1
 
 

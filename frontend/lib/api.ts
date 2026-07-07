@@ -163,7 +163,8 @@ export interface FedWatch {
 export interface AssetPerf {
   ticker: string;
   name: string | null;
-  change_pct: number | null;
+  change_1d_pct: number | null;
+  change_1m_pct: number | null;
   state: State;
 }
 

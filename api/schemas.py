@@ -245,7 +245,8 @@ class FedWatchResponse(BaseModel):
 class AssetPerf(BaseModel):
     ticker: str
     name: Optional[str] = None
-    change_pct: Optional[float] = None
+    change_1d_pct: Optional[float] = None
+    change_1m_pct: Optional[float] = None
     state: State
 
 
