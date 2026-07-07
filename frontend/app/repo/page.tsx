@@ -2,7 +2,7 @@ import { getRepo, getFreshness, Repo, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
-import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
+import { Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -25,22 +25,20 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
               </span>
               <span className="note">{data.regime_note}</span>
             </div>
-            <div className="regime-cell" style={{ display: "flex", gap: 24, alignItems: "center" }}>
+            {/* Strip cells carry the state dot and source so the old duplicate
+                "Key Indicators" cards (same numbers, same sources) could go. */}
+            <div className="regime-cell" style={{ display: "flex", gap: 32, alignItems: "center" }}>
               {data.metrics.map((m) => (
                 <div key={m.key}>
                   <span className="k">{m.label}</span>
                   <div className="v mono" style={{ fontSize: 20, marginTop: 6 }}>
-                    {m.value === null ? "—" : m.unit === "%" ? `${m.value.toFixed(2)}%` : m.value.toFixed(2)}
+                    <span className={`dot ${m.state}`} />
+                    {m.value === null ? "—" : `${m.value.toFixed(2)}${m.unit}`}
                   </div>
+                  <span className="note">{m.source}</span>
                 </div>
               ))}
             </div>
-          </div>
-        </Section>
-
-        <Section title="Key Indicators">
-          <div className="metrics">
-            {data.metrics.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>
         </Section>
 

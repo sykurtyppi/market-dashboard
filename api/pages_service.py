@@ -340,10 +340,20 @@ _MOVE_NOTES = {
 
 def build_treasury_stress() -> dict:
     db = get_db()
-    hist = _asc(db.get_move_history(days=365))  # method returns DESC
+    # 730d so the "(2Y)" percentile window is honest, not a 1Y window in disguise.
+    hist = _asc(db.get_move_history(days=730))  # method returns DESC
     if hist is None or hist.empty:
         return {"as_of": None, "regime": None, "regime_note": "No MOVE data available",
                 "metrics": [], "warnings": [], "charts": {"move_history": [], "percentile_history": []}}
+
+    # The stored percentile column is dead weight: the collector's
+    # division-by-zero fallback wrote a constant 50.0 into every row, which
+    # charted as a flat line and pinned the headline percentile to 50%. The
+    # MOVE levels ARE stored, so compute each row's percentile rank within the
+    # fetched window instead of trusting the degenerate column.
+    stored_pct = hist["percentile"].dropna() if "percentile" in hist.columns else None
+    if (stored_pct is None or stored_pct.nunique() <= 1) and "move" in hist.columns and len(hist) >= 20:
+        hist = hist.assign(percentile=(hist["move"].rank(pct=True) * 100).round(1))
 
     latest = hist.iloc[-1]
     move = _num(latest.get("move"))

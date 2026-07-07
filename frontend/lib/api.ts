@@ -259,6 +259,7 @@ export interface Sentiment {
   fear_greed: { score: number | null; rating: string | null; state: State };
   put_call_ratio: number | null;
   put_call_source: string | null;
+  charts: { fear_greed_history: Point[]; put_call_history: Point[] };
   warnings: string[];
 }
 

@@ -531,6 +531,24 @@ class DatabaseManager:
                 df['date'] = pd.to_datetime(df['date'])
             return df
     
+    def get_snapshot_history(self, days: int = 365) -> pd.DataFrame:
+        """Get daily snapshot history (sentiment / options positioning columns).
+
+        Ascending by date, matching get_vrp_history — callers chart it directly.
+        """
+        query = """
+            SELECT date, fear_greed_score, put_call_ratio, cboe_equity_pc, spy_put_call
+            FROM daily_snapshots
+            WHERE date >= date('now', '-{} days')
+            ORDER BY date
+        """.format(days)
+
+        with sqlite3.connect(self.db_path) as conn:
+            df = pd.read_sql_query(query, conn)
+            if not df.empty:
+                df['date'] = pd.to_datetime(df['date'])
+            return df
+
     def get_latest_vrp(self) -> Optional[Dict]:
         """Get most recent VRP analysis"""
         query = """

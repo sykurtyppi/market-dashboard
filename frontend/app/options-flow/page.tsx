@@ -5,6 +5,9 @@ import { Section, fmtAsOf } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 function EtfCard({ e }: { e: OptionsETF }) {
+  const calls = e.call_volume;
+  const puts = e.put_volume;
+  const total = (calls ?? 0) + (puts ?? 0);
   return (
     <div className="card">
       <div className="k" style={{ display: "flex", justifyContent: "space-between" }}>
@@ -16,9 +19,17 @@ function EtfCard({ e }: { e: OptionsETF }) {
         <span>Put / Call ratio</span>
         <span>{e.dte !== null ? `${e.dte}DTE` : ""}</span>
       </div>
-      <div className="legend" style={{ marginTop: 10 }}>
-        <span className="mono">Calls {e.call_volume === null ? "—" : e.call_volume.toLocaleString()}</span>
-        <span className="mono">Puts {e.put_volume === null ? "—" : e.put_volume.toLocaleString()}</span>
+      {/* Volume split bar + fixed two-column figures — the old flex-wrap legend
+          stacked Calls/Puts on some cards and inlined them on others. */}
+      {calls !== null && puts !== null && total > 0 ? (
+        <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", marginTop: 12, background: "var(--line)" }} aria-hidden>
+          <span style={{ width: `${(calls / total) * 100}%`, background: "var(--good)" }} />
+          <span style={{ flex: 1, background: "var(--crit)" }} />
+        </div>
+      ) : null}
+      <div className="mono" style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8, fontSize: 11, color: "var(--ink-muted)", whiteSpace: "nowrap" }}>
+        <span>Calls {calls === null ? "—" : calls.toLocaleString()}</span>
+        <span>Puts {puts === null ? "—" : puts.toLocaleString()}</span>
       </div>
     </div>
   );

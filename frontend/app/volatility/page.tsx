@@ -1,7 +1,7 @@
 import { getVolatility, getFreshness, Volatility, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
 import VolatilityPanel from "@/components/VolatilityPanel";
-import { MetricCard, Section, fmtAsOf } from "@/components/ui";
+import { Section, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -31,12 +31,6 @@ function Content({ data, freshness }: { data: Volatility; freshness: Freshness }
                 <span className="note">{m.source}</span>
               </div>
             ))}
-          </div>
-        </Section>
-
-        <Section title="Key Indicators">
-          <div className="metrics">
-            {data.metrics.map((m) => <MetricCard key={m.key} m={m} />)}
           </div>
         </Section>
 
