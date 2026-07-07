@@ -10,6 +10,10 @@ function Content({ data, freshness }: { data: Volatility; freshness: Freshness }
     <>
       <Topbar title="Volatility & VRP" subtitle="Volatility risk premium & regime" freshness={freshness} />
       <div className="content">
+        {data.warnings.length > 0 ? (
+          <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
+        ) : null}
+
         <Section title="VRP Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.4fr repeat(4, 1fr)" }}>
             <div className="regime-cell lead">

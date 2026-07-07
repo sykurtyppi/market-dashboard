@@ -749,3 +749,60 @@ def test_volatility_chart_series_are_date_aligned(client):
     rv_d = [p["date"] for p in c["realized_vol"]]
     vrp_d = [p["date"] for p in c["vrp_history"]]
     assert vix_d == rv_d == vrp_d, "vix/realized/vrp chart series must be date-aligned"
+
+
+# --- data-honesty sweep regressions ---
+
+def test_breadth_mcclellan_is_not_flat_zero(client):
+    # save_breadth historically defaulted missing McClellan to 0, producing a
+    # dead flat-zero series the frontend plotted as a real oscillator. The
+    # service now computes McClellan from stored ad_diff history when the
+    # stored column is dead — with real A/D history the series must vary.
+    r = client.get("/api/breadth")
+    assert r.status_code == 200
+    body = r.json()
+    series = body["charts"]["mcclellan"]
+    if len(series) >= 39:  # enough history to compute EMA19-EMA39
+        values = {p["value"] for p in series}
+        assert values != {0}, "McClellan series is flat zero — dead column leaked through"
+        assert len(values) > 1, "McClellan series is constant — not a computed oscillator"
+
+
+def test_breadth_counts_are_labeled_as_sample(client):
+    # The collector samples ~100 S&P 500 constituents; raw advancing/declining
+    # counts labeled plain "S&P 500" implied a 500-stock universe.
+    r = client.get("/api/breadth")
+    body = r.json()
+    by_key = {m["key"]: m for m in body["metrics"]}
+    if "advancing" in by_key:
+        assert "sample" in by_key["advancing"]["source"].lower()
+        assert "sample" in by_key["declining"]["source"].lower()
+
+
+def test_treasury_note_does_not_claim_percentile(client):
+    # The regime derives from fixed MOVE-level thresholds; the old note claimed
+    # percentile bands ("below the 25th percentile") that the rolling-percentile
+    # metric shown beside it could flatly contradict.
+    r = client.get("/api/treasury-stress")
+    assert r.status_code == 200
+    note = (r.json().get("regime_note") or "").lower()
+    assert "percentile" not in note, f"regime note still claims a percentile: {note!r}"
+
+
+def test_repo_rrp_metric_has_unit(client):
+    r = client.get("/api/repo")
+    assert r.status_code == 200
+    metrics = {m["key"]: m for m in r.json().get("metrics", [])}
+    if "rrp" in metrics:
+        assert metrics["rrp"]["unit"] == "B", "RRP (RRPONTSYD, $ billions) must carry its unit"
+
+
+def test_cached_pages_all_expose_warnings(client):
+    # Every data-bearing endpoint carries a warnings channel so partial-data
+    # conditions are representable everywhere, not just on 11 of 17 routes.
+    for path in ("/api/overview", "/api/volatility", "/api/breadth",
+                 "/api/credit-liquidity", "/api/treasury-stress", "/api/repo"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        body = r.json()
+        assert isinstance(body.get("warnings"), list), f"{path} missing warnings[]"

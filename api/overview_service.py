@@ -195,6 +195,7 @@ def build_overview() -> Dict[str, Any]:
         "left_signal": snapshot.get("left_signal"),
         "regime": regime,
         "metrics": metrics,
+        "warnings": [],
         "charts": {
             "vrp_history": vrp_hist,
             "credit_spreads": {"hy": hy_hist, "ig": ig_hist},

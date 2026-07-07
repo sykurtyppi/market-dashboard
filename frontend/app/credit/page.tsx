@@ -1,5 +1,6 @@
 import { getCreditLiquidity, getFreshness, CreditLiquidity, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import GapNotice from "@/components/GapNotice";
 import { AreaChart, MultiLineChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
@@ -10,6 +11,10 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
     <>
       <Topbar title="Credit & Liquidity" subtitle="Credit spreads & Fed balance sheet" freshness={freshness} />
       <div className="content">
+        {data.warnings.length > 0 ? (
+          <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
+        ) : null}
+
         <Section title="Current Levels" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="metrics">
             {data.metrics.map((m) => <MetricCard key={m.key} m={m} />)}
@@ -22,6 +27,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
               { points: data.charts.credit_spreads.hy, color: "var(--crit)", label: "HY spread" },
               { points: data.charts.credit_spreads.ig, color: "var(--accent)", label: "IG spread" },
             ]} />
+            <GapNotice points={data.charts.credit_spreads.hy} />
             <div className="legend">
               <span><i style={{ background: "var(--crit)" }} />HY (BAMLH0A0HYM2)</span>
               <span><i style={{ background: "var(--accent)" }} />IG (BAMLC0A0CM)</span>
@@ -29,6 +35,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
           </Panel>
           <Panel title="Fed Total Assets" sub="$T">
             <AreaChart points={data.charts.fed_assets} color="var(--accent)" label="Fed assets" />
+            <GapNotice points={data.charts.fed_assets} />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />Balance sheet ($T)</span>
               <span style={{ color: "var(--ink-faint)" }}>Falling = quantitative tightening</span>
@@ -39,6 +46,7 @@ function Content({ data, freshness }: { data: CreditLiquidity; freshness: Freshn
         <Section title="Quantitative Tightening" aside="cumulative $B">
           <Panel title="QT Cumulative Runoff">
             <AreaChart points={data.charts.qt_cumulative} color="var(--warn)" label="QT runoff" />
+            <GapNotice points={data.charts.qt_cumulative} />
           </Panel>
         </Section>
 

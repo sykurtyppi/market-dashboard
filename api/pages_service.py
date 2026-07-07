@@ -136,6 +136,7 @@ def build_volatility() -> Dict[str, Any]:
         ),
         "metrics": metrics,
         "stats": _vrp_stats(hist, vrp),
+        "warnings": [],
         # Aligned so the frontend can zip vix/realized/vrp by index safely.
         "charts": {
             k: aligned[src]
@@ -169,7 +170,26 @@ def build_breadth() -> Dict[str, Any]:
     hist = db.get_breadth_history(days=120)
 
     if hist is None or hist.empty:
-        return {"as_of": None, "metrics": [], "charts": {"ad_line": [], "mcclellan": [], "breadth_pct": []}}
+        return {"as_of": None, "metrics": [], "warnings": [],
+                "charts": {"ad_line": [], "mcclellan": [], "breadth_pct": []}}
+
+    warnings: List[str] = []
+
+    # The stored mcclellan column is dead weight: save_breadth historically
+    # defaulted missing values to 0, so the whole series reads as a flat-zero
+    # oscillator — which the frontend would faithfully (and misleadingly) plot.
+    # ad_diff IS stored per row, so compute the real McClellan (EMA19 − EMA39 of
+    # net advances) from history instead of trusting the dead column.
+    stored = [_num(v) for v in hist.get("mcclellan", []).tolist()] if "mcclellan" in hist.columns else []
+    stored_dead = not any(v for v in stored if v)  # all None/0
+    if stored_dead and "ad_diff" in hist.columns and len(hist) >= 39:
+        ema19 = hist["ad_diff"].ewm(span=19, adjust=False).mean()
+        ema39 = hist["ad_diff"].ewm(span=39, adjust=False).mean()
+        hist = hist.assign(mcclellan=(ema19 - ema39).round(2))
+    elif stored_dead:
+        # Too little history to compute honestly — say so rather than plot zeros.
+        hist = hist.assign(mcclellan=None)
+        warnings.append("McClellan oscillator unavailable — needs 39+ days of A/D history.")
 
     latest = hist.iloc[-1]
     # breadth_pct may be stored 0–1 or 0–100; normalize to a percentage
@@ -180,13 +200,15 @@ def build_breadth() -> Dict[str, Any]:
     mcclellan = _num(latest.get("mcclellan"))
     ad_line = _num(latest.get("ad_line"))
 
+    # The collector samples ~100 representative S&P 500 constituents (a ~20%
+    # proxy) — labeling the raw counts "S&P 500" implied a 500-stock universe.
     metrics = [
         {"key": "breadth_pct", "label": "Breadth %", "value": pct, "unit": "%",
-         "state": _breadth_pct_state(pct), "source": "S&P 500 advancers"},
+         "state": _breadth_pct_state(pct), "source": "S&P 500 100-stock sample"},
         {"key": "advancing", "label": "Advancing", "value": advancing, "unit": "",
-         "state": "neutral", "source": "S&P 500"},
+         "state": "neutral", "source": "of 100-stock sample"},
         {"key": "declining", "label": "Declining", "value": declining, "unit": "",
-         "state": "neutral", "source": "S&P 500"},
+         "state": "neutral", "source": "of 100-stock sample"},
         {"key": "mcclellan", "label": "McClellan Osc.", "value": mcclellan, "unit": "",
          "state": _mcclellan_state(mcclellan), "source": "EMA(19)−EMA(39) of A/D"},
     ]
@@ -199,6 +221,7 @@ def build_breadth() -> Dict[str, Any]:
     return {
         "as_of": str(latest.get("date")),
         "metrics": metrics,
+        "warnings": warnings,
         "charts": {
             "ad_line": _series(hist, value_col="ad_line"),
             "mcclellan": _series(hist, value_col="mcclellan"),
@@ -275,6 +298,7 @@ def build_credit_liquidity() -> dict:
     return {
         "as_of": fed_date,
         "metrics": metrics,
+        "warnings": [],
         "charts": {
             "credit_spreads": {
                 "hy": _series(hy_hist),
@@ -302,11 +326,15 @@ def _stress_state(level: str | None) -> str:
     }.get((level or "").upper(), "neutral")
 
 
+# Describe the fixed MOVE-level thresholds the regime is actually derived from.
+# The old wording claimed percentiles ("below the 25th percentile"), which the
+# rolling percentile metric shown right next to it can flatly contradict —
+# e.g. regime LOW (MOVE 65 < 80) while the 2Y percentile reads 50%.
 _MOVE_NOTES = {
-    "LOW": "Calm Treasury market — below the 25th percentile.",
-    "NORMAL": "Typical Treasury volatility (middle of the historical range).",
-    "ELEVATED": "Elevated Treasury uncertainty — 75th–90th percentile.",
-    "HIGH": "Treasury market stress — above the 90th percentile.",
+    "LOW": "Calm Treasury market — MOVE below 80.",
+    "NORMAL": "Typical Treasury volatility — MOVE 80–120.",
+    "ELEVATED": "Elevated Treasury uncertainty — MOVE 120–150.",
+    "HIGH": "Treasury market stress — MOVE above 150.",
 }
 
 
@@ -315,7 +343,7 @@ def build_treasury_stress() -> dict:
     hist = _asc(db.get_move_history(days=365))  # method returns DESC
     if hist is None or hist.empty:
         return {"as_of": None, "regime": None, "regime_note": "No MOVE data available",
-                "metrics": [], "charts": {"move_history": [], "percentile_history": []}}
+                "metrics": [], "warnings": [], "charts": {"move_history": [], "percentile_history": []}}
 
     latest = hist.iloc[-1]
     move = _num(latest.get("move"))
@@ -334,6 +362,7 @@ def build_treasury_stress() -> dict:
         "state": _stress_state(stress),
         "regime_note": _MOVE_NOTES.get((stress or "").upper(), "Treasury volatility regime"),
         "metrics": metrics,
+        "warnings": [],
         "charts": {
             "move_history": _series(hist, value_col="move"),
             "percentile_history": _series(hist, value_col="percentile"),
@@ -346,7 +375,7 @@ def build_repo() -> dict:
     hist = _asc(db.get_repo_history(days=365))  # method returns DESC
     if hist is None or hist.empty:
         return {"as_of": None, "regime": None, "regime_note": "No repo data available",
-                "metrics": [], "charts": {"sofr_history": [], "rrp_history": []}}
+                "metrics": [], "warnings": [], "charts": {"sofr_history": [], "rrp_history": []}}
 
     latest = hist.iloc[-1]
     sofr = _num(latest.get("sofr"))
@@ -357,8 +386,12 @@ def build_repo() -> dict:
     metrics = [
         {"key": "sofr", "label": "SOFR", "value": sofr, "unit": "%",
          "state": "neutral", "source": "FRED (SOFR)"},
-        {"key": "rrp", "label": "RRP (Overnight)", "value": rrp, "unit": "",
-         "state": "neutral", "source": "FRED (RRPONTSYD)"},
+        # The collector stores rrp_on in $ trillions (FRED's $B value / 1000,
+        # despite its docstring) — shown raw it rendered "0.00" with no unit,
+        # a unitless mystery number. Present in $B.
+        {"key": "rrp", "label": "RRP (Overnight)",
+         "value": round(rrp * 1000, 2) if rrp is not None else None, "unit": "B",
+         "state": "neutral", "source": "FRED (RRPONTSYD), $B"},
         {"key": "sofr_z", "label": "SOFR Z-Score", "value": zscore, "unit": "",
          "state": "neutral", "source": "Derived (252d)"},
     ]
@@ -374,8 +407,13 @@ def build_repo() -> dict:
             else "Repo market status"
         ),
         "metrics": metrics,
+        "warnings": [],
         "charts": {
             "sofr_history": _series(hist, value_col="sofr"),
-            "rrp_history": _series(hist, value_col="rrp_on"),
+            # Same $T→$B conversion as the metric so chart and card agree.
+            "rrp_history": [
+                {"date": p["date"], "value": round(p["value"] * 1000, 2)}
+                for p in _series(hist, value_col="rrp_on")
+            ],
         },
     }

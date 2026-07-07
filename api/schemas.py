@@ -72,6 +72,7 @@ class OverviewResponse(BaseModel):
     left_signal: Optional[str] = None
     regime: Regime
     metrics: List[Metric]
+    warnings: List[str] = Field(default_factory=list)
     charts: Charts
     detail: List[DetailRow]
 
@@ -106,6 +107,7 @@ class VolatilityResponse(BaseModel):
     regime_note: str
     metrics: List[Metric]
     stats: VolatilityStats
+    warnings: List[str] = Field(default_factory=list)
     charts: VolatilityCharts
 
 
@@ -118,6 +120,7 @@ class BreadthCharts(BaseModel):
 class BreadthResponse(BaseModel):
     as_of: Optional[str] = None
     metrics: List[Metric]
+    warnings: List[str] = Field(default_factory=list)
     charts: BreadthCharts
 
 
@@ -172,6 +175,7 @@ class CreditCharts(BaseModel):
 class CreditLiquidityResponse(BaseModel):
     as_of: Optional[str] = None
     metrics: List[Metric]
+    warnings: List[str] = Field(default_factory=list)
     charts: CreditCharts
     notes: Dict[str, str]
 
@@ -189,6 +193,7 @@ class TreasuryResponse(BaseModel):
     state: State = "neutral"
     regime_note: str
     metrics: List[Metric]
+    warnings: List[str] = Field(default_factory=list)
     charts: TreasuryCharts
 
 
@@ -203,6 +208,7 @@ class RepoResponse(BaseModel):
     state: State = "neutral"
     regime_note: str
     metrics: List[Metric]
+    warnings: List[str] = Field(default_factory=list)
     charts: RepoCharts
 
 
