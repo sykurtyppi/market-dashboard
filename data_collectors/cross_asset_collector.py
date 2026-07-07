@@ -404,12 +404,19 @@ class CrossAssetCollector:
                 if len(series) >= 2:
                     current = series.iloc[-1]
                     start = series.iloc[0]
+                    # change_pct spans the WHOLE fetched period (default 1mo) —
+                    # it must never be presented as a daily move (the frontend
+                    # once labeled it "1d": oil "-22.79% in a day").
+                    # change_1d_pct is the true last-close-to-close change.
                     pct_change = (current / start - 1) * 100
+                    prev_close = series.iloc[-2]
+                    pct_1d = (current / prev_close - 1) * 100
 
                     summary[ticker] = {
                         'name': name,
                         'price': round(current, 2),
                         'change_pct': round(pct_change, 2),
+                        'change_1d_pct': round(pct_1d, 2),
                         'color': '#4CAF50' if pct_change > 0 else '#F44336',
                     }
 

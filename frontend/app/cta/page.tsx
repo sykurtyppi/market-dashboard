@@ -11,7 +11,7 @@ function PositionRow({ p }: { p: CTAPosition }) {
       <td className="mono" style={{ fontWeight: 600 }}>{p.symbol}</td>
       <td><span className="tag"><span className={`dot ${p.state}`} />{p.position ?? "—"}</span></td>
       <td className="num mono" style={{ color }}>
-        {p.exposure === null ? "—" : `${p.exposure > 0 ? "+" : ""}${(p.exposure * 100).toFixed(0)}%`}
+        {p.exposure === null ? "—" : `${p.exposure > 0 ? "+" : ""}${(p.exposure * 100).toFixed(1)}%`}
       </td>
     </tr>
   );
@@ -59,7 +59,7 @@ function Content({ data, freshness }: { data: CTA; freshness: Freshness }) {
             </div>
             <div className="legend">
               <span style={{ color: "var(--ink-faint)" }}>
-                CTAs follow price trends; positioning flips at technical levels can amplify momentum. Estimated, not disclosed.
+                CTAs follow price trends; positioning flips at technical levels can amplify momentum. FLAT = |exposure| below 3%. Estimated, not disclosed.
               </span>
             </div>
           </Panel>

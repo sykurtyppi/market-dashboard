@@ -27,7 +27,7 @@ function Content({ data, freshness }: { data: Sentiment; freshness: Freshness })
               <div className="regime-scale">
                 {score !== null ? <i style={{ left: `${Math.min(Math.max(score, 0), 100)}%` }} /> : null}
               </div>
-              <span className="note"><span className={`dot ${fg.state}`} />{fg.rating ?? "—"}</span>
+              <span className="note"><span className={`dot ${fg.state}`} />{fg.rating ?? "—"} · CNN live</span>
             </div>
             <div className="regime-cell">
               <span className="k">Put / Call Ratio</span>
