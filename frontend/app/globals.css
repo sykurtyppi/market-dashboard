@@ -6,7 +6,7 @@
   --surface: #ffffff;
   --ink: #16181d;
   --ink-muted: #5b616e;
-  --ink-faint: #8a909c;
+  --ink-faint: #6d727e; /* WCAG AA: 4.5:1+ on ground/surface for small text */
   --line: #e7e9ee;
   --line-strong: #d7dae1;
   --accent: #2a4d69;
