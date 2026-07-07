@@ -1,5 +1,6 @@
 import { getLeft, getFreshness, Left, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import GapNotice from "@/components/GapNotice";
 import { MultiLineChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
@@ -44,6 +45,7 @@ function Content({ data, freshness }: { data: Left; freshness: Freshness }) {
               { points: data.charts.spread, color: "var(--crit)", label: "HYG OAS" },
               { points: data.charts.ema, color: "var(--accent)", label: "330d EMA" },
             ]} />
+            <GapNotice points={data.charts.spread} />
             <div className="legend">
               <span><i style={{ background: "var(--crit)" }} />HYG OAS</span>
               <span><i style={{ background: "var(--accent)" }} />330d EMA</span>

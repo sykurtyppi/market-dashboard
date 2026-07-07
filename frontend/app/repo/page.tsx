@@ -1,5 +1,6 @@
 import { getRepo, getFreshness, Repo, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
@@ -11,6 +12,10 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
     <>
       <Topbar title="Repo Market" subtitle="SOFR & overnight funding" freshness={freshness} />
       <div className="content">
+        {data.warnings.length > 0 ? (
+          <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
+        ) : null}
+
         <Section title="Funding Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.2fr 2fr" }}>
             <div className="regime-cell lead">
@@ -42,6 +47,7 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
         <section className="grid-2">
           <Panel title="SOFR" sub="1Y · %">
             <AreaChart points={data.charts.sofr_history} color="var(--accent)" label="SOFR" />
+            <GapNotice points={data.charts.sofr_history} />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />SOFR</span>
               <span style={{ color: "var(--ink-faint)" }}>Secured Overnight Financing Rate</span>
@@ -49,6 +55,7 @@ function Content({ data, freshness }: { data: Repo; freshness: Freshness }) {
           </Panel>
           <Panel title="Overnight RRP Volume" sub="1Y">
             <AreaChart points={data.charts.rrp_history} color="var(--good)" label="Overnight RRP" />
+            <GapNotice points={data.charts.rrp_history} />
             <div className="legend">
               <span><i style={{ background: "var(--good)" }} />RRP</span>
               <span style={{ color: "var(--ink-faint)" }}>Reverse-repo take-up (liquidity buffer)</span>

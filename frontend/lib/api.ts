@@ -51,6 +51,7 @@ export interface DetailRow {
 export interface Overview {
   as_of: string | null;
   freshness: Freshness;
+  warnings: string[];
   left_signal: string | null;
   regime: { composite_risk: number | null; components: RegimeComponent[] };
   metrics: Metric[];
@@ -63,6 +64,7 @@ export interface Overview {
 
 export interface Volatility {
   as_of: string | null;
+  warnings: string[];
   regime: string | null;
   regime_note: string;
   metrics: Metric[];
@@ -79,6 +81,7 @@ export interface Volatility {
 
 export interface Breadth {
   as_of: string | null;
+  warnings: string[];
   metrics: Metric[];
   charts: { ad_line: Point[]; mcclellan: Point[]; breadth_pct: Point[] };
 }
@@ -114,6 +117,7 @@ export interface Sectors {
 
 export interface CreditLiquidity {
   as_of: string | null;
+  warnings: string[];
   metrics: Metric[];
   charts: {
     credit_spreads: { hy: Point[]; ig: Point[] };
@@ -125,6 +129,7 @@ export interface CreditLiquidity {
 
 export interface TreasuryStress {
   as_of: string | null;
+  warnings: string[];
   regime: string | null;
   state: State;
   regime_note: string;
@@ -134,6 +139,7 @@ export interface TreasuryStress {
 
 export interface Repo {
   as_of: string | null;
+  warnings: string[];
   regime: string | null;
   state: State;
   regime_note: string;

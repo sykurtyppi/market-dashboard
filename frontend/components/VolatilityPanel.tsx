@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Point } from "@/lib/api";
 import VolatilityChart from "@/components/VolatilityChart";
+import { maxGapDays } from "@/components/GapNotice";
 
 type Range = "1M" | "3M" | "6M" | "ALL";
 
@@ -26,21 +27,6 @@ function filterByRange(points: Point[], anchor: number, days: number): Point[] {
 function fmt(value: number | null, unit = ""): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return `${value.toFixed(2)}${unit}`;
-}
-
-// Largest gap (in days) between consecutive plotted points, so we can warn when
-// the series interpolates across a real collection outage rather than silently
-// drawing a smooth line over it.
-function maxGapDays(points: Point[]): number {
-  let max = 0;
-  for (let i = 1; i < points.length; i += 1) {
-    const prev = new Date(points[i - 1].date).getTime();
-    const cur = new Date(points[i].date).getTime();
-    if (Number.isFinite(prev) && Number.isFinite(cur)) {
-      max = Math.max(max, (cur - prev) / DAY_MS);
-    }
-  }
-  return max;
 }
 
 type Stats = { avg: number | null; std: number | null; percentile: number | null; max: number | null; min: number | null; count: number };

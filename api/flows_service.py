@@ -183,11 +183,18 @@ def _build_institutional() -> Dict[str, Any]:
 
     insider = None
     if ins:
+        buys = _num(ins.get("buy_count"))
+        sells = _num(ins.get("sell_count"))
+        ratio = _num(ins.get("buy_sell_ratio"))
+        # With zero classified buys AND sells there is no ratio — the collector's
+        # 0/0 placeholder (1.00) would render as a real, neutral-looking reading.
+        if not buys and not sells:
+            ratio = None
         insider = {
             "total_transactions": _num(ins.get("total_transactions")),
-            "buy_count": _num(ins.get("buy_count")),
-            "sell_count": _num(ins.get("sell_count")),
-            "buy_sell_ratio": _num(ins.get("buy_sell_ratio")),
+            "buy_count": buys,
+            "sell_count": sells,
+            "buy_sell_ratio": ratio,
             "sentiment": ins.get("sentiment"),
             "state": _signal_state(ins.get("signal"), ins.get("sentiment")),
             "period_days": _num(ins.get("period_days")),

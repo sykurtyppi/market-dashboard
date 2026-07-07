@@ -1091,7 +1091,10 @@ class DatabaseManager:
                         validated.get('breadth_pct'),
                         validated.get('ad_line', 0),
                         validated.get('ad_diff', 0),
-                        validated.get('mcclellan', 0)
+                        # NULL, not 0 — the collector doesn't attach McClellan to
+                        # these rows, and a defaulted 0 reads as a real (dead-flat)
+                        # oscillator downstream. Missing must stay missing.
+                        validated.get('mcclellan')
                     ))
                     rows_saved += 1
 

@@ -1,5 +1,6 @@
 import { getTreasuryStress, getFreshness, TreasuryStress, Freshness } from "@/lib/api";
 import Topbar from "@/components/Topbar";
+import GapNotice from "@/components/GapNotice";
 import { AreaChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
@@ -11,6 +12,10 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
     <>
       <Topbar title="Treasury Stress" subtitle="MOVE index — Treasury market volatility" freshness={freshness} />
       <div className="content">
+        {data.warnings.length > 0 ? (
+          <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
+        ) : null}
+
         <Section title="Stress Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           <div className="regime" style={{ gridTemplateColumns: "1.2fr 2fr" }}>
             <div className="regime-cell lead">
@@ -42,6 +47,7 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
         <section className="grid-2">
           <Panel title="MOVE Index" sub="1Y">
             <AreaChart points={data.charts.move_history} color="var(--accent)" label="MOVE" />
+            <GapNotice points={data.charts.move_history} />
             <div className="legend">
               <span><i style={{ background: "var(--accent)" }} />MOVE</span>
               <span style={{ color: "var(--ink-faint)" }}>&lt;80 calm · 80–120 normal · 120–150 elevated · &gt;150 stress</span>
@@ -49,6 +55,7 @@ function Content({ data, freshness }: { data: TreasuryStress; freshness: Freshne
           </Panel>
           <Panel title="Historical Percentile" sub="1Y">
             <AreaChart points={data.charts.percentile_history} color="var(--warn)" label="Percentile" unit="%" />
+            <GapNotice points={data.charts.percentile_history} />
             <div className="legend">
               <span><i style={{ background: "var(--warn)" }} />Percentile</span>
             </div>

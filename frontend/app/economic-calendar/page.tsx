@@ -11,9 +11,21 @@ function importanceDot(importance: string | null): string {
   return "neutral";
 }
 
-function val(v: number | null, unit: string | null): string {
+// The backend's actual/previous fields are raw *levels* from the prior release
+// (CPI index ~334, GDP in $B) — not the % change the event's canonical unit
+// ("% YoY", "% QoQ") describes. Labeling 333.98 as "% YoY" was flatly wrong,
+// and "Actual" for a future release is a contradiction. Show levels as levels
+// ("Latest"/"Prior"), and the % change in its own column (yoy_change is always
+// year-over-year, whatever the event's headline cadence).
+function level(v: number | null, unit: string | null): string {
   if (v === null) return "—";
-  return unit === "% YoY" || unit === "%" ? `${v.toFixed(2)}` : v.toLocaleString();
+  // A unit of exactly "%" means the value itself is a rate (e.g. FOMC 3.63%).
+  return unit === "%" ? `${v.toFixed(2)}%` : v.toLocaleString();
+}
+
+function yoy(v: number | null): string {
+  if (v === null) return "—";
+  return `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
 }
 
 function EventRow({ e }: { e: EconomicEvent }) {
@@ -22,10 +34,9 @@ function EventRow({ e }: { e: EconomicEvent }) {
       <td><span className="tag"><span className={`dot ${importanceDot(e.importance)}`} />{e.name}</span></td>
       <td className="mono">{e.date}</td>
       <td className="mono">{e.days_until !== null ? `${e.days_until}d` : "—"}</td>
-      <td className="num mono">{val(e.actual, e.unit)}</td>
-      <td className="num mono">{val(e.forecast, e.unit)}</td>
-      <td className="num mono">{val(e.previous, e.unit)}</td>
-      <td className="src">{e.unit}</td>
+      <td className="num mono">{level(e.actual, e.unit)}</td>
+      <td className="num mono">{level(e.previous, e.unit)}</td>
+      <td className="num mono">{yoy(e.yoy_change)}</td>
     </tr>
   );
 }
@@ -46,14 +57,14 @@ function Content({ data, freshness }: { data: EconomicCalendar; freshness: Fresh
                 <thead>
                   <tr>
                     <th>Event</th><th>Date</th><th>In</th>
-                    <th className="num">Actual</th><th className="num">Forecast</th><th className="num">Previous</th><th>Unit</th>
+                    <th className="num">Latest</th><th className="num">Prior</th><th className="num">Δ YoY</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.events.length > 0 ? (
                     data.events.map((e, i) => <EventRow key={`${e.name}-${i}`} e={e} />)
                   ) : (
-                    <tr><td colSpan={7}><div className="empty-state">Economic calendar unavailable.</div></td></tr>
+                    <tr><td colSpan={6}><div className="empty-state">Economic calendar unavailable.</div></td></tr>
                   )}
                 </tbody>
               </table>
