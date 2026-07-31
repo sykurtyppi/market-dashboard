@@ -606,12 +606,13 @@ class DatabaseManager:
                     
                     cursor.execute("""
                         INSERT OR REPLACE INTO liquidity_history
-                        (date, rrp_on, tga, sofr, net_liquidity)
-                        VALUES (?, ?, ?, ?, ?)
+                        (date, rrp_on, tga, fed_balance_sheet, sofr, net_liquidity)
+                        VALUES (?, ?, ?, ?, ?, ?)
                     """, (
                         row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date']),
                         float(row['rrp_on']) if pd.notna(row.get('rrp_on')) else None,
                         float(row['tga']) if pd.notna(row.get('tga')) else None,
+                        float(fed_bs) if pd.notna(fed_bs) else None,
                         float(row['sofr']) if pd.notna(row.get('sofr')) else None,
                         net_liq
                     ))
