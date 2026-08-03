@@ -52,6 +52,7 @@ from processors.vrp_module import VRPAnalyzer
 from data_collectors.fed_balance_sheet_collector import FedBalanceSheetCollector
 from data_collectors.move_collector import MOVECollector
 from data_collectors.repo_collector_enhanced import RepoCollector
+from data_collectors.liquidity_collector import LiquidityCollector
 
 class MarketDataUpdater:
     """Main class for daily market data updates."""
@@ -83,6 +84,15 @@ class MarketDataUpdater:
         except Exception as e:
             logger.warning(f"Repo collector disabled: {e}")
             self.repo = None
+
+        try:
+            self.liquidity = LiquidityCollector()
+            if getattr(self.liquidity, "_disabled", False):
+                logger.warning("Liquidity collector disabled (no FRED API key)")
+                self.liquidity = None
+        except Exception as e:
+            logger.warning(f"Liquidity collector disabled: {e}")
+            self.liquidity = None
 
         # DB & processors
         self.db = DatabaseManager()
@@ -395,6 +405,11 @@ class MarketDataUpdater:
             logger.error(f"Repo data fetch failed: {e}")
 
         # ------------------------------------------------------------------
+        # 10b. Liquidity history (TGA / RRP / net liquidity)
+        # ------------------------------------------------------------------
+        self._update_liquidity_history()
+
+        # ------------------------------------------------------------------
         # 11. Build and save daily dashboard snapshot
         # ------------------------------------------------------------------
         logger.info("Saving daily snapshot for dashboard...")
@@ -490,6 +505,118 @@ class MarketDataUpdater:
         logger.info("=" * 60)
         logger.info("UPDATE COMPLETE")
         logger.info("=" * 60)
+
+    # ------------------------------------------------------------------
+    # Liquidity history (TGA / RRP / Fed BS -> net liquidity)
+    # ------------------------------------------------------------------
+    #: Documented FRED units per field. Units are a fixed property of the
+    #: series, never inferred from magnitude: WTREGEN (TGA) reports $ millions
+    #: and legitimately falls below $50B during debt-ceiling episodes (~$23B in
+    #: Jun-2023, ~$46B in Oct-2021). A magnitude test reads those as billions
+    #: and inflates them 1000x — precisely in the regime where net liquidity
+    #: matters most.
+    FRED_UNITS = {
+        "tga": "millions",     # WTREGEN
+        "rrp_on": "billions",  # RRPONTSYD
+        "fed_bs": "millions",  # WALCL
+    }
+
+    #: Plausible $B bounds. Used only to warn if an upstream unit changes;
+    #: values are never rescaled to fit.
+    PLAUSIBLE_BILLIONS = {
+        "tga": (0.0, 3_000.0),
+        "rrp_on": (0.0, 3_000.0),
+        "fed_bs": (1_000.0, 20_000.0),
+    }
+
+    @classmethod
+    def _to_billions(cls, series, field: str):
+        """Convert a FRED series to $ billions using its documented unit."""
+        import pandas as pd
+        s = pd.to_numeric(series, errors="coerce")
+        if cls.FRED_UNITS[field] == "millions":
+            s = s / 1_000.0
+        lo, hi = cls.PLAUSIBLE_BILLIONS[field]
+        obs = s.dropna()
+        if not obs.empty and (obs.min() < lo or obs.max() > hi):
+            logger.warning(
+                f"{field}: ${obs.min():,.1f}B-${obs.max():,.1f}B is outside the plausible "
+                f"${lo:,.0f}-${hi:,.0f}B range — check whether the FRED unit changed"
+            )
+        return s
+
+    def _update_liquidity_history(self):
+        """Fetch TGA/RRP/SOFR, merge Fed balance sheet, save to liquidity_history."""
+        logger.info("Fetching Liquidity history (TGA / RRP / net liquidity)...")
+        if not self.liquidity:
+            logger.warning("Liquidity collector not available (requires FRED API key)")
+            return
+        try:
+            import pandas as pd
+
+            liq_df = self.liquidity.get_all_liquidity(lookback_days=365)
+            if liq_df is None or liq_df.empty:
+                logger.warning("No liquidity data returned")
+                return
+
+            # Normalize units to $ billions before any arithmetic
+            if "tga" in liq_df.columns:
+                liq_df["tga"] = self._to_billions(liq_df["tga"], "tga")
+            if "rrp_on" in liq_df.columns:
+                liq_df["rrp_on"] = self._to_billions(liq_df["rrp_on"], "rrp_on")
+
+            # Merge Fed balance sheet from the table populated earlier this run
+            # (weekly WALCL, stored in $ millions), forward-filled to daily.
+            import sqlite3
+            with sqlite3.connect(self.db.db_path) as conn:
+                fed_df = pd.read_sql_query(
+                    "SELECT date, total_assets FROM fed_balance_sheet ORDER BY date",
+                    conn,
+                )
+            if not fed_df.empty:
+                fed_df["date"] = pd.to_datetime(fed_df["date"]).dt.normalize()
+                fed_df["fed_bs"] = self._to_billions(fed_df["total_assets"], "fed_bs")
+                fed_df = (
+                    fed_df[["date", "fed_bs"]]
+                    .set_index("date")
+                    .resample("D")
+                    .ffill()
+                    .reset_index()
+                )
+                liq_df["date"] = pd.to_datetime(liq_df["date"]).dt.normalize()
+                liq_df = liq_df.merge(fed_df, on="date", how="left")
+                # Forward-fill the weekly series across the daily grid edges
+                liq_df["fed_bs"] = liq_df["fed_bs"].ffill()
+            else:
+                logger.warning(
+                    "fed_balance_sheet table empty; net liquidity will use fallback formula"
+                )
+
+            # Drop leading rows where nothing is known yet
+            value_cols = [c for c in ("rrp_on", "tga", "sofr", "fed_bs") if c in liq_df.columns]
+            liq_df = liq_df.dropna(subset=value_cols, how="all").reset_index(drop=True)
+
+            self.db.save_liquidity_history(liq_df)
+
+            # Guard the empty case explicitly: .iloc[-1] on an all-NaN column
+            # raises IndexError, which the outer handler would report as
+            # "Liquidity history update failed" after the save already succeeded.
+            dated = liq_df.dropna(subset=["tga"]) if "tga" in liq_df.columns else liq_df.iloc[0:0]
+            if not dated.empty:
+                latest = dated.iloc[-1]
+                fed_bs_val = latest.get("fed_bs")
+                rrp_val = latest.get("rrp_on")
+                tga_val = latest.get("tga")
+                logger.info(f"  TGA: ${tga_val:,.0f}B")
+                if pd.notna(rrp_val):
+                    logger.info(f"  RRP: ${rrp_val:,.1f}B")
+                if pd.notna(fed_bs_val):
+                    net = fed_bs_val - tga_val - (rrp_val if pd.notna(rrp_val) else 0.0)
+                    logger.info(f"  Fed BS: ${fed_bs_val:,.0f}B -> Net Liquidity: ${net:,.0f}B")
+        except Exception as e:
+            logger.error(f"Liquidity history update failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
 
 if __name__ == "__main__":
