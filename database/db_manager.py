@@ -592,8 +592,20 @@ class DatabaseManager:
                     # Note: If fed_bs is not in this row, we can't compute proper net liquidity
                     # The old formula -(RRP + TGA) was WRONG - it inverted the relationship
                     net_liq = None
-                    fed_bs = row.get('fed_bs') or row.get('fed_balance_sheet')
-                    rrp = row.get('rrp_on') or row.get('rrp')
+                    # `a or b` is wrong for numeric fields: a legitimate 0.0
+                    # is falsy and silently falls through to the alias, which
+                    # is usually absent -> None -> net_liquidity NULL. ON RRP
+                    # has already traded as low as $0.03B, so exact zero is
+                    # reachable. Pick the first field that is actually present.
+                    def _first_present(*names):
+                        for n in names:
+                            v = row.get(n)
+                            if v is not None and pd.notna(v):
+                                return v
+                        return None
+
+                    fed_bs = _first_present('fed_bs', 'fed_balance_sheet')
+                    rrp = _first_present('rrp_on', 'rrp')
                     tga = row.get('tga')
 
                     if pd.notna(fed_bs) and pd.notna(rrp) and pd.notna(tga):

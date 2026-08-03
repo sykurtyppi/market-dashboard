@@ -509,18 +509,41 @@ class MarketDataUpdater:
     # ------------------------------------------------------------------
     # Liquidity history (TGA / RRP / Fed BS -> net liquidity)
     # ------------------------------------------------------------------
-    @staticmethod
-    def _to_billions(series):
-        """Normalize a FRED series to $ billions using magnitude.
+    #: Documented FRED units per field. Units are a fixed property of the
+    #: series, never inferred from magnitude: WTREGEN (TGA) reports $ millions
+    #: and legitimately falls below $50B during debt-ceiling episodes (~$23B in
+    #: Jun-2023, ~$46B in Oct-2021). A magnitude test reads those as billions
+    #: and inflates them 1000x — precisely in the regime where net liquidity
+    #: matters most.
+    FRED_UNITS = {
+        "tga": "millions",     # WTREGEN
+        "rrp_on": "billions",  # RRPONTSYD
+        "fed_bs": "millions",  # WALCL
+    }
 
-        FRED mixes units across these series (WTREGEN and WALCL report in
-        $ millions, RRPONTSYD in $ billions). Values above 50,000 can only
-        be millions for these series, so divide by 1,000; smaller values
-        are already billions.
-        """
+    #: Plausible $B bounds. Used only to warn if an upstream unit changes;
+    #: values are never rescaled to fit.
+    PLAUSIBLE_BILLIONS = {
+        "tga": (0.0, 3_000.0),
+        "rrp_on": (0.0, 3_000.0),
+        "fed_bs": (1_000.0, 20_000.0),
+    }
+
+    @classmethod
+    def _to_billions(cls, series, field: str):
+        """Convert a FRED series to $ billions using its documented unit."""
         import pandas as pd
         s = pd.to_numeric(series, errors="coerce")
-        return s.where(s.abs() <= 50_000, s / 1_000.0)
+        if cls.FRED_UNITS[field] == "millions":
+            s = s / 1_000.0
+        lo, hi = cls.PLAUSIBLE_BILLIONS[field]
+        obs = s.dropna()
+        if not obs.empty and (obs.min() < lo or obs.max() > hi):
+            logger.warning(
+                f"{field}: ${obs.min():,.1f}B-${obs.max():,.1f}B is outside the plausible "
+                f"${lo:,.0f}-${hi:,.0f}B range — check whether the FRED unit changed"
+            )
+        return s
 
     def _update_liquidity_history(self):
         """Fetch TGA/RRP/SOFR, merge Fed balance sheet, save to liquidity_history."""
@@ -538,9 +561,9 @@ class MarketDataUpdater:
 
             # Normalize units to $ billions before any arithmetic
             if "tga" in liq_df.columns:
-                liq_df["tga"] = self._to_billions(liq_df["tga"])
+                liq_df["tga"] = self._to_billions(liq_df["tga"], "tga")
             if "rrp_on" in liq_df.columns:
-                liq_df["rrp_on"] = self._to_billions(liq_df["rrp_on"])
+                liq_df["rrp_on"] = self._to_billions(liq_df["rrp_on"], "rrp_on")
 
             # Merge Fed balance sheet from the table populated earlier this run
             # (weekly WALCL, stored in $ millions), forward-filled to daily.
@@ -552,7 +575,7 @@ class MarketDataUpdater:
                 )
             if not fed_df.empty:
                 fed_df["date"] = pd.to_datetime(fed_df["date"]).dt.normalize()
-                fed_df["fed_bs"] = self._to_billions(fed_df["total_assets"])
+                fed_df["fed_bs"] = self._to_billions(fed_df["total_assets"], "fed_bs")
                 fed_df = (
                     fed_df[["date", "fed_bs"]]
                     .set_index("date")
@@ -575,8 +598,12 @@ class MarketDataUpdater:
 
             self.db.save_liquidity_history(liq_df)
 
-            latest = liq_df.dropna(subset=["tga"]).iloc[-1] if "tga" in liq_df.columns else None
-            if latest is not None:
+            # Guard the empty case explicitly: .iloc[-1] on an all-NaN column
+            # raises IndexError, which the outer handler would report as
+            # "Liquidity history update failed" after the save already succeeded.
+            dated = liq_df.dropna(subset=["tga"]) if "tga" in liq_df.columns else liq_df.iloc[0:0]
+            if not dated.empty:
+                latest = dated.iloc[-1]
                 fed_bs_val = latest.get("fed_bs")
                 rrp_val = latest.get("rrp_on")
                 tga_val = latest.get("tga")
