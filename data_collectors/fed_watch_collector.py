@@ -20,6 +20,7 @@ References:
 - https://fred.stlouisfed.org/series/DFEDTARL (Target Rate Lower)
 """
 
+import calendar
 import logging
 import requests
 from datetime import datetime, timedelta
@@ -88,6 +89,16 @@ FOMC_MEETINGS = [
     FOMCMeeting(datetime(2027, 11, 3), has_sep=False),
     FOMCMeeting(datetime(2027, 12, 15), has_sep=True),
 ]
+
+
+def _shift_month(year: int, month: int, delta: int) -> Tuple[int, int]:
+    """(year, month) moved by `delta` calendar months."""
+    idx = year * 12 + (month - 1) + delta
+    return idx // 12, idx % 12 + 1
+
+
+def _has_meeting(year: int, month: int) -> bool:
+    return any(m.date.year == year and m.date.month == month for m in FOMC_MEETINGS)
 
 
 # ============================================================
@@ -350,18 +361,21 @@ class FedWatchCalculator:
     Calculates Fed rate probabilities using CME FedWatch methodology
 
     Key Methodology:
-    1. Get EFFR for anchor month (month before FOMC meeting if no meeting in that month)
-    2. Get implied rate from futures for meeting month
-    3. Calculate probability based on rate difference and 25bp step size
+    1. Start rate = the rate prevailing before the meeting (chosen by the collector:
+       prior-month contract if it is still trading and has no meeting, else EFFR)
+    2. End rate = the rate after the meeting:
+       - next-month contract, if the following month has no FOMC meeting
+         (its whole-month average IS the post-meeting rate), else
+       - backed out of the meeting-month contract, whose price is the AVERAGE rate
+         over the whole month — pre-meeting days at the start rate, post-meeting
+         days at the end rate:
+           end = (month_avg * N - start * pre_days) / post_days
+    3. Probability = (end - start) / 0.25, split between the two bracketing
+       25bp outcomes.
 
-    Formula:
-    - If implied rate change < 0 (cut expected):
-      P(cut) = |implied_change| / 0.25
-      P(no change) = 1 - P(cut)
-
-    - If implied rate change > 0 (hike expected):
-      P(hike) = implied_change / 0.25
-      P(no change) = 1 - P(hike)
+    Comparing the raw meeting-month average against the start rate (the old
+    behavior) dilutes the implied move by the pre-meeting days — for a Sep 16
+    meeting it roughly halved the implied hike probability.
     """
 
     RATE_STEP = 0.25  # Fed moves in 25bp increments
@@ -407,44 +421,59 @@ class FedWatchCalculator:
 
         return levels
 
-    def calculate_meeting_probabilities(
-        self,
-        meeting: FOMCMeeting,
-        current_rate_mid: float,
-        prior_month_implied: Optional[float] = None
-    ) -> Dict:
+    # Fewer post-meeting days than this and a back-out from the meeting-month
+    # contract amplifies quote noise (1bp of price -> N/post_days bp of rate).
+    MIN_RELIABLE_POST_DAYS = 7
+
+    @staticmethod
+    def post_meeting_rate(month_avg: float, start_rate: float,
+                          meeting_day: int, days_in_month: int) -> Optional[float]:
+        """Rate after the meeting, backed out of the meeting-month average.
+
+        The new rate takes effect the day after the decision, so days 1..meeting_day
+        run at the start rate. Returns None if no post-meeting days remain.
         """
-        Calculate rate probabilities for a specific FOMC meeting
+        post_days = days_in_month - meeting_day
+        if post_days <= 0:
+            return None
+        return (month_avg * days_in_month - start_rate * meeting_day) / post_days
 
-        Uses proper CME methodology:
-        1. Anchor rate = prior month's implied rate (or current rate if first meeting)
-        2. Meeting month implied rate from futures
-        3. Probability = (meeting_implied - anchor) / 0.25
+    def meeting_end_rate(self, meeting_date: datetime,
+                         start_rate: float) -> Tuple[Optional[float], str, List[str]]:
+        """Market-implied post-meeting rate for the meeting on `meeting_date`.
 
-        Args:
-            meeting: FOMC meeting to calculate for
-            current_rate_mid: Current target rate midpoint
-            prior_month_implied: Implied rate from prior month (anchor)
-
-        Returns:
-            Dict with probabilities for each possible outcome
+        Returns (end_rate, source, caveats). end_rate is None when no usable
+        contract exists.
         """
-        # Get meeting month implied rate
-        meeting_implied = self.futures.get_implied_rate(meeting.date.year, meeting.date.month)
+        year, month = meeting_date.year, meeting_date.month
+        next_y, next_m = _shift_month(year, month, 1)
+        if not _has_meeting(next_y, next_m):
+            next_avg = self.futures.get_implied_rate(next_y, next_m)
+            if next_avg is not None:
+                return next_avg, 'next_month_contract', []
 
-        if meeting_implied is None:
-            return self._fallback_probabilities(current_rate_mid)
+        month_avg = self.futures.get_implied_rate(year, month)
+        if month_avg is None:
+            return None, 'unavailable', []
 
-        # Use prior month as anchor, or current rate if not available
-        anchor_rate = prior_month_implied if prior_month_implied else current_rate_mid
+        days = calendar.monthrange(year, month)[1]
+        end = self.post_meeting_rate(month_avg, start_rate, meeting_date.day, days)
+        if end is None:
+            return None, 'unavailable', []
 
-        # Calculate implied change
-        implied_change = meeting_implied - anchor_rate
+        caveats: List[str] = []
+        post_days = days - meeting_date.day
+        if post_days < self.MIN_RELIABLE_POST_DAYS:
+            caveats.append(
+                f"Late-month meeting: the post-meeting rate is backed out of only {post_days} "
+                "days of the meeting-month contract, so small quote moves shift the "
+                "probabilities sharply."
+            )
+        return end, 'meeting_month_contract', caveats
 
-        # CME methodology: calculate probability based on distance from anchor
-        # The probability is proportional to how far the implied rate has moved
-
-        # Determine the two most likely outcomes
+    def probabilities_from_rates(self, start_rate: float, end_rate: float) -> Dict:
+        """Split the implied start->end move between the two bracketing 25bp outcomes."""
+        implied_change = end_rate - start_rate
         prob_dict = {}
 
         # Calculate number of 25bp moves implied
@@ -492,8 +521,8 @@ class FedWatchCalculator:
 
         return {
             'probabilities': prob_dict,
-            'implied_rate': round(meeting_implied, 4),
-            'anchor_rate': round(anchor_rate, 4),
+            'implied_rate': round(end_rate, 4),
+            'anchor_rate': round(start_rate, 4),
             'implied_change_bps': round(implied_change * 100, 1),
             'data_source': 'fed_funds_futures',
         }
@@ -544,6 +573,10 @@ class FedWatchCollector:
         self._summary_cache_time = None
         self._summary_cache_ttl = 60  # 1 minute
 
+    def _now(self) -> datetime:
+        """Current time; a method so tests can pin the calendar."""
+        return datetime.now()
+
     def get_upcoming_meetings(self, n: int = 8) -> List[Dict]:
         """
         Get next N FOMC meetings with metadata
@@ -590,6 +623,7 @@ class FedWatchCollector:
                 'mid': 3.625,
                 'range_str': '3.50% - 3.75%',
                 'effr': 3.64,
+                'effr_source': 'fallback',
                 'as_of': datetime.now().strftime('%Y-%m-%d'),
                 'source': 'fallback',
             }
@@ -600,6 +634,8 @@ class FedWatchCollector:
             'mid': target['mid'],
             'range_str': target['range_str'],
             'effr': effr['rate'] if effr else target['mid'],
+            # Consumers anchoring on EFFR need to know when it is really the midpoint.
+            'effr_source': 'FRED' if effr else 'target_midpoint',
             'as_of': target['as_of'],
             'source': 'FRED',
         }
@@ -620,35 +656,29 @@ class FedWatchCollector:
 
         next_meeting = meetings[0]
         current = self.get_current_rate()
-
-        warnings: List[str] = []
-
-        # Get prior month implied rate for anchor
         meeting_date = next_meeting['date']
-        prior_month = meeting_date.month - 1 if meeting_date.month > 1 else 12
-        prior_year = meeting_date.year if meeting_date.month > 1 else meeting_date.year - 1
-        prior_implied = self.futures.get_implied_rate(prior_year, prior_month)
-        if prior_implied is None:
-            warnings.append(
-                f"Anchor contract {self.futures._get_ticker(prior_year, prior_month)} unavailable "
-                f"(expired or no data); pre-meeting rate falls back to the target midpoint "
-                f"({current['mid']:.3f}%)."
-            )
 
-        # Create meeting object for calculator
-        meeting_obj = FOMCMeeting(meeting_date, next_meeting['has_sep'])
+        # `warnings` is everything the page should disclose; `degraded` is only
+        # set when an input fell back (the frontend labels that a fallback).
+        warnings: List[str] = []
+        degraded = False
 
-        # Calculate probabilities
-        result = self.calculator.calculate_meeting_probabilities(
-            meeting_obj,
-            current['mid'],
-            prior_implied
-        )
-        if result['data_source'] == 'fallback':
+        start_rate, start_source = self._pre_meeting_rate(meeting_date, current, warnings)
+        if start_source in ('target_midpoint', 'missing_prior_contract_effr'):
+            degraded = True
+
+        end_rate, end_source, caveats = self.calculator.meeting_end_rate(meeting_date, start_rate)
+        warnings.extend(caveats)
+
+        if end_rate is None:
+            result = self.calculator._fallback_probabilities(current['mid'])
             warnings.append(
                 f"Meeting-month contract {self.futures._get_ticker(meeting_date.year, meeting_date.month)} "
                 "unavailable; probabilities are a neutral placeholder, not market-implied."
             )
+            degraded = True
+        else:
+            result = self.calculator.probabilities_from_rates(start_rate, end_rate)
 
         # Determine most likely outcome
         probs = result['probabilities']
@@ -662,11 +692,48 @@ class FedWatchCollector:
             'most_likely': most_likely,
             'most_likely_prob': probs[most_likely],
             'implied_rate': result['implied_rate'],
+            'anchor_rate': result['anchor_rate'],
             'implied_change_bps': result['implied_change_bps'],
+            'start_rate_source': start_source,
+            'end_rate_source': end_source,
             'data_source': result['data_source'],
             'warnings': warnings,
-            'degraded': bool(warnings),
+            'degraded': degraded,
         }
+
+    def _pre_meeting_rate(self, meeting_date: datetime, current: Dict,
+                          warnings: List[str]) -> Tuple[float, str]:
+        """Rate prevailing until the next meeting, and where it came from.
+
+        The prior-month contract is used only while it still trades and that
+        month has no meeting. Otherwise the prior month is already realized, so
+        the observed EFFR is the correct pre-meeting rate. This is the normal
+        path inside the meeting month, not a fallback.
+        """
+        now = self._now()
+        prior_y, prior_m = _shift_month(meeting_date.year, meeting_date.month, -1)
+        prior_trading = (now.year, now.month) <= (prior_y, prior_m)
+        missing_prior = False
+
+        if prior_trading and not _has_meeting(prior_y, prior_m):
+            prior_avg = self.futures.get_implied_rate(prior_y, prior_m)
+            if prior_avg is not None:
+                return prior_avg, 'prior_month_contract'
+            missing_prior = True
+            warnings.append(
+                f"Anchor contract {self.futures._get_ticker(prior_y, prior_m)} should be trading "
+                "but returned no data; pre-meeting rate uses the effective rate instead."
+            )
+
+        if current.get('effr') is not None and current.get('effr_source') == 'FRED':
+            return current['effr'], 'missing_prior_contract_effr' if missing_prior else 'effr'
+
+        warnings.append(
+            f"Effective rate (EFFR) unavailable; pre-meeting rate uses the target midpoint "
+            f"({current['mid']:.3f}%), which usually sits a few bp off EFFR — enough to move "
+            "these probabilities noticeably."
+        )
+        return current['mid'], 'target_midpoint'
 
     def get_rate_path_expectations(self) -> Dict:
         """

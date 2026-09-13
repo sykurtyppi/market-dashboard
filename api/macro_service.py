@@ -87,7 +87,7 @@ def _build_fed_watch() -> Dict[str, Any]:
          "unit": "%", "state": "neutral", "source": "FRED (EFFR)"},
         {"key": "rate_mid", "label": "Target Midpoint", "value": _num(fw.get("current_rate_mid")),
          "unit": "%", "state": "neutral", "source": fw.get("rate_source") or "FRED"},
-        {"key": "implied", "label": "Implied Rate", "value": _num(fw.get("implied_rate")),
+        {"key": "implied", "label": "Implied Post-Meeting Rate", "value": _num(fw.get("implied_rate")),
          "unit": "%", "state": "neutral", "source": "Fed funds futures"},
         {"key": "terminal", "label": "Terminal Rate", "value": _num(fw.get("terminal_rate")),
          "unit": "%", "state": "neutral", "source": "Rate path"},
