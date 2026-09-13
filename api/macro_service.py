@@ -69,6 +69,11 @@ def _build_fed_watch() -> Dict[str, Any]:
             "Fed Watch is using fallback rate/probability estimates; live futures data unavailable."
         )
         degraded = True
+    # Input-level fallbacks the collector took (e.g. an expired anchor contract).
+    # These can leave implied_rate populated, so the checks above miss them.
+    if fw.get("degraded"):
+        degraded = True
+    warnings.extend(w for w in fw.get("warnings") or [] if w not in warnings)
 
     probs_raw = fw.get("probabilities") or {}
     probabilities = [

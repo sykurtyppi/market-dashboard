@@ -621,11 +621,19 @@ class FedWatchCollector:
         next_meeting = meetings[0]
         current = self.get_current_rate()
 
+        warnings: List[str] = []
+
         # Get prior month implied rate for anchor
         meeting_date = next_meeting['date']
         prior_month = meeting_date.month - 1 if meeting_date.month > 1 else 12
         prior_year = meeting_date.year if meeting_date.month > 1 else meeting_date.year - 1
         prior_implied = self.futures.get_implied_rate(prior_year, prior_month)
+        if prior_implied is None:
+            warnings.append(
+                f"Anchor contract {self.futures._get_ticker(prior_year, prior_month)} unavailable "
+                f"(expired or no data); pre-meeting rate falls back to the target midpoint "
+                f"({current['mid']:.3f}%)."
+            )
 
         # Create meeting object for calculator
         meeting_obj = FOMCMeeting(meeting_date, next_meeting['has_sep'])
@@ -636,6 +644,11 @@ class FedWatchCollector:
             current['mid'],
             prior_implied
         )
+        if result['data_source'] == 'fallback':
+            warnings.append(
+                f"Meeting-month contract {self.futures._get_ticker(meeting_date.year, meeting_date.month)} "
+                "unavailable; probabilities are a neutral placeholder, not market-implied."
+            )
 
         # Determine most likely outcome
         probs = result['probabilities']
@@ -651,6 +664,8 @@ class FedWatchCollector:
             'implied_rate': result['implied_rate'],
             'implied_change_bps': result['implied_change_bps'],
             'data_source': result['data_source'],
+            'warnings': warnings,
+            'degraded': bool(warnings),
         }
 
     def get_rate_path_expectations(self) -> Dict:
@@ -842,6 +857,8 @@ class FedWatchCollector:
 
                 # Data quality
                 'data_source': probs.get('data_source', 'unknown'),
+                'warnings': probs.get('warnings', []),
+                'degraded': probs.get('degraded', False),
                 'timestamp': datetime.now().isoformat(),
             }
 

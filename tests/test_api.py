@@ -350,6 +350,32 @@ def test_fed_watch_fallback_data_warns_marks_degraded_and_not_cached(client):
     svc._cache.clear()
 
 
+def test_fed_watch_collector_input_fallback_surfaces_even_with_implied_rate(client):
+    # Regression (2026-09-11): the anchor contract had expired, so the collector
+    # anchored on the target midpoint — but implied_rate was still populated, so
+    # the API reported degraded=False with no warnings. The collector's own
+    # degraded flag + warnings must now reach the response.
+    import api.macro_service as svc
+    svc._cache.clear()
+    msg = "Anchor contract ZQQ26.CBT unavailable (expired or no data)"
+    with patch("data_collectors.fed_watch_collector.FedWatchCollector") as MockFW:
+        MockFW.return_value.get_fed_watch_summary.return_value = {
+            "current_rate": "3.50% - 3.75%", "current_rate_mid": 3.625,
+            "rate_source": "FRED", "implied_rate": 3.73,
+            "next_meeting": {"date_str": "Sep 16, 2026", "days_until": 4},
+            "most_likely": "No Change", "most_likely_prob": 58.0,
+            "probabilities": {"No Change": 58.0, "Hike 25bp": 42.0},
+            "degraded": True, "warnings": [msg],
+        }
+        r = client.get("/api/fed-watch")
+        body = r.json()
+        assert r.status_code == 200
+        assert body["degraded"] is True
+        assert msg in body["warnings"]
+        assert "fed_watch" not in svc._cache
+    svc._cache.clear()
+
+
 # --- Phase 5 pages (positioning & flows, live — collectors mocked) ---
 
 def test_cot_returns_expected_shape(client):
