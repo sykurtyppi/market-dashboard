@@ -32,7 +32,8 @@ def _meeting(date: datetime) -> dict:
 
 def make_collector(contracts: dict, *, now: datetime = IN_SEP, effr: float = 3.63,
                    effr_source: str = "FRED", mid: float = 3.625,
-                   meeting: datetime = SEP_16_2026) -> FedWatchCollector:
+                   meeting: datetime = SEP_16_2026,
+                   meetings: list | None = None) -> FedWatchCollector:
     """Collector wired to fake inputs. `contracts` maps (year, month) -> implied
     rate; a missing key behaves like an expired / no-data contract."""
     c = FedWatchCollector()
@@ -43,7 +44,8 @@ def make_collector(contracts: dict, *, now: datetime = IN_SEP, effr: float = 3.6
         "range_str": f"{mid - 0.125:.2f}% - {mid + 0.125:.2f}%",
         "effr": effr, "effr_source": effr_source, "as_of": "2026-09-11", "source": "FRED",
     }
-    c.get_upcoming_meetings = lambda n=8: [_meeting(meeting)][:n]
+    schedule = [_meeting(d) for d in (meetings or [meeting])]
+    c.get_upcoming_meetings = lambda n=8: schedule[:n]
     c._now = lambda: now
     return c
 
@@ -137,3 +139,60 @@ class TestSummaryPassThrough:
         assert summary["degraded"] is False
         assert summary["warnings"] == []
         assert summary["implied_rate"] == pytest.approx(3.8389, abs=1e-4)
+
+
+class TestRatePath:
+    """The path chains meeting to meeting; each step must use the weighted
+    post-meeting rate, not the raw meeting-month average."""
+
+    SCHEDULE = [SEP_16_2026, OCT_28_2026]
+    # Sep avg 3.7275 (ZQU26), Nov 3.96 — November has no FOMC meeting, so its
+    # average IS the rate after the Oct 28 decision.
+    CONTRACTS = {(2026, 9): 3.7275, (2026, 11): 3.96}
+
+    def _path(self, **kw):
+        c = make_collector(kw.pop("contracts", self.CONTRACTS),
+                           meetings=self.SCHEDULE, **kw)
+        return c.get_rate_path_expectations()
+
+    def test_first_step_uses_weighted_rate_not_raw_monthly_average(self):
+        first = self._path()["path"][0]
+        assert first["source"] == "meeting_month_contract"
+        assert first["implied_rate"] == pytest.approx(3.839, abs=1e-3)
+        assert first["implied_rate"] != pytest.approx(3.7275)  # the old, diluted value
+
+    def test_path_chains_each_meeting_onto_the_previous(self):
+        path = self._path()["path"]
+        second = path[1]
+        assert second["source"] == "next_month_contract"
+        assert second["implied_rate"] == pytest.approx(3.96)
+        # Move attributed to THIS meeting, measured from the prior meeting's
+        # post-meeting rate rather than from today's rate.
+        assert second["change_from_prior"] == pytest.approx(3.96 - 3.8389, abs=1e-3)
+
+    def test_terminal_rate_comes_from_the_end_of_the_chain(self):
+        res = self._path()
+        assert res["terminal_rate"] == pytest.approx(4.0)  # 3.96 -> nearest 12.5bp
+        assert res["expected_hikes"] >= 1
+        assert res["warnings"] == []
+
+    def test_missing_quotes_carry_forward_flat_and_are_disclosed(self):
+        res = self._path(contracts={})
+        assert [p["source"] for p in res["path"]] == ["carried_forward"] * 2
+        assert all(p["implied_rate"] is None for p in res["path"])
+        assert res["terminal_rate"] == pytest.approx(3.625)  # EFFR 3.63 -> 12.5bp grid
+        assert any("carried forward flat" in w for w in res["warnings"])
+
+    def test_partial_curve_names_the_first_missing_meeting(self):
+        res = self._path(contracts={(2026, 9): 3.7275})
+        assert res["path"][0]["source"] == "meeting_month_contract"
+        assert res["path"][1]["source"] == "carried_forward"
+        assert any("Oct 28, 2026" in w for w in res["warnings"])
+
+    def test_summary_merges_path_warnings_without_marking_page_degraded(self):
+        # A far-dated gap must not label the next-meeting probability panel a
+        # fallback — those probabilities are fine.
+        c = make_collector({(2026, 9): 3.7275}, meetings=self.SCHEDULE)
+        summary = c.get_fed_watch_summary()
+        assert summary["degraded"] is False
+        assert any("carried forward flat" in w for w in summary["warnings"])

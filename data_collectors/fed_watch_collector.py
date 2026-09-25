@@ -91,6 +91,16 @@ FOMC_MEETINGS = [
 ]
 
 
+def _merge_warnings(*groups) -> List[str]:
+    """Concatenate warning lists, dropping blanks and duplicates, order kept."""
+    merged: List[str] = []
+    for group in groups:
+        for w in group or []:
+            if w and w not in merged:
+                merged.append(w)
+    return merged
+
+
 def _shift_month(year: int, month: int, delta: int) -> Tuple[int, int]:
     """(year, month) moved by `delta` calendar months."""
     idx = year * 12 + (month - 1) + delta
@@ -737,13 +747,19 @@ class FedWatchCollector:
 
     def get_rate_path_expectations(self) -> Dict:
         """
-        Get expected rate path for next several meetings
+        Get expected rate path for the next several meetings
 
-        Uses Fed Funds Futures for each meeting month to derive
-        the market-implied expected rate at each FOMC meeting.
+        Chained CME-style: each meeting's post-meeting rate becomes the
+        pre-meeting rate for the next one, and every step uses the same weighted
+        end-rate logic as the next-meeting probabilities. Reading the raw
+        meeting-month average as "the rate after that meeting" (the old
+        behavior) blends in pre-meeting days at the previous rate, so every
+        step of the path — and the terminal rate — was pulled toward the
+        current rate.
 
         Returns:
-            Dict with current rate, expected path, and terminal rate
+            Dict with current rate, expected path, terminal rate, and any
+            disclosures about gaps in the curve.
         """
         meetings = self.get_upcoming_meetings(n=8)
         current = self.get_current_rate()
@@ -751,48 +767,49 @@ class FedWatchCollector:
         if not meetings:
             return {'status': 'no_data'}
 
+        warnings: List[str] = []
         path = []
-        prior_implied = current['mid']
+        first_gap: Optional[str] = None
+
+        # Anchor on the same pre-meeting rate the probabilities use. Its own
+        # fallback warnings are reported there, so they are discarded here.
+        start_rate, _src = self._pre_meeting_rate(meetings[0]['date'], current, [])
 
         for meeting in meetings:
-            # Get implied rate for meeting month
-            implied = self.futures.get_implied_rate(meeting['year'], meeting['month'])
+            end_rate, source, _caveats = self.calculator.meeting_end_rate(
+                meeting['date'], start_rate
+            )
 
-            if implied is not None:
-                # Round to nearest 12.5bp (half step) for cleaner display
-                expected_rate = round(implied * 8) / 8
+            if end_rate is None:
+                # No quote for this meeting: hold the rate flat rather than
+                # inventing a move, and remember where the curve ran out.
+                end_rate, source = start_rate, 'carried_forward'
+                if first_gap is None:
+                    first_gap = meeting['date_str']
 
-                # Calculate probability-weighted expected rate
-                # (using the implied rate directly as the expectation)
-                change_from_current = expected_rate - current['mid']
-                change_from_prior = expected_rate - prior_implied
+            path.append({
+                'meeting': meeting['date_str'],
+                'date': meeting['date'],
+                'days_until': meeting['days_until'],
+                'has_sep': meeting['has_sep'],
+                'implied_rate': None if source == 'carried_forward' else round(end_rate, 3),
+                # Rounded to the nearest 12.5bp for display only — the chain
+                # itself carries the unrounded rate so errors don't accumulate.
+                'expected_rate': round(end_rate * 8) / 8,
+                'change_from_current': round(end_rate - current['mid'], 3),
+                'change_from_prior': round(end_rate - start_rate, 3),
+                'change_bps': round((end_rate - current['mid']) * 100),
+                'source': source,
+            })
 
-                path.append({
-                    'meeting': meeting['date_str'],
-                    'date': meeting['date'],
-                    'days_until': meeting['days_until'],
-                    'has_sep': meeting['has_sep'],
-                    'implied_rate': round(implied, 3),
-                    'expected_rate': expected_rate,
-                    'change_from_current': round(change_from_current, 3),
-                    'change_from_prior': round(change_from_prior, 3),
-                    'change_bps': round(change_from_current * 100),
-                })
+            start_rate = end_rate
 
-                prior_implied = implied
-            else:
-                # Use prior implied rate if futures unavailable
-                path.append({
-                    'meeting': meeting['date_str'],
-                    'date': meeting['date'],
-                    'days_until': meeting['days_until'],
-                    'has_sep': meeting['has_sep'],
-                    'implied_rate': None,
-                    'expected_rate': prior_implied,
-                    'change_from_current': round(prior_implied - current['mid'], 3),
-                    'change_from_prior': 0,
-                    'change_bps': round((prior_implied - current['mid']) * 100),
-                })
+        if first_gap is not None:
+            warnings.append(
+                f"No futures quotes for the rate path from {first_gap} onward; those "
+                "meetings are carried forward flat, so the terminal rate is a floor, "
+                "not a market-implied estimate."
+            )
 
         # Calculate terminal rate (last meeting in path)
         terminal = path[-1]['expected_rate'] if path else current['mid']
@@ -808,6 +825,7 @@ class FedWatchCollector:
             'total_change_bps': total_change_bps,
             'expected_cuts': abs(total_change_bps) // 25 if total_change_bps < 0 else 0,
             'expected_hikes': total_change_bps // 25 if total_change_bps > 0 else 0,
+            'warnings': warnings,
         }
 
     def get_futures_term_structure(self) -> Dict:
@@ -922,9 +940,12 @@ class FedWatchCollector:
                 'expected_cuts': path.get('expected_cuts', 0),
                 'expected_hikes': path.get('expected_hikes', 0),
 
-                # Data quality
+                # Data quality. Path gaps are disclosed but do NOT set
+                # `degraded` — that flag labels the next-meeting probability
+                # panel, which can be perfectly good while a far-dated contract
+                # is missing.
                 'data_source': probs.get('data_source', 'unknown'),
-                'warnings': probs.get('warnings', []),
+                'warnings': _merge_warnings(probs.get('warnings'), path.get('warnings')),
                 'degraded': probs.get('degraded', False),
                 'timestamp': datetime.now().isoformat(),
             }
