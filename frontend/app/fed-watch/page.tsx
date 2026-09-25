@@ -68,7 +68,7 @@ function Content({ data, freshness }: { data: FedWatch; freshness: Freshness }) 
           title="How to read this — rate probabilities"
           intro="Everything here is implied by fed funds futures pricing — it is what the market expects, not a forecast by this dashboard."
           points={[
-            { label: "Probabilities:", text: "derived from the futures-implied rate versus the current target range for the next FOMC meeting." },
+            { label: "Probabilities:", text: "the futures-implied rate after the next FOMC meeting, measured against the rate prevailing before it (normally the effective rate). A contract prices a whole month's average, so the post-meeting rate is weighted by where in the month the meeting falls." },
             { label: "EFFR vs midpoint:", text: "where the effective rate actually trades inside the target range." },
             { label: "Terminal rate:", text: "the endpoint the futures curve prices for this cycle." },
           ]}
