@@ -46,7 +46,7 @@ class SP500ADLineCalculator:
         # Mid caps (20 stocks)
         'GILD', 'MDT', 'TJX', 'CI', 'MDLZ', 'SYK', 'ISRG', 'ADI', 'VRTX',
         'ZTS', 'REGN', 'PLD', 'CB', 'DUK', 'SO', 'BSX', 'EOG', 'CME',
-        'LRCX', 'MMC',
+        'LRCX', 'MRSH',
 
         # Smaller/Cyclical (20 stocks)
         'ITW', 'NOC', 'AON', 'SHW', 'APH', 'MCO', 'ICE', 'GD', 'CL',
@@ -74,7 +74,7 @@ class SP500ADLineCalculator:
 
         # Financials
         'JPM', 'V', 'MA', 'BAC', 'WFC', 'GS', 'MS', 'SPGI', 'BLK', 'AXP',
-        'C', 'PGR', 'SCHW', 'CB', 'MMC', 'CME', 'ICE', 'AON', 'USB', 'PNC',
+        'C', 'PGR', 'SCHW', 'CB', 'MRSH', 'CME', 'ICE', 'AON', 'USB', 'PNC',
         'TFC', 'AJG', 'MCO', 'AFL', 'MET', 'AIG', 'TRV', 'ALL', 'PRU', 'BK',
         'MSCI', 'AMP', 'COF', 'FIS', 'FITB', 'DFS', 'STT', 'RJF', 'CINF', 'HBAN',
         'NTRS', 'WRB', 'RF', 'KEY', 'CFG', 'NDAQ', 'CBOE', 'FDS', 'TROW', 'L',
