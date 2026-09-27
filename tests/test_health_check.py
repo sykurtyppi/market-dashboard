@@ -6,14 +6,14 @@ a row dated N days ago is between N*24 and N*24+24 hours old.
 """
 import sqlite3
 import sys
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.health_check import HealthCheckSystem, HealthStatus  # noqa: E402
+from database.health_check import HealthCheckSystem, HealthStatus, business_days_behind  # noqa: E402
 
 SNAPSHOT_COLS = ("vix_spot", "credit_spread_hy", "treasury_10y", "fear_greed_score", "put_call_ratio")
 LIQUIDITY_COLS = ("rrp_on", "tga", "net_liquidity", "sofr", "fed_balance_sheet")
@@ -71,35 +71,91 @@ class TestLiquiditySources:
         assert checks["liquidity_rrp"].message == "No data available"
 
 
-class TestLiquidityThresholds:
-    """Thresholds follow publication lag: RRP 96h, TGA / net liquidity 120h.
-    One row per case — the check reads the latest observation, so cases must
-    not share a database."""
+def on(db_path: str, today: date) -> HealthCheckSystem:
+    """A health checker whose calendar is pinned to `today`."""
+    h = HealthCheckSystem(db_path)
+    h._today = lambda: today
+    return h
 
-    @pytest.mark.parametrize("days, expected", [
-        (3, HealthStatus.HEALTHY),   # Monday reading Friday's print
-        (4, HealthStatus.STALE),
-        (8, HealthStatus.DEGRADED),
+
+FRI = date(2026, 9, 25)  # a Friday
+SAT, SUN, MON, TUE, WED, THU = (FRI + timedelta(days=i) for i in range(1, 7))
+
+
+class TestBusinessDaysBehind:
+    @pytest.mark.parametrize("last, today, expected", [
+        (FRI, FRI, 0),
+        (FRI, SAT, 0),                 # weekend counts for nothing
+        (FRI, SUN, 0),
+        (FRI, MON, 1),                 # Monday morning, before the refresh
+        (FRI, TUE, 2),
+        (FRI, WED, 3),
+        (FRI - timedelta(days=1), FRI, 1),   # Thursday -> Friday
+        (date(2026, 9, 21), date(2026, 9, 28), 5),   # Mon -> next Mon
+        (SAT, MON, 1),                 # data dated on a weekend still counts Monday
+        (MON, FRI, 0),                 # data from the future: never behind
     ])
-    def test_rrp(self, db, days, expected):
-        insert(db, "liquidity_history", date=days_ago(days), rrp_on=0.5)
-        res = HealthCheckSystem(db).check_data_source("Fed RRP", "rrp_on", table="liquidity_history")
-        assert res.status is expected
+    def test_counts_weekdays_after_last_through_today(self, last, today, expected):
+        assert business_days_behind(last, today) == expected
 
-    @pytest.mark.parametrize("days, expected", [
-        (4, HealthStatus.HEALTHY),   # T+2 across a weekend
-        (5, HealthStatus.STALE),
-        (10, HealthStatus.DEGRADED),
-    ])
-    def test_tga(self, db, days, expected):
-        insert(db, "liquidity_history", date=days_ago(days), tga=900.0)
-        res = HealthCheckSystem(db).check_data_source("TGA Balance", "tga", table="liquidity_history")
-        assert res.status is expected
 
-    def test_net_liquidity_ten_days_old_is_degraded(self, db):
-        insert(db, "liquidity_history", date=days_ago(10), net_liquidity=5800.0)
-        res = HealthCheckSystem(db).check_data_source("Net Liquidity", "net_liquidity", table="liquidity_history")
+class TestWeekendFalseAlarms:
+    """The bug: Friday's snapshot read 'very stale' all weekend and every Monday
+    morning under a 24-calendar-hour threshold."""
+
+    def _vix(self, db, today):
+        full_snapshot(db, FRI.isoformat())
+        return on(db, today).check_data_source("VIX", "vix_spot")
+
+    @pytest.mark.parametrize("today", [SAT, SUN, MON])
+    def test_fridays_snapshot_is_healthy_through_monday_morning(self, db, today):
+        assert self._vix(db, today).status is HealthStatus.HEALTHY
+
+    def test_two_business_days_behind_is_stale(self, db):
+        res = self._vix(db, TUE)
+        assert res.status is HealthStatus.STALE
+        assert res.message == "Data stale (2 business days behind, last: 2026-09-25)"
+
+    def test_three_business_days_behind_is_degraded(self, db):
+        res = self._vix(db, WED)
         assert res.status is HealthStatus.DEGRADED
+        assert res.message.startswith("Data very stale (3 business days behind")
+
+    def test_overall_health_is_healthy_on_a_saturday(self, db):
+        full_snapshot(db, FRI.isoformat())
+        insert(db, "liquidity_history", date=FRI.isoformat(), rrp_on=0.5, tga=977.0, net_liquidity=5770.0)
+        assert on(db, SAT).get_overall_health() is HealthStatus.HEALTHY
+
+    def test_calendar_age_is_still_reported(self, db):
+        # Display keeps the true hours; only the status judgement changed.
+        assert self._vix(db, SUN).age_hours > 24
+
+
+class TestLiquidityGrace:
+    """Grace follows publication lag plus one weekday for holidays."""
+
+    @pytest.mark.parametrize("today, expected", [
+        (MON, HealthStatus.HEALTHY),   # 1 behind: Friday's print is the latest
+        (TUE, HealthStatus.HEALTHY),   # 2 behind: a Monday holiday
+        (WED, HealthStatus.STALE),     # 3
+        (THU, HealthStatus.DEGRADED),  # 4
+    ])
+    def test_rrp(self, db, today, expected):
+        insert(db, "liquidity_history", date=FRI.isoformat(), rrp_on=0.5)
+        assert on(db, today).check_data_source("Fed RRP", "rrp_on", table="liquidity_history").status is expected
+
+    @pytest.mark.parametrize("today, expected", [
+        (SUN, HealthStatus.HEALTHY),   # Wednesday's TGA is the latest on Sunday (T+2)
+        (MON, HealthStatus.HEALTHY),   # 3 behind: T+2 plus a holiday
+        (TUE, HealthStatus.STALE),     # 4
+        (WED, HealthStatus.DEGRADED),  # 5
+    ])
+    def test_tga_and_net_liquidity(self, db, today, expected):
+        wed = date(2026, 9, 23).isoformat()
+        insert(db, "liquidity_history", date=wed, tga=900.0, net_liquidity=5800.0)
+        h = on(db, today)
+        assert h.check_data_source("TGA Balance", "tga", table="liquidity_history").status is expected
+        assert h.check_data_source("Net Liquidity", "net_liquidity", table="liquidity_history").status is expected
 
 
 class TestNameValidation:
@@ -119,15 +175,15 @@ class TestNameValidation:
         assert res.status is HealthStatus.UNKNOWN
 
 
-class TestSnapshotPathUnchanged:
+class TestSnapshotPath:
     def test_fresh_snapshot_is_healthy(self, db):
         full_snapshot(db, days_ago(0))
         res = HealthCheckSystem(db).check_data_source("VIX", "vix_spot")
         assert res.status is HealthStatus.HEALTHY
         assert res.message.startswith("Data current")
 
-    def test_three_day_old_snapshot_is_degraded(self, db):
-        full_snapshot(db, days_ago(3))
+    def test_week_old_snapshot_is_degraded_whatever_the_weekday(self, db):
+        full_snapshot(db, days_ago(7))
         assert HealthCheckSystem(db).check_data_source("VIX", "vix_spot").status is HealthStatus.DEGRADED
 
 

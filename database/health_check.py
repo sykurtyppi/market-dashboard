@@ -3,11 +3,31 @@ Data Health Check System
 Monitors status and freshness of all data sources
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 import sqlite3
 from dataclasses import dataclass
 from enum import Enum
+
+
+def business_days_behind(last: date, today: date) -> int:
+    """Weekdays strictly after `last`, up to and including `today`.
+
+    This is how far a weekday-paced series trails the calendar. Weekends count
+    for nothing: Friday's data is 0 behind on Saturday and Sunday and 1 behind
+    on Monday morning — the state every source is in before the first weekday
+    refresh runs. Measuring in calendar hours instead flagged every source
+    "very stale" from Saturday until Monday's refresh.
+    """
+    if last >= today:
+        return 0
+    behind = 0
+    day = last
+    while day < today:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            behind += 1
+    return behind
 
 
 class HealthStatus(Enum):
@@ -41,26 +61,33 @@ class DataSourceHealth:
 class HealthCheckSystem:
     """Monitors health of all data sources"""
     
-    # Freshness thresholds (in hours)
-    FRESHNESS_THRESHOLDS = {
-        "vix": 24,           # Daily during market hours
-        "credit_spread": 24, # Daily FRED updates
-        "fear_greed": 24,    # Daily updates
-        "treasury": 24,      # Daily FRED updates
-        "breadth": 24,       # Daily calculations
-        "vrp": 24,          # Daily VRP calculation
-        # Liquidity series carry publication lag on top of the weekend gap, so
-        # a 24h bar would flag them stale on every normal day. RRP posts each
-        # business day (Monday sees Friday's: ~72h); TGA posts T+2 (a weekend
-        # stretches that to ~96h); net liquidity needs both. Sized so a normal
-        # lag is "healthy" and only a stalled pipeline trips "stale".
-        "fed_rrp": 96,
-        "tga_balance": 120,
-        "net_liquidity": 120,
+    # Business days a source may trail today and still read healthy. One day
+    # past the grace is STALE, beyond that DEGRADED.
+    #
+    # Snapshots need no holiday allowance: the refresh cron runs every weekday
+    # regardless of holidays and stamps the snapshot with the run date, so
+    # Monday morning (Friday's row, 1 behind) is the only normal lag. Series
+    # with an intrinsic publication lag get that lag plus one, because a
+    # holiday costs them a day and they follow the Fed/Treasury calendar, not
+    # the NYSE one — a market-holiday list would misfire on Columbus Day and
+    # Veterans Day.
+    #
+    # This is the slow signal: a refresh that fails today reads healthy until
+    # tomorrow. Same-day failure is caught by the refresh workflow's freshness
+    # gate and shows in the topbar via /api/freshness.
+    DEFAULT_GRACE_DAYS = 1
+    FRESHNESS_GRACE_DAYS = {
+        "fed_rrp": 2,        # posts each Fed business day (+1 holiday)
+        "tga_balance": 3,    # Treasury statement lands T+2 (+1 holiday)
+        "net_liquidity": 3,  # needs TGA
     }
-    
+
     def __init__(self, db_path: str = "data/market_data.db"):
         self.db_path = db_path
+
+    def _today(self) -> date:
+        """Today's date; a method so tests can pin the calendar."""
+        return datetime.now().date()
     
     def check_database_connection(self) -> DataSourceHealth:
         """Check if database is accessible"""
@@ -171,26 +198,30 @@ class HealthCheckSystem:
                 
                 last_date_str, value = result
                 last_date = datetime.strptime(last_date_str, '%Y-%m-%d')
-                
-                # Calculate age
+
+                # Calendar age is reported for display only; status is judged
+                # in business days so weekends and pre-refresh mornings do not
+                # read as a data problem.
                 age = datetime.now() - last_date
                 age_hours = age.total_seconds() / 3600
-                
-                # Determine status based on freshness
-                threshold = self.FRESHNESS_THRESHOLDS.get(
+
+                grace = self.FRESHNESS_GRACE_DAYS.get(
                     source_name.lower().replace(" ", "_"),
-                    24
+                    self.DEFAULT_GRACE_DAYS,
                 )
-                
-                if age_hours < threshold:
+                behind = business_days_behind(last_date.date(), self._today())
+                last_str = last_date.strftime('%Y-%m-%d')
+                unit = "business day" if behind == 1 else "business days"
+
+                if behind <= grace:
                     status = HealthStatus.HEALTHY
-                    message = f"Data current (last: {last_date.strftime('%Y-%m-%d')})"
-                elif age_hours < threshold * 2:
+                    message = f"Data current (last: {last_str})"
+                elif behind == grace + 1:
                     status = HealthStatus.STALE
-                    message = f"Data stale ({age_hours:.1f}h old)"
+                    message = f"Data stale ({behind} {unit} behind, last: {last_str})"
                 else:
                     status = HealthStatus.DEGRADED
-                    message = f"Data very stale ({age_hours:.1f}h old)"
+                    message = f"Data very stale ({behind} {unit} behind, last: {last_str})"
                 
                 return DataSourceHealth(
                     name=source_name,
