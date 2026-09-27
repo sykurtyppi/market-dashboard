@@ -50,6 +50,14 @@ class HealthCheckSystem:
         "breadth": 24,       # Daily calculations
         "liquidity": 24,     # Daily FRED updates (RRP, TGA, SOFR)
         "vrp": 24,          # Daily VRP calculation
+        # Liquidity series carry publication lag on top of the weekend gap, so
+        # a 24h bar would flag them stale on every normal day. RRP posts each
+        # business day (Monday sees Friday's: ~72h); TGA posts T+2 (a weekend
+        # stretches that to ~96h); net liquidity needs both. Sized so a normal
+        # lag is "healthy" and only a stalled pipeline trips "stale".
+        "fed_rrp": 96,
+        "tga_balance": 120,
+        "net_liquidity": 120,
     }
     
     def __init__(self, db_path: str = "data/market_data.db"):
@@ -77,27 +85,44 @@ class HealthCheckSystem:
                 message=f"Database connection failed: {str(e)}"
             )
     
-    # Allowed columns for SQL queries (prevent SQL injection)
+    # Allowed table/column pairs for SQL queries (prevent SQL injection).
+    # Liquidity lives in liquidity_history, not daily_snapshots — the snapshot
+    # table has no rrp/tga/net_liquidity columns.
     ALLOWED_COLUMNS = {
         'credit_spread_hy', 'credit_spread_ig', 'treasury_10y', 'fed_funds',
         'vix_spot', 'vix9d', 'vvix', 'vvix_signal', 'skew', 'vrp',
         'vix_contango', 'put_call_ratio', 'fear_greed_score', 'market_breadth',
-        'left_signal', 'move', 'sofr', 'rrp', 'tga', 'net_liquidity'
+        'left_signal', 'move',
+    }
+    ALLOWED_TABLES = {
+        'daily_snapshots': ALLOWED_COLUMNS,
+        'liquidity_history': {'rrp_on', 'tga', 'net_liquidity', 'sofr', 'fed_balance_sheet'},
     }
 
-    def check_data_source(self, source_name: str, column_name: str) -> DataSourceHealth:
+    def check_data_source(
+        self, source_name: str, column_name: str, table: str = "daily_snapshots"
+    ) -> DataSourceHealth:
         """
         Check health of a specific data source
 
         Args:
             source_name: Display name for the source
             column_name: Database column name to check
+            table: Table holding the column (must be in ALLOWED_TABLES)
 
         Returns:
             DataSourceHealth object
         """
-        # SECURITY: Validate column name to prevent SQL injection
-        if column_name not in self.ALLOWED_COLUMNS:
+        # SECURITY: Validate table and column names to prevent SQL injection
+        allowed = self.ALLOWED_TABLES.get(table)
+        if allowed is None:
+            return DataSourceHealth(
+                name=source_name,
+                status=HealthStatus.UNKNOWN,
+                last_update=None,
+                message=f"Invalid table name: {table}"
+            )
+        if column_name not in allowed:
             return DataSourceHealth(
                 name=source_name,
                 status=HealthStatus.UNKNOWN,
@@ -109,10 +134,13 @@ class HealthCheckSystem:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
 
-                # Get most recent non-null value (column_name is now validated)
+                # Most recent NON-NULL value. Rows can exist with the column
+                # still empty (liquidity_history carries staggered nulls while
+                # each series catches up), so the latest row is not the latest
+                # observation.
                 query = f"""
                     SELECT date, {column_name}
-                    FROM daily_snapshots
+                    FROM {table}
                     WHERE {column_name} IS NOT NULL
                     ORDER BY date DESC
                     LIMIT 1
@@ -262,10 +290,12 @@ class HealthCheckSystem:
         checks["fear_greed"] = self.check_data_source("Fear & Greed", "fear_greed_score")
         checks["put_call"] = self.check_data_source("Put/Call Ratio", "put_call_ratio")
         
-        # Liquidity indicators (NEW!)
-        checks["liquidity_rrp"] = self.check_indicator("liquidity_rrp", "Fed RRP")
-        checks["liquidity_tga"] = self.check_indicator("liquidity_tga", "TGA Balance")
-        checks["liquidity_net"] = self.check_indicator("liquidity_net", "Net Liquidity")
+        # Liquidity series are written to liquidity_history by the refresh
+        # (scheduler.daily_update), never to the indicators table — checking
+        # indicators for them reported "No data available" on a healthy system.
+        checks["liquidity_rrp"] = self.check_data_source("Fed RRP", "rrp_on", table="liquidity_history")
+        checks["liquidity_tga"] = self.check_data_source("TGA Balance", "tga", table="liquidity_history")
+        checks["liquidity_net"] = self.check_data_source("Net Liquidity", "net_liquidity", table="liquidity_history")
         
         return checks
     
