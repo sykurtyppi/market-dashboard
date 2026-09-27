@@ -81,3 +81,28 @@ def test_health_check_on_fresh_db_reports_no_data_rather_than_missing_table(db):
     checks = HealthCheckSystem(db.db_path).get_all_health_checks()
     assert checks["liquidity_rrp"].status is HealthStatus.UNKNOWN
     assert checks["liquidity_rrp"].message == "No data available"
+
+
+def test_older_liquidity_table_gains_the_columns_the_refresh_writes(tmp_path):
+    # CREATE TABLE IF NOT EXISTS is a no-op when the table already exists, so a
+    # database carrying an older shape must be migrated, not left broken.
+    path = str(tmp_path / "older.db")
+    with sqlite3.connect(path) as con:
+        con.execute(
+            "CREATE TABLE liquidity_history (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "date DATE NOT NULL UNIQUE, rrp_on REAL, tga REAL)"
+        )
+        con.execute("INSERT INTO liquidity_history (date, rrp_on, tga) VALUES ('2026-09-22', 0.4, 880.0)")
+
+    db = DatabaseManager(path)
+
+    with sqlite3.connect(path) as con:
+        cols = {row[1] for row in con.execute("PRAGMA table_info(liquidity_history)")}
+        kept = con.execute("SELECT rrp_on, tga FROM liquidity_history WHERE date='2026-09-22'").fetchone()
+    assert set(DatabaseManager.VALID_LIQUIDITY_COLUMNS) <= cols
+    assert kept == (0.4, 880.0)
+
+    # The migrated table must accept the refresh's INSERT.
+    db.save_liquidity_history(frame(("2026-09-23", 0.432, 883.335, 3.64, 6740.619)))
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT COUNT(*) FROM liquidity_history").fetchone() == (2,)

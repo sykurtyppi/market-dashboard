@@ -153,7 +153,6 @@ class DatabaseManager:
                 )
             """)
 
-            # Create indexes
             # liquidity_history is written by the refresh (save_liquidity_history) but
             # was never created here, so a fresh database silently dropped every
             # liquidity row: the INSERT failed inside a broad except and the refresh
@@ -174,6 +173,7 @@ class DatabaseManager:
                 )
             """)
 
+            # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_date ON indicators(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_name ON indicators(indicator_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp)")
@@ -200,31 +200,49 @@ class DatabaseManager:
         'spy_put_oi': 'INTEGER',   # SPY put open interest
         'spy_call_oi': 'INTEGER',  # SPY call open interest
     }
+    # liquidity_history data columns the refresh writes. CREATE TABLE IF NOT
+    # EXISTS is a no-op on a database that already has the table in an older
+    # shape, so missing columns are added here the same way as for
+    # daily_snapshots. (id/date are structural and created_at has a
+    # non-constant default, which ALTER TABLE cannot add — none are migratable.)
+    VALID_LIQUIDITY_COLUMNS = {
+        'rrp_on': 'REAL',
+        'tga': 'REAL',
+        'fed_balance_sheet': 'REAL',
+        'net_liquidity': 'REAL',
+        'sofr': 'REAL',
+        'sofr_spread': 'REAL',
+        'treasury_10y': 'REAL',
+    }
+    MIGRATION_TABLES = {
+        'daily_snapshots': VALID_MIGRATION_COLUMNS,
+        'liquidity_history': VALID_LIQUIDITY_COLUMNS,
+    }
     VALID_SQL_TYPES = {'REAL', 'TEXT', 'INTEGER', 'BLOB', 'NULL'}
 
     def _run_migrations(self, conn):
         """Add missing columns to existing tables (safe migrations)"""
         cursor = conn.cursor()
 
-        # Get existing columns in daily_snapshots
-        cursor.execute("PRAGMA table_info(daily_snapshots)")
-        existing_columns = {row[1] for row in cursor.fetchall()}
+        # Add missing columns using allowlisted values only. Table names,
+        # column names and types all come from class constants, never input.
+        for table, columns in self.MIGRATION_TABLES.items():
+            cursor.execute(f"PRAGMA table_info({table})")
+            existing_columns = {row[1] for row in cursor.fetchall()}
 
-        # Add missing columns using allowlisted values only
-        for col_name, col_type in self.VALID_MIGRATION_COLUMNS.items():
-            # Validate column type is in allowlist (defense in depth)
-            if col_type not in self.VALID_SQL_TYPES:
-                logger.warning(f"Invalid column type '{col_type}' for '{col_name}' - skipping")
-                continue
+            for col_name, col_type in columns.items():
+                # Validate column type is in allowlist (defense in depth)
+                if col_type not in self.VALID_SQL_TYPES:
+                    logger.warning(f"Invalid column type '{col_type}' for '{col_name}' - skipping")
+                    continue
 
-            if col_name not in existing_columns:
-                try:
-                    # Safe because col_name and col_type come from class constants
-                    cursor.execute(f"ALTER TABLE daily_snapshots ADD COLUMN {col_name} {col_type}")
-                    logger.info(f"Added missing column '{col_name}' to daily_snapshots")
-                except sqlite3.OperationalError as e:
-                    # Column might already exist or other error
-                    logger.debug(f"Migration note for {col_name}: {e}")
+                if col_name not in existing_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"Added missing column '{col_name}' to {table}")
+                    except sqlite3.OperationalError as e:
+                        # Column might already exist or other error
+                        logger.debug(f"Migration note for {table}.{col_name}: {e}")
 
         # Enforce indicator uniqueness. Databases created before the
         # UNIQUE(indicator_name, date) constraint was added to `indicators` let
