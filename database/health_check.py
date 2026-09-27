@@ -48,7 +48,6 @@ class HealthCheckSystem:
         "fear_greed": 24,    # Daily updates
         "treasury": 24,      # Daily FRED updates
         "breadth": 24,       # Daily calculations
-        "liquidity": 24,     # Daily FRED updates (RRP, TGA, SOFR)
         "vrp": 24,          # Daily VRP calculation
         # Liquidity series carry publication lag on top of the weekend gap, so
         # a 24h bar would flag them stale on every normal day. RRP posts each
@@ -95,8 +94,8 @@ class HealthCheckSystem:
         'left_signal', 'move',
     }
     ALLOWED_TABLES = {
-        'daily_snapshots': ALLOWED_COLUMNS,
-        'liquidity_history': {'rrp_on', 'tga', 'net_liquidity', 'sofr', 'fed_balance_sheet'},
+        'daily_snapshots': frozenset(ALLOWED_COLUMNS),
+        'liquidity_history': frozenset({'rrp_on', 'tga', 'net_liquidity', 'sofr', 'fed_balance_sheet'}),
     }
 
     def check_data_source(
@@ -146,7 +145,20 @@ class HealthCheckSystem:
                     LIMIT 1
                 """
 
-                cursor.execute(query)
+                try:
+                    cursor.execute(query)
+                except sqlite3.OperationalError as e:
+                    if "no such table" in str(e).lower():
+                        # Fresh or pre-migration database. Report it the way an
+                        # empty table is reported rather than dragging overall
+                        # health to DOWN over a table no refresh has created yet.
+                        return DataSourceHealth(
+                            name=source_name,
+                            status=HealthStatus.UNKNOWN,
+                            last_update=None,
+                            message=f"Table {table} not present (no refresh has run yet)"
+                        )
+                    raise
                 result = cursor.fetchone()
                 
                 if not result:
@@ -191,77 +203,6 @@ class HealthCheckSystem:
         except Exception as e:
             return DataSourceHealth(
                 name=source_name,
-                status=HealthStatus.DOWN,
-                last_update=None,
-                message=f"Check failed: {str(e)}"
-            )
-    
-    def check_indicator(self, indicator_name: str, display_name: str = None) -> DataSourceHealth:
-        """
-        Check health of an indicator in the indicators table
-        
-        Args:
-            indicator_name: Name in indicators table
-            display_name: Display name (uses indicator_name if None)
-        
-        Returns:
-            DataSourceHealth object
-        """
-        if display_name is None:
-            display_name = indicator_name
-        
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                query = """
-                    SELECT date, value
-                    FROM indicators
-                    WHERE indicator_name = ?
-                    ORDER BY date DESC
-                    LIMIT 1
-                """
-                
-                cursor.execute(query, (indicator_name,))
-                result = cursor.fetchone()
-                
-                if not result:
-                    return DataSourceHealth(
-                        name=display_name,
-                        status=HealthStatus.UNKNOWN,
-                        last_update=None,
-                        message="No data available"
-                    )
-                
-                last_date_str, value = result
-                last_date = datetime.strptime(last_date_str, '%Y-%m-%d')
-                
-                age = datetime.now() - last_date
-                age_hours = age.total_seconds() / 3600
-                
-                threshold = 72  # 3 days for indicators
-                
-                if age_hours < threshold:
-                    status = HealthStatus.HEALTHY
-                    message = f"Current (last: {last_date.strftime('%Y-%m-%d')})"
-                elif age_hours < threshold * 2:
-                    status = HealthStatus.STALE
-                    message = f"Stale ({age_hours:.1f}h old)"
-                else:
-                    status = HealthStatus.DEGRADED
-                    message = f"Very stale ({age_hours:.1f}h old)"
-                
-                return DataSourceHealth(
-                    name=display_name,
-                    status=status,
-                    last_update=last_date,
-                    message=message,
-                    age_hours=age_hours
-                )
-                
-        except Exception as e:
-            return DataSourceHealth(
-                name=display_name,
                 status=HealthStatus.DOWN,
                 last_update=None,
                 message=f"Check failed: {str(e)}"

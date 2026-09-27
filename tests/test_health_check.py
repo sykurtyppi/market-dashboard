@@ -142,3 +142,24 @@ def test_overall_is_healthy_when_every_source_is_present(db):
     assert summary["overall_status"] == "healthy"
     assert summary["summary"]["unknown"] == 0
     assert summary["total_sources"] == 9
+
+
+def test_missing_liquidity_table_is_unknown_not_down(tmp_path):
+    # A fresh database has daily_snapshots but no liquidity_history yet. That
+    # must read like "no data" — not take the whole health tile to DOWN.
+    path = tmp_path / "fresh.db"
+    with sqlite3.connect(path):
+        pass
+    with sqlite3.connect(path) as con:
+        con.execute(f"CREATE TABLE daily_snapshots (date TEXT, {', '.join(c + ' REAL' for c in SNAPSHOT_COLS)})")
+    h = HealthCheckSystem(str(path))
+    checks = h.get_all_health_checks()
+    assert checks["liquidity_rrp"].status is HealthStatus.UNKNOWN
+    assert "not present" in checks["liquidity_rrp"].message
+    assert h.get_overall_health() is not HealthStatus.DOWN
+
+
+def test_check_indicator_is_gone():
+    # It read the indicators table by names nothing writes; keeping it around
+    # invites the same bug back.
+    assert not hasattr(HealthCheckSystem, "check_indicator")
