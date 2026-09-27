@@ -94,6 +94,10 @@ class DataValidator:
     # Put/Call ratio
     PC_RATIO_MIN = 0.1
     PC_RATIO_MAX = 3.0
+    # SPY open interest is in contracts (millions today); a generous ceiling
+    # that only catches garbage.
+    OI_MIN = 0
+    OI_MAX = 1_000_000_000
 
     # Fear & Greed
     FEAR_GREED_MIN = 0.0
@@ -337,6 +341,24 @@ class DataValidator:
             result.add_error(pc_err)
         else:
             result.data['put_call_ratio'] = pc_val
+
+        # Supplementary put/call columns (official CBOE PCCE, SPY-specific
+        # ratio, SPY put/call OI). These were added to the daily_snapshots
+        # schema but never made it through here, so every row stored NULL and
+        # the sentiment page could only ever label the ratio "Best available".
+        # A bad value is dropped with a warning rather than rejecting the whole
+        # snapshot — these are secondary to the legacy put_call_ratio above.
+        for field_name, lo, hi in (
+            ('cboe_equity_pc', self.PC_RATIO_MIN, self.PC_RATIO_MAX),
+            ('spy_put_call', self.PC_RATIO_MIN, self.PC_RATIO_MAX),
+            ('spy_put_oi', self.OI_MIN, self.OI_MAX),
+            ('spy_call_oi', self.OI_MIN, self.OI_MAX),
+        ):
+            val, err, _ = self._validate_numeric(snapshot.get(field_name), field_name, lo, hi)
+            if err:
+                result.add_warning(f"{err} — dropped")
+            elif val is not None:
+                result.data[field_name] = val
 
         # Fear & Greed
         fg_val, fg_err, _ = self._validate_numeric(
