@@ -62,11 +62,19 @@ class HealthCheckSystem:
     """Monitors health of all data sources"""
     
     # Business days a source may trail today and still read healthy. One day
-    # past the grace is STALE, beyond that DEGRADED. Snapshots are written by
-    # each weekday refresh, so Monday morning (Friday's data, 1 behind) is
-    # normal. Series with an intrinsic publication lag get that lag plus one,
-    # so a weekday holiday — which costs one day and follows the Fed/Treasury
-    # calendar, not the NYSE one — cannot trip them.
+    # past the grace is STALE, beyond that DEGRADED.
+    #
+    # Snapshots need no holiday allowance: the refresh cron runs every weekday
+    # regardless of holidays and stamps the snapshot with the run date, so
+    # Monday morning (Friday's row, 1 behind) is the only normal lag. Series
+    # with an intrinsic publication lag get that lag plus one, because a
+    # holiday costs them a day and they follow the Fed/Treasury calendar, not
+    # the NYSE one — a market-holiday list would misfire on Columbus Day and
+    # Veterans Day.
+    #
+    # This is the slow signal: a refresh that fails today reads healthy until
+    # tomorrow. Same-day failure is caught by the refresh workflow's freshness
+    # gate and shows in the topbar via /api/freshness.
     DEFAULT_GRACE_DAYS = 1
     FRESHNESS_GRACE_DAYS = {
         "fed_rrp": 2,        # posts each Fed business day (+1 holiday)
