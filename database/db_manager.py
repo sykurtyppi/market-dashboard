@@ -154,6 +154,26 @@ class DatabaseManager:
             """)
 
             # Create indexes
+            # liquidity_history is written by the refresh (save_liquidity_history) but
+            # was never created here, so a fresh database silently dropped every
+            # liquidity row: the INSERT failed inside a broad except and the refresh
+            # still reported success. DDL matches databases that already have the
+            # table; UNIQUE(date) is what makes INSERT OR REPLACE dedupe per day.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS liquidity_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date DATE NOT NULL UNIQUE,
+                    rrp_on REAL,
+                    tga REAL,
+                    fed_balance_sheet REAL,
+                    net_liquidity REAL,
+                    sofr REAL,
+                    sofr_spread REAL,
+                    treasury_10y REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_date ON indicators(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_name ON indicators(indicator_name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp)")
