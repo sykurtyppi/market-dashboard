@@ -23,10 +23,12 @@ UNIVERSES = {
 }
 
 
-def test_live_universe_is_100_unique_well_formed_tickers():
+def test_live_universe_matches_sample_size_unique_well_formed():
+    # SAMPLE_SIZE drives SCALE_FACTOR in the collector, so the list length is a
+    # real invariant — assert against the constant, not a literal.
     stocks = Live.REPRESENTATIVE_STOCKS
-    assert len(stocks) == 100
-    assert len(set(stocks)) == 100
+    assert len(stocks) == Live.SAMPLE_SIZE
+    assert len(set(stocks)) == Live.SAMPLE_SIZE
     bad = [t for t in stocks if not TICKER.match(t)]
     assert not bad, bad
 
