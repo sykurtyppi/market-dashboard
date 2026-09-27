@@ -78,7 +78,7 @@ class SP500ADLineCalculator:
         # Mid caps (20 stocks)
         'GILD', 'MDT', 'TJX', 'CI', 'MDLZ', 'SYK', 'ISRG', 'ADI', 'VRTX',
         'ZTS', 'REGN', 'PLD', 'CB', 'DUK', 'SO', 'BSX', 'EOG', 'CME',
-        'LRCX', 'MMC',
+        'LRCX', 'MRSH',
         
         # Smaller/Cyclical (20 stocks)
         'ITW', 'NOC', 'AON', 'SHW', 'APH', 'MCO', 'ICE', 'GD', 'CL',
