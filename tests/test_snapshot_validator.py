@@ -60,3 +60,19 @@ def test_legacy_put_call_ratio_out_of_range_still_rejects():
     result = DataValidator().validate_daily_snapshot({**BASE, "put_call_ratio": 99.0})
     assert not result.is_valid
     assert any("put_call_ratio" in e for e in result.errors)
+
+
+def test_spy_put_call_above_broad_market_ceiling_is_kept():
+    # SPY's own P/C spikes well past the CBOE equity ratio's 3.0 ceiling on
+    # stress days; those are the readings worth keeping.
+    result = DataValidator().validate_daily_snapshot({**BASE, **SUPPLEMENTARY, "spy_put_call": 4.5})
+    assert result.is_valid
+    assert result.data["spy_put_call"] == 4.5
+    assert result.warnings == []
+
+
+def test_cboe_equity_pc_keeps_the_broad_market_ceiling():
+    result = DataValidator().validate_daily_snapshot({**BASE, **SUPPLEMENTARY, "cboe_equity_pc": 4.5})
+    assert result.is_valid
+    assert "cboe_equity_pc" not in result.data
+    assert any("cboe_equity_pc" in w for w in result.warnings)

@@ -98,6 +98,10 @@ class DataValidator:
     # that only catches garbage.
     OI_MIN = 0
     OI_MAX = 1_000_000_000
+    # SPY's own volume put/call runs far hotter than the broad CBOE equity
+    # ratio (its 90-day average reached ~2.5 in mid-2026), so a 3.0 ceiling
+    # would drop exactly the stress-day readings worth keeping.
+    SPY_PC_MAX = 10.0
 
     # Fear & Greed
     FEAR_GREED_MIN = 0.0
@@ -223,6 +227,8 @@ class DataValidator:
             - treasury_10y, fed_funds
             - vix_spot, vix9d, vvix, vvix_signal, skew
             - vrp, vix_contango, put_call_ratio
+            - cboe_equity_pc, spy_put_call, spy_put_oi, spy_call_oi (supplementary;
+              dropped with a warning rather than rejecting the snapshot)
             - fear_greed_score, market_breadth
             - left_signal
         """
@@ -350,7 +356,7 @@ class DataValidator:
         # snapshot — these are secondary to the legacy put_call_ratio above.
         for field_name, lo, hi in (
             ('cboe_equity_pc', self.PC_RATIO_MIN, self.PC_RATIO_MAX),
-            ('spy_put_call', self.PC_RATIO_MIN, self.PC_RATIO_MAX),
+            ('spy_put_call', self.PC_RATIO_MIN, self.SPY_PC_MAX),
             ('spy_put_oi', self.OI_MIN, self.OI_MAX),
             ('spy_call_oi', self.OI_MIN, self.OI_MAX),
         ):
