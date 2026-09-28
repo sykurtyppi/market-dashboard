@@ -17,6 +17,7 @@ Notice: Not financial advice.
 - Per-metric status (fresh/stale/estimated/unavailable)
 - Yahoo/CBOE/COT memoization and last-known-good fallback persistence
 - Holiday-aware market status logic
+- Breadth sample reconciled against a tracked S&P 500 constituent list (`config/sp500_constituents.csv`); refresh it with `python scripts/update_sp500_constituents.py` — the breadth page warns when it is stale
 
 ## Local Run
 1. Create and activate a virtual environment.
