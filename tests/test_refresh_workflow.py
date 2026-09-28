@@ -67,8 +67,9 @@ def test_scheduled_on_weekdays_and_dispatchable(workflow):
 def test_job_is_skipped_unless_enabled_or_manual(job):
     # `vars` is allowed in a job-level if; `secrets` is not. An unset variable
     # skips the job, so the run reads "skipped" — never green for doing nothing.
-    assert "vars.REFRESH_ENABLED == 'true'" in job["if"]
-    assert "github.event_name == 'workflow_dispatch'" in job["if"]
+    # Exact, so an operator swap (|| -> &&) — which would make manual runs
+    # depend on the variable too — fails here instead of surviving review.
+    assert job["if"] == "github.event_name == 'workflow_dispatch' || vars.REFRESH_ENABLED == 'true'"
 
 
 def test_steps_are_the_expected_ones_in_order(job):
