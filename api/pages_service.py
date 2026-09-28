@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 from api.deps import get_db
 from api.overview_service import _num, _series
+from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, load_constituents
 
 
 def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, List[Dict[str, Any]]]:
@@ -192,6 +193,29 @@ def build_breadth() -> Dict[str, Any]:
         warnings.append("McClellan oscillator unavailable — needs 39+ days of A/D history.")
 
     latest = hist.iloc[-1]
+
+    # Honesty about the sample: how many of the sampled names actually priced
+    # on the latest day, and whether the constituent list the sample is drawn
+    # from is still current.
+    sample_size = BREADTH_SAMPLE_SIZE
+    total = _num(latest.get("total"))
+    if total is not None and total < 0.9 * sample_size:
+        warnings.append(
+            f"A/D line computed on {int(total)} of {sample_size} sampled stocks on "
+            f"{latest.get('date')} — some symbols returned no price data."
+        )
+    constituents = load_constituents()
+    if constituents is None:
+        warnings.append(
+            "S&P 500 constituent list missing (config/sp500_constituents.csv) — the breadth "
+            "sample is the unreconciled seed list."
+        )
+    elif constituents.is_stale():
+        warnings.append(
+            f"S&P 500 constituent list is {constituents.age_days()} days old (as of "
+            f"{constituents.as_of}); run scripts/update_sp500_constituents.py."
+        )
+
     # breadth_pct may be stored 0–1 or 0–100; normalize to a percentage
     raw_pct = _num(latest.get("breadth_pct"))
     pct = (raw_pct * 100) if (raw_pct is not None and raw_pct <= 1.0) else raw_pct

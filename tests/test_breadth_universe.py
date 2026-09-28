@@ -43,3 +43,9 @@ def test_no_universe_has_duplicates():
     for name, stocks in UNIVERSES.items():
         dupes = {t for t in stocks if stocks.count(t) > 1}
         assert not dupes, f"{name}: {dupes}"
+
+
+def test_live_universe_only_contains_current_constituents():
+    from utils.sp500_constituents import load_constituents
+    members = set(load_constituents().symbols)
+    assert set(Live().stocks) <= members

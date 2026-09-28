@@ -21,8 +21,11 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 import logging
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
+
+from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, Constituents, load_constituents
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,14 @@ class SP500ADLineCalculator:
     The 100-stock sample provides:
     - Faster calculation (~10x speed vs 500 stocks)
     - Good directional correlation with true breadth
+
+    Membership: REPRESENTATIVE_STOCKS is a curated seed. At startup it is
+    reconciled against the tracked constituent list
+    (config/sp500_constituents.csv): any seed name no longer in the index is
+    replaced by a current constituent from whichever sector the sample
+    under-represents most, so the universe follows the index without a code
+    edit. The sample size never changes — every downstream scale (McClellan
+    thresholds, ad_diff history) depends on it.
     - Adequate for regime detection (risk-on/risk-off)
 
     NOT suitable for:
@@ -50,7 +61,7 @@ class SP500ADLineCalculator:
 
     # Scaling factor: Sample represents ~20% of S&P 500
     # To estimate true S&P 500 breadth, multiply by 5x
-    SAMPLE_SIZE = 100
+    SAMPLE_SIZE = BREADTH_SAMPLE_SIZE
     INDEX_SIZE = 500
     SCALE_FACTOR = INDEX_SIZE / SAMPLE_SIZE  # 5.0
 
@@ -86,9 +97,76 @@ class SP500ADLineCalculator:
         'MAR', 'CARR'
     ]
     
-    def __init__(self):
-        self.stocks = self.REPRESENTATIVE_STOCKS
-        logger.info(f"Initialized with {len(self.stocks)} stocks")
+    def __init__(self, constituents: "Constituents | None" = None):
+        self.constituents = constituents if constituents is not None else load_constituents()
+        self.stocks, self.universe_changes = self.build_universe(
+            self.REPRESENTATIVE_STOCKS, self.constituents
+        )
+        self.unresolved: list[str] = []
+        if self.universe_changes["reconciled"]:
+            logger.info(
+                f"Initialized with {len(self.stocks)} stocks reconciled against the "
+                f"S&P 500 list as of {self.universe_changes['as_of']}"
+            )
+            for dropped, added in zip(self.universe_changes["dropped"], self.universe_changes["added"]):
+                logger.warning(f"Breadth sample: {dropped} is no longer a constituent; using {added}")
+            if self.universe_changes["unreplaced"]:
+                # The sample is now smaller than SAMPLE_SIZE, which every
+                # downstream scale assumes. Say so loudly; do not hide it in
+                # a shorter zip.
+                logger.error(
+                    f"Breadth sample is {len(self.stocks)} of {self.SAMPLE_SIZE}: no replacement "
+                    f"available for {', '.join(self.universe_changes['unreplaced'])}"
+                )
+        else:
+            logger.warning(
+                f"Initialized with {len(self.stocks)} stocks from the unreconciled seed list — "
+                "no constituent list available (run scripts/update_sp500_constituents.py)"
+            )
+
+    @staticmethod
+    def build_universe(seed, constituents: "Constituents | None"):
+        """Return (universe, changes): the seed with non-members replaced.
+
+        Each dropped name is replaced by the alphabetically-first current
+        constituent, not already in the sample, from the sector whose share of
+        the sample lags its share of the index most. Deterministic for a given
+        seed and list, so two processes agree on the universe.
+        """
+        seed = list(dict.fromkeys(seed))  # order-preserving dedupe: no name counts twice
+        if constituents is None:
+            return seed, {"reconciled": False, "dropped": [], "added": [], "unreplaced": [], "as_of": None}
+
+        members = set(constituents.symbols)
+        universe = [t for t in seed if t in members]
+        dropped = [t for t in seed if t not in members]
+        added: list[str] = []
+
+        index_share = Counter(constituents.frame["gics_sector"])
+        total_members = sum(index_share.values()) or 1
+        for _ in dropped:
+            have = Counter(constituents.sector_of(t) for t in universe)
+            # Deficit: how many names a sector "should" have in a sample this
+            # size versus how many it has. Largest deficit wins; ties by name.
+            deficit = {
+                sector: index_share[sector] / total_members * len(seed) - have.get(sector, 0)
+                for sector in index_share
+            }
+            for sector in sorted(deficit, key=lambda k: (-deficit[k], k)):
+                pool = constituents.frame[constituents.frame["gics_sector"] == sector]["symbol"]
+                candidate = next((sym for sym in sorted(pool) if sym not in universe), None)
+                if candidate:
+                    universe.append(candidate)
+                    added.append(candidate)
+                    break
+
+        # Replacement is attempted in order, and exhaustion is monotonic, so
+        # any drops that found no candidate are the trailing suffix.
+        unreplaced = dropped[len(added):]
+        return universe, {
+            "reconciled": True, "dropped": dropped, "added": added, "unreplaced": unreplaced,
+            "as_of": constituents.as_of.isoformat(),
+        }
     
     def fetch_stock_data(self, ticker, period='60d'):
         """Fetch data for single stock"""
@@ -122,7 +200,12 @@ class SP500ADLineCalculator:
                 if result:
                     results[result['ticker']] = result['data']
         
+        self.unresolved = sorted(set(self.stocks) - set(results))
         logger.info(f"✅ Fetched {len(results)}/{len(self.stocks)} stocks")
+        if self.unresolved:
+            # A name that returns no bars is usually a symbol change or a
+            # delisting the constituent list has not caught up with yet.
+            logger.warning(f"Breadth sample: no price data for {', '.join(self.unresolved)}")
         return results
     
     def calculate_daily_breadth(self, stock_data):
