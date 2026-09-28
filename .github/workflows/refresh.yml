@@ -65,7 +65,22 @@ jobs:
             exit 1
           fi
 
-      - name: Gate on data freshness
+      - name: Report failed phases
+        if: steps.cfg.outputs.configured == 'true'
+        run: |
+          body=$(curl -s "$BACKEND_URL/api/refresh/status")
+          err=$(echo "$body" | jq -r '.last_run.error // empty')
+          failed=$(echo "$body" | jq -r '(.last_run.failed_phases // []) | join(", ")')
+          if [ -n "$err" ]; then
+            echo "::error::refresh crashed before completing: $err"
+            exit 1
+          fi
+          if [ -n "$failed" ]; then
+            echo "::warning::refresh completed with failed phases: $failed"
+          else
+            echo "all phases succeeded"
+          fi
+
         if: steps.cfg.outputs.configured == 'true'
         run: |
           body=$(curl -s "$BACKEND_URL/api/freshness")

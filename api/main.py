@@ -7,6 +7,7 @@ Read endpoints never call collectors live per request.
 import logging
 import os
 import threading
+from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -197,15 +198,28 @@ def settings(x_api_token: str | None = Header(default=None)):
     return build_settings()
 
 
+# Outcome of the most recent refresh in this process. A 200 from POST
+# /api/refresh only means "started"; this is where a caller learns whether the
+# run actually wrote what it should have.
+_last_refresh: dict | None = None
+
+
 def _run_refresh():
     """Run a full data update, releasing the lock when done."""
+    global _last_refresh
     try:
         from scheduler.daily_update import MarketDataUpdater
-        MarketDataUpdater().run_full_update()
+        failed = MarketDataUpdater().run_full_update() or []
+        _last_refresh = {"completed_at": _now_iso(), "failed_phases": list(failed), "error": None}
     except Exception as exc:  # noqa: BLE001 - log and move on; lock still releases
         logger.error("Data refresh failed: %s", exc)
+        _last_refresh = {"completed_at": _now_iso(), "failed_phases": [], "error": str(exc)}
     finally:
         _refresh_lock.release()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @app.post("/api/refresh", response_model=RefreshResponse)
@@ -234,4 +248,4 @@ def refresh(
 
 @app.get("/api/refresh/status", response_model=RefreshStatus)
 def refresh_status():
-    return {"running": _refresh_lock.locked()}
+    return {"running": _refresh_lock.locked(), "last_run": _last_refresh}
