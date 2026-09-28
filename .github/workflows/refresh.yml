@@ -10,8 +10,20 @@
 # ~09:00/10:00 ET (after the open), 21:30 UTC is ~16:30/17:30 ET (after the
 # close). The backend's _refresh_lock makes overlapping/extra runs safe.
 #
-# Repo secrets required: BACKEND_URL (https://<render-host>, no trailing
-# slash), MARKET_API_TOKEN (same value as the backend env).
+# Enablement is a repository VARIABLE, not a secret: `vars` may be used in a
+# job-level `if`, `secrets` may not. That gives three honest outcomes —
+#   REFRESH_ENABLED unset/false : the job is skipped, so the run shows "skipped".
+#                                 (It used to show green "success" for doing
+#                                 nothing, which hid an undeployed backend for
+#                                 weeks.)
+#   enabled, secrets missing    : the job fails at once with a clear error.
+#   enabled and configured      : the gates below decide.
+# A manual run (workflow_dispatch) always executes, so a person testing the
+# setup gets loud feedback either way.
+#
+# Setup (cutover Phase D): repo variable REFRESH_ENABLED=true; repo secrets
+# BACKEND_URL (https://<render-host>, no trailing slash) and MARKET_API_TOKEN
+# (same value as the backend env).
 
 name: Scheduled data refresh
 on:
@@ -22,26 +34,24 @@ on:
 
 jobs:
   refresh:
+    if: github.event_name == 'workflow_dispatch' || vars.REFRESH_ENABLED == 'true'
     runs-on: ubuntu-latest
     env:
       BACKEND_URL: ${{ secrets.BACKEND_URL }}
       MARKET_API_TOKEN: ${{ secrets.MARKET_API_TOKEN }}
     steps:
-      # The `secrets` context is not available in a job-level `if`, so gate via
-      # a step output instead. Skipping (not failing) keeps the schedule green
-      # until the backend is provisioned and secrets are set (cutover Phase D).
-      - name: Check configuration
-        id: cfg
+      - name: Require configuration
         run: |
-          if [ -z "$BACKEND_URL" ] || [ -z "$MARKET_API_TOKEN" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::BACKEND_URL / MARKET_API_TOKEN secrets not set — skipping until cutover Phase D"
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
+          missing=""
+          [ -n "$BACKEND_URL" ] || missing="$missing BACKEND_URL"
+          [ -n "$MARKET_API_TOKEN" ] || missing="$missing MARKET_API_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::refresh is enabled but repo secret(s) not set:$missing — set them (docs/cutover-plan.md §4) or set repo variable REFRESH_ENABLED=false"
+            exit 1
           fi
+          echo "configured"
 
       - name: Trigger refresh
-        if: steps.cfg.outputs.configured == 'true'
         run: |
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
             -H "X-API-Token: $MARKET_API_TOKEN" \
@@ -51,7 +61,6 @@ jobs:
           test "$code" = "200"
 
       - name: Wait for the background refresh to finish
-        if: steps.cfg.outputs.configured == 'true'
         run: |
           running=true
           for i in $(seq 1 60); do          # up to ~20 min (60 x 20s)
@@ -66,7 +75,6 @@ jobs:
           fi
 
       - name: Report failed phases
-        if: steps.cfg.outputs.configured == 'true'
         run: |
           body=$(curl -s "$BACKEND_URL/api/refresh/status")
           echo "$body"
@@ -83,7 +91,6 @@ jobs:
           fi
 
       - name: Gate on data freshness
-        if: steps.cfg.outputs.configured == 'true'
         run: |
           body=$(curl -s "$BACKEND_URL/api/freshness")
           echo "$body"
@@ -94,7 +101,6 @@ jobs:
           fi
 
       - name: Check system health
-        if: steps.cfg.outputs.configured == 'true'
         run: |
           body=$(curl -s "$BACKEND_URL/api/system-health")
           status=$(echo "$body" | jq -r '.overall_status')

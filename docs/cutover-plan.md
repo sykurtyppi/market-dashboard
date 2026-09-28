@@ -115,6 +115,12 @@ value** goes on the backend, the frontend, and the GH Actions cron.
 | `BACKEND_URL` | `https://<backend-host>` |
 | `MARKET_API_TOKEN` | same as backend |
 
+**GitHub Actions (repo variable — not a secret):**
+
+| Variable | Value | Purpose |
+|---|---|---|
+| `REFRESH_ENABLED` | `true` | Enables the scheduled job. Until it is set, scheduled runs show as **skipped** rather than a misleading green success. Manual runs always execute. |
+
 > Secrets hygiene: `.streamlit/secrets.toml` and `data/*.db` are already
 > gitignored (verified). Only `.example` files are tracked. Do **not** commit
 > real keys — set them in each platform's env UI / secret store.
@@ -238,7 +244,8 @@ seeding with the history you already have:
 
 **Phase D — Automate + cut over**
 10. Add `.github/workflows/refresh.yml` (§5); set `BACKEND_URL` +
-    `MARKET_API_TOKEN` repo secrets; run it once via `workflow_dispatch` to
+    `MARKET_API_TOKEN` repo secrets and the `REFRESH_ENABLED=true` repo
+    variable; run it once via `workflow_dispatch` to
     confirm the trigger → poll → freshness-gate path works end-to-end.
 11. (If a custom domain exists) point it at Vercel.
 12. **Retire Streamlit:** take the Streamlit Cloud app **offline but unlisted**
@@ -311,4 +318,4 @@ value (daily history) is **not regenerable** by a fresh refresh. Protect it:
 With the artifacts committed, what remains is Phase A–D execution (§6) — the
 provisioning steps that need dashboard access: create the Render service from
 the blueprint, set the secrets, seed the DB, deploy the Vercel project, add the
-two repo secrets, and run the refresh workflow once by hand.
+two repo secrets plus the `REFRESH_ENABLED` variable, and run the refresh workflow once by hand.
