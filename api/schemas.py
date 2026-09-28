@@ -131,7 +131,7 @@ class RefreshResponse(BaseModel):
 
 class RefreshRun(BaseModel):
     completed_at: str
-    failed_phases: list[str] = []
+    failed_phases: list[str] = Field(default_factory=list)
     error: Optional[str] = None
 
 

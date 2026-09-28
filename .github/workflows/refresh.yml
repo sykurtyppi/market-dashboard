@@ -69,6 +69,7 @@ jobs:
         if: steps.cfg.outputs.configured == 'true'
         run: |
           body=$(curl -s "$BACKEND_URL/api/refresh/status")
+          echo "$body"
           err=$(echo "$body" | jq -r '.last_run.error // empty')
           failed=$(echo "$body" | jq -r '(.last_run.failed_phases // []) | join(", ")')
           if [ -n "$err" ]; then
