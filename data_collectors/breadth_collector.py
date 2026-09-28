@@ -25,7 +25,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
-from utils.sp500_constituents import Constituents, load_constituents
+from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, Constituents, load_constituents
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class SP500ADLineCalculator:
 
     # Scaling factor: Sample represents ~20% of S&P 500
     # To estimate true S&P 500 breadth, multiply by 5x
-    SAMPLE_SIZE = 100
+    SAMPLE_SIZE = BREADTH_SAMPLE_SIZE
     INDEX_SIZE = 500
     SCALE_FACTOR = INDEX_SIZE / SAMPLE_SIZE  # 5.0
 
@@ -110,6 +110,14 @@ class SP500ADLineCalculator:
             )
             for dropped, added in zip(self.universe_changes["dropped"], self.universe_changes["added"]):
                 logger.warning(f"Breadth sample: {dropped} is no longer a constituent; using {added}")
+            if self.universe_changes["unreplaced"]:
+                # The sample is now smaller than SAMPLE_SIZE, which every
+                # downstream scale assumes. Say so loudly; do not hide it in
+                # a shorter zip.
+                logger.error(
+                    f"Breadth sample is {len(self.stocks)} of {self.SAMPLE_SIZE}: no replacement "
+                    f"available for {', '.join(self.universe_changes['unreplaced'])}"
+                )
         else:
             logger.warning(
                 f"Initialized with {len(self.stocks)} stocks from the unreconciled seed list — "
@@ -125,9 +133,9 @@ class SP500ADLineCalculator:
         the sample lags its share of the index most. Deterministic for a given
         seed and list, so two processes agree on the universe.
         """
-        seed = list(seed)
+        seed = list(dict.fromkeys(seed))  # order-preserving dedupe: no name counts twice
         if constituents is None:
-            return seed, {"reconciled": False, "dropped": [], "added": [], "as_of": None}
+            return seed, {"reconciled": False, "dropped": [], "added": [], "unreplaced": [], "as_of": None}
 
         members = set(constituents.symbols)
         universe = [t for t in seed if t in members]
@@ -152,8 +160,12 @@ class SP500ADLineCalculator:
                     added.append(candidate)
                     break
 
+        # Replacement is attempted in order, and exhaustion is monotonic, so
+        # any drops that found no candidate are the trailing suffix.
+        unreplaced = dropped[len(added):]
         return universe, {
-            "reconciled": True, "dropped": dropped, "added": added, "as_of": constituents.as_of.isoformat(),
+            "reconciled": True, "dropped": dropped, "added": added, "unreplaced": unreplaced,
+            "as_of": constituents.as_of.isoformat(),
         }
     
     def fetch_stock_data(self, ticker, period='60d'):

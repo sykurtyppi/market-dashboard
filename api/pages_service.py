@@ -8,7 +8,7 @@ from typing import Any, Dict, List
 
 from api.deps import get_db
 from api.overview_service import _num, _series
-from utils.sp500_constituents import load_constituents
+from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, load_constituents
 
 
 def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, List[Dict[str, Any]]]:
@@ -197,8 +197,7 @@ def build_breadth() -> Dict[str, Any]:
     # Honesty about the sample: how many of the sampled names actually priced
     # on the latest day, and whether the constituent list the sample is drawn
     # from is still current.
-    from data_collectors.breadth_collector import SP500ADLineCalculator
-    sample_size = SP500ADLineCalculator.SAMPLE_SIZE
+    sample_size = BREADTH_SAMPLE_SIZE
     total = _num(latest.get("total"))
     if total is not None and total < 0.9 * sample_size:
         warnings.append(

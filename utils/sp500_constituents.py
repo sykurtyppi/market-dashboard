@@ -21,6 +21,12 @@ CONSTITUENTS_PATH = Path(__file__).resolve().parent.parent / "config" / "sp500_c
 COLUMNS = ("symbol", "security", "gics_sector", "gics_sub_industry", "date_added", "as_of")
 # The index reconstitutes quarterly; a list that has missed two of those is stale.
 STALE_AFTER_DAYS = 120
+# ~500 companies, 503 share classes. Enforced on write (the refresh script) and
+# on read: a truncated or hand-edited file must not quietly shrink the sample.
+PLAUSIBLE_ROWS = range(480, 530)
+# Size of the breadth proxy sample. Lives here so the API can read it without
+# importing the collector (and yfinance with it).
+BREADTH_SAMPLE_SIZE = 100
 
 
 def normalize_symbol(symbol: str) -> str:
@@ -70,4 +76,10 @@ def load_constituents(path: Path = CONSTITUENTS_PATH) -> Optional[Constituents]:
         return None
 
     frame = frame.assign(symbol=frame["symbol"].map(normalize_symbol)).drop_duplicates("symbol")
+    if len(frame) not in PLAUSIBLE_ROWS:
+        logger.warning(
+            f"S&P 500 constituent list at {path} has {len(frame)} rows, expected ~503 — "
+            "ignoring it (regenerate with scripts/update_sp500_constituents.py)"
+        )
+        return None
     return Constituents(frame=frame.reset_index(drop=True), as_of=as_of)

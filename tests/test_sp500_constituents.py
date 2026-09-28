@@ -7,6 +7,7 @@ against config/sp500_constituents.csv, refreshed by a script, and the breadth
 page says when the list is stale or the sample did not fully price.
 """
 import importlib.util
+import logging
 import re
 import sys
 from datetime import date, timedelta
@@ -21,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
 from utils.sp500_constituents import (  # noqa: E402
-    COLUMNS, STALE_AFTER_DAYS, Constituents, load_constituents, normalize_symbol,
+    BREADTH_SAMPLE_SIZE, COLUMNS, PLAUSIBLE_ROWS, STALE_AFTER_DAYS, Constituents, load_constituents, normalize_symbol,
 )
 from data_collectors.breadth_collector import SP500ADLineCalculator  # noqa: E402
 
@@ -61,6 +62,15 @@ class TestLoader:
         (tmp_path / "bad.csv").write_text("symbol,security\nAAPL,Apple\n")   # no gics_sector / as_of
         assert load_constituents(tmp_path / "bad.csv") is None
 
+    def test_implausibly_small_file_is_ignored(self, tmp_path, caplog):
+        # A truncated list would shrink the sample silently; refuse it instead.
+        path = tmp_path / "short.csv"
+        path.write_text("symbol,gics_sector,as_of\n" + "\n".join(f"S{i},Tech,2026-09-28" for i in range(5)) + "\n")
+        with caplog.at_level(logging.WARNING):
+            assert load_constituents(path) is None
+        assert "expected ~503" in caplog.text
+        assert 503 in PLAUSIBLE_ROWS
+
     def test_staleness_is_judged_against_a_given_today(self):
         c = synthetic(as_of=date(2026, 1, 1))
         assert c.age_days(today=date(2026, 9, 28)) == 270
@@ -72,7 +82,7 @@ class TestBuildUniverse:
     def test_no_list_means_the_seed_unchanged(self):
         universe, changes = SP500ADLineCalculator.build_universe(["A", "B"], None)
         assert universe == ["A", "B"]
-        assert changes == {"reconciled": False, "dropped": [], "added": [], "as_of": None}
+        assert changes == {"reconciled": False, "dropped": [], "added": [], "unreplaced": [], "as_of": None}
 
     def test_members_are_kept_in_seed_order(self):
         universe, changes = SP500ADLineCalculator.build_universe(["T2", "E1", "T1"], synthetic())
@@ -89,6 +99,26 @@ class TestBuildUniverse:
         assert universe == ["T1", "T2", "E1", "H1", "T3"]
         assert changes["dropped"] == ["GONE1", "GONE2"]
         assert changes["added"] == ["H1", "T3"]
+
+    def test_duplicate_seed_names_are_collapsed(self):
+        universe, _ = SP500ADLineCalculator.build_universe(["T1", "T1", "E1"], synthetic())
+        assert universe == ["T1", "E1"]
+
+    def test_exhausted_pools_are_reported_not_hidden(self, caplog):
+        # Seed larger than the whole index: replacements run out. The shrink
+        # must be visible in the changes and logged at ERROR by the collector.
+        tiny = Constituents(pd.DataFrame([("T1", "Tech"), ("T2", "Tech"), ("E1", "Energy")], columns=["symbol", "gics_sector"]), date(2026, 9, 28))
+        universe, changes = SP500ADLineCalculator.build_universe(["T1", "GONE1", "GONE2", "GONE3"], tiny)
+        # 2/3 Tech index, 4-name sample: Tech deficit 1.67 beats Energy 1.33, so
+        # T2 first; then Energy 1.33 beats Tech 0.67, so E1; then nothing left.
+        assert universe == ["T1", "T2", "E1"]
+        assert changes["added"] == ["T2", "E1"]
+        assert changes["unreplaced"] == ["GONE3"]
+        with caplog.at_level(logging.ERROR):
+            c = SP500ADLineCalculator(constituents=tiny)   # 100-name seed vs a 3-name index
+        assert len(c.stocks) == 3
+        assert len(c.universe_changes["unreplaced"]) == BREADTH_SAMPLE_SIZE - 3
+        assert "no replacement available" in caplog.text
 
     def test_size_is_preserved_and_deterministic(self):
         seed = ["T1", "GONE1", "GONE2", "GONE3"]

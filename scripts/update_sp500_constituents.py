@@ -20,13 +20,12 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils.sp500_constituents import COLUMNS, CONSTITUENTS_PATH, load_constituents, normalize_symbol  # noqa: E402
+from utils.sp500_constituents import (  # noqa: E402
+    COLUMNS, CONSTITUENTS_PATH, PLAUSIBLE_ROWS, load_constituents, normalize_symbol,
+)
 
 SOURCE_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 USER_AGENT = "market-dashboard/1.0 (open-source research dashboard; github.com/sykurtyppi/market-dashboard)"
-# The index holds ~500 companies but 503 share classes; anything far outside
-# that means the page changed shape and the table we parsed is not the list.
-PLAUSIBLE_ROWS = range(480, 530)
 
 
 def fetch_html(url: str = SOURCE_URL) -> str:
@@ -36,7 +35,12 @@ def fetch_html(url: str = SOURCE_URL) -> str:
 
 
 def parse_constituents(html: str, as_of: str) -> pd.DataFrame:
-    """The first table on the page is the current constituent list."""
+    """The first table on the page is the current constituent list.
+
+    That position is an assumption about Wikipedia's layout. If it changes,
+    the column check below raises and main() exits non-zero without writing,
+    so the failure is loud rather than a wrong file.
+    """
     table = pd.read_html(io.StringIO(html))[0]
     wanted = {
         "Symbol": "symbol", "Security": "security", "GICS Sector": "gics_sector",
