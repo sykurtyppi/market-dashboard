@@ -95,7 +95,7 @@ def test_refresh_starts_and_reports_status(client):
     # TestClient runs the background task synchronously after the response, so
     # patch the updater to a no-op to avoid a real data pull.
     with patch("scheduler.daily_update.MarketDataUpdater") as MockUpdater:
-        MockUpdater.return_value.run_full_update.return_value = None
+        MockUpdater.return_value.run_full_update.return_value = ["liquidity_history"]
         r = client.post("/api/refresh")
         assert r.status_code == 200
         assert r.json()["status"] in ("started", "already_running")
@@ -103,7 +103,23 @@ def test_refresh_starts_and_reports_status(client):
 
     status = client.get("/api/refresh/status")
     assert status.status_code == 200
-    assert isinstance(status.json()["running"], bool)
+    body = status.json()
+    assert body["running"] is False
+    # A 200 from POST only meant "started"; the outcome lives here.
+    assert body["last_run"]["failed_phases"] == ["liquidity_history"]
+    assert body["last_run"]["error"] is None
+    assert body["last_run"]["completed_at"]
+
+
+def test_refresh_crash_is_reported_and_releases_the_lock(client):
+    with patch("scheduler.daily_update.MarketDataUpdater") as MockUpdater:
+        MockUpdater.return_value.run_full_update.side_effect = RuntimeError("collector exploded")
+        r = client.post("/api/refresh")
+        assert r.status_code == 200
+    body = client.get("/api/refresh/status").json()
+    assert body["running"] is False
+    assert body["last_run"]["error"] == "collector exploded"
+    assert body["last_run"]["failed_phases"] == []
 
 
 def test_refresh_rejects_bad_token_when_configured(client, monkeypatch):

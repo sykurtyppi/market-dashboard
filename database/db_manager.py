@@ -610,16 +610,21 @@ class DatabaseManager:
     # LIQUIDITY DATA METHODS (Phase 1)
     # ========================================
     
-    def save_liquidity_history(self, df: pd.DataFrame):
+    def save_liquidity_history(self, df: pd.DataFrame) -> bool:
         """
         Save liquidity history to liquidity_history table.
-        
+
         Args:
-            df: DataFrame with columns: date, rrp_on, tga, sofr
+            df: DataFrame with columns: date, rrp_on, tga, sofr (fed_bs optional)
+
+        Returns:
+            True if the rows were written. False if there was nothing to write
+            or the database refused the write (logged). Anything else — a
+            malformed frame, a missing column — is a bug and propagates.
         """
         if df.empty:
             logger.warning("Empty liquidity DataFrame, skipping save")
-            return
+            return False
         
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -668,13 +673,18 @@ class DatabaseManager:
                     ))
                 
                 conn.commit()
-            
-            logger.info(f"Saved {len(df)} rows of liquidity data to liquidity_history table")
-            
-        except Exception as e:
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
+            # Only operational database conditions are expected here: a
+            # locked file, a missing table on an unmigrated database, a full
+            # disk, a constraint clash. sqlite3.Error would also swallow
+            # ProgrammingError, which is a bug. The old catch-all hid every
+            # error, and the refresh went on to report success while every
+            # liquidity row was dropped.
             logger.error(f"Error saving liquidity history: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            return False
+
+        logger.info(f"Saved {len(df)} rows of liquidity data to liquidity_history table")
+        return True
     
     # ========================================
     # PHASE 2: FED BALANCE SHEET METHODS

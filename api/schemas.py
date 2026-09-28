@@ -129,8 +129,16 @@ class RefreshResponse(BaseModel):
     detail: Optional[str] = None
 
 
+class RefreshRun(BaseModel):
+    completed_at: str
+    failed_phases: list[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
 class RefreshStatus(BaseModel):
     running: bool
+    # Outcome of the most recent run in this process, or None before the first.
+    last_run: Optional[RefreshRun] = None
 
 
 # --- Phase 2 pages ---

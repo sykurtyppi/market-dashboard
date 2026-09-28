@@ -54,6 +54,11 @@ from data_collectors.move_collector import MOVECollector
 from data_collectors.repo_collector_enhanced import RepoCollector
 from data_collectors.liquidity_collector import LiquidityCollector
 
+class _PhaseSkipped(Exception):
+    """Raised inside a phase to leave it without recording a failure: the
+    collector is disabled by configuration (no FRED key), not broken."""
+
+
 class MarketDataUpdater:
     """Main class for daily market data updates."""
 
@@ -96,6 +101,8 @@ class MarketDataUpdater:
 
         # DB & processors
         self.db = DatabaseManager()
+        # Phases that failed in the current run; see _phase_failed().
+        self.failed_phases: list[str] = []
         self.left_strategy = LEFTStrategy()
         self.vrp_analyzer = VRPAnalyzer(lookback_days=21)
 
@@ -115,11 +122,35 @@ class MarketDataUpdater:
     # ------------------------------------------------------------------
     # Main update
     # ------------------------------------------------------------------
-    def run_full_update(self):
-        """Run the complete market data update pipeline."""
+    def _phase_failed(self, phase: str, detail) -> None:
+        """Record a failed phase so the run's outcome can say so.
+
+        Phases are isolated — one failing must not stop the rest — but the
+        old pattern (log an error, carry on, print UPDATE COMPLETE) let a
+        failed write hide behind a successful-looking run for weeks.
+        """
+        self.failed_phases.append(phase)
+        logger.error(f"{phase} failed: {detail}")
+
+    def _finish(self) -> list[str]:
+        """Log the closing banner honestly and return the failed phases."""
+        logger.info("=" * 60)
+        if self.failed_phases:
+            logger.error(f"UPDATE COMPLETE WITH FAILURES: {', '.join(self.failed_phases)}")
+        else:
+            logger.info("UPDATE COMPLETE")
+        logger.info("=" * 60)
+        return list(self.failed_phases)
+
+    def run_full_update(self) -> list[str]:
+        """Run the complete market data update pipeline.
+
+        Returns the names of phases that failed (empty when everything ran).
+        """
         logger.info("=" * 60)
         logger.info(f"MARKET DATA UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
+        self.failed_phases = []
 
         # ------------------------------------------------------------------
         # 1. FRED data (optional - requires API key)
@@ -167,7 +198,7 @@ class MarketDataUpdater:
             else:
                 logger.warning("No credit_spread_hy data available for LEFT signal")
         except Exception as e:
-            logger.error(f"Error calculating LEFT signal: {e}")
+            self._phase_failed("left_signal", e)
             left_signal_data = {"signal": "NEUTRAL"}
 
         # ------------------------------------------------------------------
@@ -182,7 +213,7 @@ class MarketDataUpdater:
                 f"{fear_greed_data['score']:.0f} ({fear_greed_data.get('rating', '')})"
             )
         else:
-            logger.error("Failed to fetch Fear & Greed data")
+            self._phase_failed("fear_greed", "no data returned")
             fear_greed_data = {"score": None}
 
         # ------------------------------------------------------------------
@@ -253,7 +284,7 @@ class MarketDataUpdater:
             vrp_analysis = self.vrp_analyzer.get_complete_analysis(vix=vix_for_vrp)
 
             if "error" in vrp_analysis:
-                logger.error(f"VRP analysis failed: {vrp_analysis['error']}")
+                self._phase_failed("vrp", vrp_analysis['error'])
                 vrp_analysis = None
             else:
                 logger.info(
@@ -301,7 +332,7 @@ class MarketDataUpdater:
         try:
             if not self.fed_bs:
                 logger.warning("Fed Balance Sheet collector not available (requires FRED API)")
-                raise Exception("Collector not initialized")
+                raise _PhaseSkipped()
             # Backward/forward-compatible fetch path:
             # some collector versions expose get_balance_sheet_df(), others expose
             # get_balance_sheet_history() + calculate_qt_metrics().
@@ -327,8 +358,10 @@ class MarketDataUpdater:
                     logger.info("Fed Balance Sheet saved to database")
             else:
                 logger.warning("No Fed Balance Sheet data available")
+        except _PhaseSkipped:
+            pass
         except Exception as e:
-            logger.error(f"Fed Balance Sheet fetch failed: {e}")
+            self._phase_failed("fed_balance_sheet", e)
 
         # ------------------------------------------------------------------
         # 9. PHASE 2: MOVE Index (Treasury Volatility)
@@ -365,7 +398,7 @@ class MarketDataUpdater:
             else:
                 logger.warning("No MOVE data available")
         except Exception as e:
-            logger.error(f"MOVE Index fetch failed: {e}")
+            self._phase_failed("move_index", e)
 
         # ------------------------------------------------------------------
         # 10. PHASE 2: Repo Market Data (SOFR, IORB, RRP)
@@ -377,7 +410,7 @@ class MarketDataUpdater:
         try:
             if not self.repo:
                 logger.warning("Repo collector not available (requires FRED API)")
-                raise Exception("Collector not initialized")
+                raise _PhaseSkipped()
             repo_df = self.repo.get_repo_history(days_back=90)
             if repo_df is not None and not repo_df.empty:
                 latest = repo_df.iloc[-1]
@@ -401,8 +434,10 @@ class MarketDataUpdater:
                     logger.info("Repo data saved to database")
             else:
                 logger.warning("No Repo market data available")
+        except _PhaseSkipped:
+            pass
         except Exception as e:
-            logger.error(f"Repo data fetch failed: {e}")
+            self._phase_failed("repo_market", e)
 
         # ------------------------------------------------------------------
         # 10b. Liquidity history (TGA / RRP / net liquidity)
@@ -499,12 +534,13 @@ class MarketDataUpdater:
             "rrp_volume": rrp_value,
         }
 
-        self.db.save_daily_snapshot(snapshot)
-        logger.info("Daily snapshot saved to database")
+        saved, validation = self.db.save_daily_snapshot(snapshot)
+        if saved:
+            logger.info("Daily snapshot saved to database")
+        else:
+            self._phase_failed("daily_snapshot", f"validation rejected it: {validation.errors}")
 
-        logger.info("=" * 60)
-        logger.info("UPDATE COMPLETE")
-        logger.info("=" * 60)
+        return self._finish()
 
     # ------------------------------------------------------------------
     # Liquidity history (TGA / RRP / Fed BS -> net liquidity)
@@ -556,7 +592,7 @@ class MarketDataUpdater:
 
             liq_df = self.liquidity.get_all_liquidity(lookback_days=365)
             if liq_df is None or liq_df.empty:
-                logger.warning("No liquidity data returned")
+                self._phase_failed("liquidity_history", "collector returned no data")
                 return
 
             # Normalize units to $ billions before any arithmetic
@@ -596,7 +632,9 @@ class MarketDataUpdater:
             value_cols = [c for c in ("rrp_on", "tga", "sofr", "fed_bs") if c in liq_df.columns]
             liq_df = liq_df.dropna(subset=value_cols, how="all").reset_index(drop=True)
 
-            self.db.save_liquidity_history(liq_df)
+            if not self.db.save_liquidity_history(liq_df):
+                self._phase_failed("liquidity_history", "rows were not written (database error above)")
+                return
 
             # Guard the empty case explicitly: .iloc[-1] on an all-NaN column
             # raises IndexError, which the outer handler would report as
@@ -614,11 +652,12 @@ class MarketDataUpdater:
                     net = fed_bs_val - tga_val - (rrp_val if pd.notna(rrp_val) else 0.0)
                     logger.info(f"  Fed BS: ${fed_bs_val:,.0f}B -> Net Liquidity: ${net:,.0f}B")
         except Exception as e:
-            logger.error(f"Liquidity history update failed: {e}")
+            self._phase_failed("liquidity_history", e)
             import traceback
             logger.error(traceback.format_exc())
 
 
 if __name__ == "__main__":
     updater = MarketDataUpdater()
-    updater.run_full_update()
+    # A direct run (cron, shell) must not exit 0 when phases failed.
+    sys.exit(1 if updater.run_full_update() else 0)
