@@ -673,11 +673,13 @@ class DatabaseManager:
                     ))
                 
                 conn.commit()
-        except sqlite3.Error as e:
-            # Only database failures are expected here: a locked file, a
-            # missing table on an unmigrated database, a full disk. The old
-            # catch-all also hid programming errors, and the refresh went on
-            # to report success while every liquidity row was dropped.
+        except (sqlite3.OperationalError, sqlite3.IntegrityError) as e:
+            # Only operational database conditions are expected here: a
+            # locked file, a missing table on an unmigrated database, a full
+            # disk, a constraint clash. sqlite3.Error would also swallow
+            # ProgrammingError, which is a bug. The old catch-all hid every
+            # error, and the refresh went on to report success while every
+            # liquidity row was dropped.
             logger.error(f"Error saving liquidity history: {e}")
             return False
 

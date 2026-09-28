@@ -202,6 +202,9 @@ def settings(x_api_token: str | None = Header(default=None)):
 # /api/refresh only means "started"; this is where a caller learns whether the
 # run actually wrote what it should have.
 _last_refresh: dict | None = None
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
 
 
 def _run_refresh():
@@ -216,10 +219,6 @@ def _run_refresh():
         _last_refresh = {"completed_at": _now_iso(), "failed_phases": [], "error": str(exc)}
     finally:
         _refresh_lock.release()
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @app.post("/api/refresh", response_model=RefreshResponse)

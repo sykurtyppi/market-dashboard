@@ -53,3 +53,10 @@ def test_malformed_frame_is_a_bug_and_propagates(db):
     # condition to log and move past.
     with pytest.raises(KeyError):
         db.save_liquidity_history(pd.DataFrame([{"rrp_on": 0.5, "tga": 977.0}]))
+
+
+def test_bad_value_in_a_present_column_propagates(db):
+    # A non-numeric RRP is a data bug, not a database condition; it must not
+    # fold into "False" and disappear.
+    with pytest.raises(ValueError):
+        db.save_liquidity_history(frame(("2026-09-25", "not a number", 977.0, 3.88, 6748.0)))

@@ -81,6 +81,7 @@ jobs:
             echo "all phases succeeded"
           fi
 
+      - name: Gate on data freshness
         if: steps.cfg.outputs.configured == 'true'
         run: |
           body=$(curl -s "$BACKEND_URL/api/freshness")

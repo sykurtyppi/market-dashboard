@@ -54,6 +54,11 @@ from data_collectors.move_collector import MOVECollector
 from data_collectors.repo_collector_enhanced import RepoCollector
 from data_collectors.liquidity_collector import LiquidityCollector
 
+class _PhaseSkipped(Exception):
+    """Raised inside a phase to leave it without recording a failure: the
+    collector is disabled by configuration (no FRED key), not broken."""
+
+
 class MarketDataUpdater:
     """Main class for daily market data updates."""
 
@@ -327,7 +332,7 @@ class MarketDataUpdater:
         try:
             if not self.fed_bs:
                 logger.warning("Fed Balance Sheet collector not available (requires FRED API)")
-                raise Exception("Collector not initialized")
+                raise _PhaseSkipped()
             # Backward/forward-compatible fetch path:
             # some collector versions expose get_balance_sheet_df(), others expose
             # get_balance_sheet_history() + calculate_qt_metrics().
@@ -353,6 +358,8 @@ class MarketDataUpdater:
                     logger.info("Fed Balance Sheet saved to database")
             else:
                 logger.warning("No Fed Balance Sheet data available")
+        except _PhaseSkipped:
+            pass
         except Exception as e:
             self._phase_failed("fed_balance_sheet", e)
 
@@ -403,7 +410,7 @@ class MarketDataUpdater:
         try:
             if not self.repo:
                 logger.warning("Repo collector not available (requires FRED API)")
-                raise Exception("Collector not initialized")
+                raise _PhaseSkipped()
             repo_df = self.repo.get_repo_history(days_back=90)
             if repo_df is not None and not repo_df.empty:
                 latest = repo_df.iloc[-1]
@@ -427,6 +434,8 @@ class MarketDataUpdater:
                     logger.info("Repo data saved to database")
             else:
                 logger.warning("No Repo market data available")
+        except _PhaseSkipped:
+            pass
         except Exception as e:
             self._phase_failed("repo_market", e)
 
@@ -649,7 +658,6 @@ class MarketDataUpdater:
 
 
 if __name__ == "__main__":
-    import sys
     updater = MarketDataUpdater()
     # A direct run (cron, shell) must not exit 0 when phases failed.
     sys.exit(1 if updater.run_full_update() else 0)

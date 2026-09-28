@@ -90,3 +90,13 @@ def test_liquidity_phase_records_a_crash_without_raising(updater):
     updater.liquidity = SimpleNamespace(get_all_liquidity=lambda lookback_days=365: (_ for _ in ()).throw(RuntimeError("feed down")))
     updater._update_liquidity_history()   # must not raise: phases are isolated
     assert updater.failed_phases == ["liquidity_history"]
+
+
+def test_liquidity_phase_disabled_by_configuration_is_not_a_failure(updater, caplog):
+    # No FRED key means the collector was never built. That is configuration,
+    # not a failed phase — same treatment as fed_balance_sheet and repo_market.
+    updater.liquidity = None
+    with caplog.at_level(logging.WARNING):
+        updater._update_liquidity_history()
+    assert updater.failed_phases == []
+    assert "not available" in caplog.text
