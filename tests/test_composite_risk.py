@@ -1,8 +1,8 @@
 """Composite risk score (processors/composite_risk.py).
 
 The 2026-10-19 snapshot is the worked example. The page showed 26; the same
-inputs score 33.4 once credit is read as percent, MOVE is supplied, SKEW is
-windowed for the post-2020 regime, and put/call is windowed by source.
+inputs score 31.5 once credit is read as percent, MOVE is supplied, and SKEW
+is windowed for the levels it actually prints.
 """
 import sys
 from pathlib import Path
@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from processors.composite_risk import (  # noqa: E402
-    COMPONENTS, PUT_CALL_WINDOWS, calculate_composite_risk_score, normalize, put_call_input,
+    COMPONENTS, PUT_CALL_WINDOW, calculate_composite_risk_score, normalize, put_call_input,
 )
 
 LIVE = {
@@ -62,12 +62,13 @@ class TestWindows:
         assert normalize("skew", 145.5) == pytest.approx(51.0)
         assert normalize("skew", 170.0) == 100.0
 
-    def test_put_call_is_windowed_by_source(self):
-        # A PCCE reading and a SPY-proxy reading of the same number mean different things.
-        assert normalize("put_call", 0.6, "CBOE equity P/C (PCCE)") == pytest.approx(90.0)
-        assert normalize("put_call", 1.2589, "SPY volume proxy") == pytest.approx(61.8, abs=0.05)
-        assert normalize("put_call", 1.2589, "Best available") == pytest.approx(24.1, abs=0.05)
-        assert set(PUT_CALL_WINDOWS) == {"CBOE equity P/C (PCCE)", "SPY volume proxy", "Best available"}
+    def test_put_call_uses_one_window_for_every_source(self):
+        # A per-source SPY window was tried and reverted: only three SPY
+        # readings are stored, and the app's own copy calls >1.0 defensive.
+        assert PUT_CALL_WINDOW == (0.5, 1.5)
+        assert normalize("put_call", 0.6) == pytest.approx(90.0)
+        assert normalize("put_call", 1.2589) == pytest.approx(24.1, abs=0.05)
+        assert normalize("put_call", 1.5) == 0.0
 
     def test_put_call_input_prefers_the_official_series(self):
         assert put_call_input({"cboe_equity_pc": 0.7, "spy_put_call": 1.2, "put_call_ratio": 1.2}) == (0.7, "CBOE equity P/C (PCCE)")
@@ -78,8 +79,8 @@ class TestWindows:
 class TestWorkedExample:
     def test_corrected_score(self):
         r = calculate_composite_risk_score(LIVE, VRP, move_index=MOVE)
-        # 17.2·.15 + 24.6·.20 + 19.94·.15 + 8·.10 + 41·.15 + 31.1·.10 + 97.18·.10 + 61.76·.05 = 33.36
-        assert r["score"] == pytest.approx(33.4, abs=0.05)
+        # 17.2·.15 + 24.6·.20 + 19.94·.15 + 8·.10 + 41·.15 + 31.1·.10 + 97.18·.10 + 24.11·.05 = 31.47
+        assert r["score"] == pytest.approx(31.5, abs=0.05)
         assert r["components"]["credit"] == pytest.approx(24.6)
         assert r["components"]["move"] == pytest.approx(31.1)
         assert r["put_call_source"] == "SPY volume proxy"
@@ -96,7 +97,7 @@ class TestWorkedExample:
         r = calculate_composite_risk_score(LIVE, VRP)
         assert r["missing"] == ["move"]
         assert sum(r["weights"].values()) == pytest.approx(0.90)
-        assert r["score"] == pytest.approx(33.6, abs=0.05)   # (33.36 − 3.11) / 0.9
+        assert r["score"] == pytest.approx(31.5, abs=0.05)   # (31.47 − 3.11) / 0.9
 
 
 class TestShape:

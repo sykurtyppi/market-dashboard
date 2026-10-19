@@ -56,7 +56,7 @@ class TestBuildOverview:
         with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1})):
             body = build_overview()
         regime = body["regime"]
-        assert regime["composite_risk"] == 33            # was 26 with credit stuck at 0 and no MOVE
+        assert regime["composite_risk"] == 32            # was 26 with credit stuck at 0 and no MOVE
         assert regime["breakdown"]["missing"] == []
         assert regime["breakdown"]["components"]["credit"] == pytest.approx(24.6)
         assert regime["breakdown"]["put_call_source"] == "SPY volume proxy"

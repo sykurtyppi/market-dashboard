@@ -33,14 +33,12 @@ COMPONENTS: Dict[str, Dict[str, Any]] = {
     "put_call":  {"weight": 0.05, "label": "Put/Call"},
 }
 
-# Put/call windows by source. The CBOE equity ratio (PCCE) and the SPY volume
-# proxy are different series on different scales; one window cannot serve
-# both: the proxy's own median (~1.1) read as "fearful" on the PCCE window.
-PUT_CALL_WINDOWS = {
-    "CBOE equity P/C (PCCE)": (0.5, 1.5),
-    "SPY volume proxy": (0.8, 2.0),   # from the proxy's stored range, 0.94–1.91; revisit with more history
-    "Best available": (0.5, 1.5),
-}
+# Put/call window. The stored ratio may be the CBOE equity P/C (PCCE) or the
+# SPY volume proxy, which runs higher — but a separate SPY window would need
+# real SPY history (three readings stored so far), so one window serves both,
+# matching the app's own guidance that above ~1.0 reads defensive. The source
+# is reported alongside the score. Revisit with history.
+PUT_CALL_WINDOW = (0.5, 1.5)
 
 BANDS = [
     (75, "HIGH RISK", "#FF4444", "Multiple stress indicators elevated. Defensive positioning warranted."),
@@ -65,7 +63,7 @@ def _num(value: Any) -> Optional[float]:
         return None
 
 
-def normalize(name: str, value: float, put_call_source: str = "Best available") -> float:
+def normalize(name: str, value: float) -> float:
     """0–100 risk contribution of one input against its documented window."""
     if name == "vix":
         # VIX 10 -> 0, 60 -> 100
@@ -89,14 +87,16 @@ def normalize(name: str, value: float, put_call_source: str = "Best available") 
         # MOVE 70 -> 0, 170 -> 100
         return _clamp((value - 70.0) / 100.0 * 100.0)
     if name == "skew":
-        # SKEW 120 -> 0, 170 -> 100. The previous 110–150 window dated from a
-        # regime that ended around 2020: locally SKEW has printed 137–169 with a
-        # median near 146, so a typical day scored ~89 and a third of days
-        # saturated at 100 — a near-constant 7–10 points under the headline.
+        # SKEW 120 -> 0, 170 -> 100. On the previous 110–150 window the stored
+        # sample (137–169, median ~146) scored ~89 on a typical day and a third
+        # of days saturated at 100 — a near-constant 6.8–10 points under the
+        # headline. Bounds are fit to that same sample; calibrate once against
+        # a longer ^SKEW history (CBOECollector.get_skew_history) and record
+        # the percentiles here.
         return _clamp((value - 120.0) / 50.0 * 100.0)
     if name == "put_call":
-        # Contrarian: heavy put buying (high ratio) lowers risk. Window by source.
-        low, high = PUT_CALL_WINDOWS.get(put_call_source, PUT_CALL_WINDOWS["Best available"])
+        # Contrarian: heavy put buying (high ratio) lowers risk. 1.5 -> 0, 0.5 -> 100.
+        low, high = PUT_CALL_WINDOW
         return _clamp((high - value) / (high - low) * 100.0)
     raise KeyError(name)
 
@@ -144,7 +144,7 @@ def calculate_composite_risk_score(
         "put_call": pc_value,
     }
 
-    scored = {name: normalize(name, value, pc_source) for name, value in raw.items() if value is not None}
+    scored = {name: normalize(name, value) for name, value in raw.items() if value is not None}
     weights = {name: COMPONENTS[name]["weight"] for name in scored}
     missing = [name for name in COMPONENTS if name not in scored]
 

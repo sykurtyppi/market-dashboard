@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from api.deps import get_db
-from processors.composite_risk import calculate_composite_risk_score
+from processors.composite_risk import calculate_composite_risk_score, put_call_input
 
 
 def _num(value: Any) -> Optional[float]:
@@ -117,12 +117,8 @@ def _contango_state(c: Optional[float]) -> str:
 
 
 def _put_call_source(snapshot: Dict) -> str:
-    """Which put/call series the stored 'best available' ratio actually is."""
-    if _num(snapshot.get("cboe_equity_pc")) is not None:
-        return "CBOE equity P/C (PCCE)"
-    if _num(snapshot.get("spy_put_call")) is not None:
-        return "SPY volume proxy"
-    return "Best available"
+    """Which put/call series the stored ratio actually is — one rule, shared with the score."""
+    return put_call_input(snapshot)[1]
 
 
 def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) -> Tuple[Optional[int], Dict[str, Any]]:

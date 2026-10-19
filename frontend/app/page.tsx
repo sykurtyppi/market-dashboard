@@ -25,8 +25,9 @@ function driversLine(b: NonNullable<Overview["regime"]["breakdown"]>): string {
       return `${label} ${pts.toFixed(1)}`;
     });
   const missing = b.missing.length > 0 ? `not included: ${b.missing.map((k) => DRIVER_LABELS[k] ?? k).join(", ")}` : "";
-  const contrarian = "fear and heavy put buying lower the score";
-  return ["Points: " + (parts.join(" · ") || "none"), missing, contrarian].filter(Boolean).join(" · ");
+  const hasContrarian = "sentiment" in b.components || "put_call" in b.components;
+  const contrarian = hasContrarian ? "fear and heavy put buying lower the score" : "";
+  return ["Points toward the score: " + (parts.join(" · ") || "none"), missing, contrarian].filter(Boolean).join(" · ");
 }
 
 function stateLabel(state: string): string {

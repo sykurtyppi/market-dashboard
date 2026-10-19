@@ -262,8 +262,6 @@ def _latest_val(df) -> float | None:
     return _num(df[cols[0]].iloc[-1]) if cols else None
 
 
-
-
 def build_credit_liquidity() -> dict:
     db = get_db()
     hy_hist = db.get_indicator_history("credit_spread_hy", days=365)
