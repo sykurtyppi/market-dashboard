@@ -32,7 +32,7 @@ Notice: Not financial advice.
 ```bash
 pip install -r requirements.txt
 ```
-2. Add secrets (FRED key required; Nasdaq Data Link recommended):
+2. Add keys. The FRED key powers the credit, liquidity and Fed pages (without it those collectors are disabled with a warning); the Nasdaq Data Link key speeds up COT data. If you kept keys in `.streamlit/secrets.toml` before, move them into `.env`: the app no longer reads that file.
 ```bash
 cp sample.env .env
 ```
@@ -53,6 +53,9 @@ cd frontend && npm install && npm run dev
 See [docs/cutover-plan.md](docs/cutover-plan.md): Render backend from `render.yaml`, Vercel frontend, and the GitHub Actions refresh job (`.github/workflows/refresh.yml`) gated by the `REFRESH_ENABLED` repository variable.
 
 ## Tests
+```bash
+pip install pytest pytest-timeout
+```
 ```bash
 pytest -q
 ```

@@ -122,29 +122,10 @@ liquidity:
       draining: "#F44336"
       unavailable: "#9E9E9E"
 
-  # QT Analyzer Configuration
-  qt:
-    lookback_days: 252
-    # Z-score regime thresholds
-    expanding_threshold: 0.8
-    contracting_threshold: -0.8
-
-  # RRP Thresholds
-  rrp:
-    critical_billions: 50   # Critical shortage - Fed must pause QT
-    warning_billions: 200   # Getting low
-
 # ----------------------------------------------------------------------------
 # REPO MARKET & FUNDING STRESS
 # ----------------------------------------------------------------------------
 repo:
-  # SOFR Z-Score Stress Levels
-  sofr:
-    lookback_days: 252
-    stress_threshold: 2.0       # Z > 2.0 = STRESS (funding crisis risk)
-    elevated_threshold: 1.0     # Z 1.0-2.0 = ELEVATED
-    supportive_threshold: 0.0   # Z < 0 = SUPPORTIVE (easy money)
-
   # SOFR-IORB Spread Thresholds (basis points)
   spread:
     tight_max_bps: 15
