@@ -1,7 +1,6 @@
-"""Streamlit-free backend accessors shared across API routes.
+"""Backend accessors shared across API routes.
 
-The dashboard's init_components() couples collector setup to Streamlit
-(st.warning/st.error). The API instantiates the same pure backend objects
+The API instantiates the pure backend objects (database, health check)
 directly and caches them for the process lifetime.
 """
 from functools import lru_cache

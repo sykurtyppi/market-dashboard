@@ -21,7 +21,7 @@ from config import cfg
 
 logger = logging.getLogger(__name__)
 
-# Load defaults from config with fallbacks for Streamlit Cloud compatibility
+# Load defaults from config, with fallbacks if the retry section is missing
 try:
     _retry_cfg = cfg.data_collection.retry
 except AttributeError:

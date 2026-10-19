@@ -462,7 +462,7 @@ class SystemHealthResponse(BaseModel):
 class CredentialStatus(BaseModel):
     name: str
     configured: bool
-    source: Optional[str] = None  # "environment" | "streamlit_secrets" | None
+    source: Optional[str] = None  # "environment" | None
 
 
 class ConfigItem(BaseModel):

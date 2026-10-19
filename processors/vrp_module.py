@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class VRPAnalyzer:
     """Analyzes Volatility Risk Premium and classifies volatility regimes"""
 
-    # Default regimes fallback for Streamlit Cloud compatibility
+    # Used when config/parameters.yaml has no volatility.regimes section
     DEFAULT_REGIMES = {
         'complacent': {'vix_max': 12, 'expected_6m_return': 15.2, 'color': '#4CAF50'},
         'normal': {'vix_min': 12, 'vix_max': 16, 'expected_6m_return': 12.8, 'color': '#8BC34A'},

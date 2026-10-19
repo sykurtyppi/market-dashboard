@@ -5,8 +5,7 @@ Data collectors package
 from .fred_collector import FREDCollector
 from .fear_greed_collector import FearGreedCollector
 from .cboe_collector import CBOECollector
-# Breadth collector replaced with SP500ADLineCalculator
-from .sp500_adline_calculator import SP500ADLineCalculator
+from .breadth_collector import SP500ADLineCalculator
 from .yahoo_collector import YahooCollector
 from .cta_collector import CTACollector
 from .insider_trading_collector import InsiderTradingCollector

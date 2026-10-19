@@ -1,6 +1,6 @@
 # Market Risk Dashboard
 
-Public Streamlit dashboard for monitoring cross-asset risk, volatility regime, credit stress, positioning, and liquidity context.
+Dashboard for monitoring cross-asset risk, volatility regime, credit stress, positioning, and liquidity context. A FastAPI backend over a SQLite store, a Next.js frontend, and a refresh pipeline that fills the database from FRED, Yahoo Finance, CBOE and CFTC.
 
 Creator: Tristan Alejandro  
 Notice: Not financial advice.
@@ -9,55 +9,59 @@ Notice: Not financial advice.
 - Volatility: VIX, VIX9D, VIX3M, VVIX, SKEW, term structure/contango
 - Credit: HY and IG spread context, credit ETF behavior
 - Positioning: COT extremes, put/call context, sentiment gauges
-- Liquidity and rates: Fed balance sheet, repo/sofr context, treasury stress
+- Liquidity and rates: Fed balance sheet, repo/SOFR context, treasury stress, Fed Watch
 - Breadth and internal market health metrics
 
 ## Data Reliability Design
 - Data source + delay labels on key metrics
-- Per-metric status (fresh/stale/estimated/unavailable)
+- Per-source freshness judged in business days (`/api/health`), with the grace each source actually needs
+- Page payloads carry `degraded` and `warnings`, so fallback inputs are labeled rather than hidden
 - Yahoo/CBOE/COT memoization and last-known-good fallback persistence
-- Holiday-aware market status logic
 - Breadth sample reconciled against a tracked S&P 500 constituent list (`config/sp500_constituents.csv`); refresh it with `python scripts/update_sp500_constituents.py` — the breadth page warns when it is stale
 
+## Layout
+- `api/` — FastAPI app (`api.main:app`); one service module per page
+- `frontend/` — Next.js app; see [frontend/README.md](frontend/README.md)
+- `scheduler/daily_update.py` — the refresh pipeline that writes `data/market_data.db`
+- `data_collectors/`, `processors/`, `database/`, `utils/` — collectors, signal math, SQLite access
+- `scripts/` — maintenance scripts
+- `tests/` — pytest suite
+
 ## Local Run
-1. Create and activate a virtual environment.
-2. Install dependencies:
+1. Create a Python 3.13 virtual environment and install the backend:
 ```bash
 pip install -r requirements.txt
 ```
-3. Add secrets:
+2. Add secrets (FRED key required; Nasdaq Data Link recommended):
 ```bash
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+cp sample.env .env
 ```
-4. Run:
+3. Fill the database (several minutes; hits the upstream sources):
 ```bash
-streamlit run dashboard/app.py
+python scheduler/daily_update.py
+```
+4. Start the API:
+```bash
+uvicorn api.main:app --port 8000
+```
+5. Start the frontend (see `frontend/README.md` for `MARKET_API_URL`):
+```bash
+cd frontend && npm install && npm run dev
 ```
 
-## Deploy Publicly (Streamlit Cloud)
-Use:
-- `/Users/tristanalejandro/Market Dashboard/DEPLOY.md`
+## Deploy
+See [docs/cutover-plan.md](docs/cutover-plan.md): Render backend from `render.yaml`, Vercel frontend, and the GitHub Actions refresh job (`.github/workflows/refresh.yml`) gated by the `REFRESH_ENABLED` repository variable.
 
-Main app entry:
-- `dashboard/app.py`
-
-## Public Release Checklist
-- Keep `.streamlit/secrets.toml` local only (already gitignored)
-- Use `.streamlit/secrets.toml.example` for collaborators
-- Optional: set `SETTINGS_PAGE_PASSWORD` in secrets to lock API settings
-- Confirm tests pass before each push:
+## Tests
 ```bash
 pytest -q
 ```
-- Confirm app boot:
 ```bash
-streamlit run dashboard/app.py
+cd frontend && npm run lint && npx tsc --noEmit
 ```
-- Rotate any keys that were ever shared outside your private environment
 
 ## License
-Licensed under GNU AGPL v3. See:
-- `/Users/tristanalejandro/Market Dashboard/LICENSE`
+Licensed under GNU AGPL v3. See [LICENSE](LICENSE).
 
 ## Source
 - [https://github.com/sykurtyppi/market-dashboard](https://github.com/sykurtyppi/market-dashboard)

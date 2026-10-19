@@ -1,4 +1,4 @@
-"""Assemble the Overview page payload from the backend, Streamlit-free.
+"""Assemble the Overview page payload from the backend.
 
 Reads the latest daily snapshot and a couple of history series from SQLite and
 shapes them into a single JSON-friendly dict the frontend renders directly.
