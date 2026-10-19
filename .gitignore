@@ -17,7 +17,7 @@ env/
 *.key
 config/config.yaml
 !config/parameters.yaml
-.streamlit/secrets.toml
+.streamlit/
 
 # Databases
 *.db
@@ -40,7 +40,6 @@ reports/*.pdf
 *.broken
 *.yourversion
 *~
-dashboard/app.py.local_backup_*
 .minimax/
 
 # Test files in wrong locations

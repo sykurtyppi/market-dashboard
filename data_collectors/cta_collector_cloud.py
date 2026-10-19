@@ -1,6 +1,6 @@
 """
 CTA Collector (Cloud Compatible) - Works without persistent database
-Fetches price data directly from Yahoo Finance for Streamlit Cloud deployment.
+Fetches price data directly from Yahoo Finance so it runs without a local price cache.
 """
 
 import yfinance as yf
@@ -27,7 +27,7 @@ class CTAResultCloud:
 class CTACollectorCloud:
     """
     Cloud-compatible CTA collector that fetches data on-demand.
-    No persistent database required - works on Streamlit Cloud.
+    No persistent database required.
     """
 
     # Default CTA universe

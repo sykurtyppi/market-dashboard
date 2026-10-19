@@ -50,7 +50,7 @@ def _asc(df):
 
     Some DatabaseManager history methods return newest-first (DESC), which makes
     iloc[-1] the OLDEST row and reverses charts. Sorting here keeps the API
-    correct without changing db_manager (the live Streamlit app depends on it).
+    correct without changing db_manager's return order.
     """
     if df is None or df.empty:
         return df

@@ -1,6 +1,6 @@
 # Deployment Cutover Plan — Streamlit → FastAPI + Next.js
 
-**Status:** Decisions made (§9); config artifacts committed (`render.yaml`, `.github/workflows/refresh.yml`). Infrastructure not yet provisioned — Phase A–D pending.
+**Status:** Decisions made (§9); config artifacts committed (`render.yaml`, `.github/workflows/refresh.yml`). Infrastructure not yet provisioned — Phase A–D pending. Streamlit code removed from the repo 2026-10-19.
 **Author:** Claude Code · **Date:** 2026-07-06 · **Revision:** 3 (§9 decisions recorded; deploy artifacts added)
 
 This plan describes how to take the completed custom frontend (16 analysis pages
@@ -121,9 +121,9 @@ value** goes on the backend, the frontend, and the GH Actions cron.
 |---|---|---|
 | `REFRESH_ENABLED` | `true` | Enables the scheduled job. Until it is set, scheduled runs show as **skipped** rather than a misleading green success. Manual runs always execute. |
 
-> Secrets hygiene: `.streamlit/secrets.toml` and `data/*.db` are already
-> gitignored (verified). Only `.example` files are tracked. Do **not** commit
-> real keys — set them in each platform's env UI / secret store.
+> Secrets hygiene: `.env` and `data/*.db` are gitignored (verified). Only
+> `sample.env` is tracked. Do **not** commit real keys — set them in each
+> platform's env UI / secret store.
 
 ---
 
@@ -248,13 +248,14 @@ seeding with the history you already have:
     variable; run it once via `workflow_dispatch` to
     confirm the trigger → poll → freshness-gate path works end-to-end.
 11. (If a custom domain exists) point it at Vercel.
-12. **Retire Streamlit:** take the Streamlit Cloud app **offline but unlisted**
-    (do not delete). Keep it recoverable as rollback for several days before
-    deleting.
+12. **Retire the Streamlit Cloud app** (if one is still running): delete it.
+    Its code left the repo on 2026-10-19 (tag `streamlit-final` marks the last
+    commit that has it), so an app deploying from `main` no longer finds
+    `dashboard/app.py`.
 
-**Rollback:** until Streamlit is deleted, reverting is just re-pointing
-users/DNS back to the Streamlit app. The new stack shares no state with it, so
-there's no data migration to undo.
+**Rollback:** the new stack shares no state with the old app, so there is no
+data migration to undo. Rolling back means redeploying the old app from a
+branch cut at the `streamlit-final` tag.
 
 ---
 
@@ -263,7 +264,7 @@ there's no data migration to undo.
 The served SQLite file is the system's only stateful asset, and part of its
 value (daily history) is **not regenerable** by a fresh refresh. Protect it:
 
-- **Before retiring Streamlit:** take a one-time off-host export of the current
+- **Before the first deploy:** take a one-time off-host export of the current
   DB — `sqlite3 data/market_data.db ".backup backup-YYYYMMDD.db"` — and store it
   somewhere durable (object storage, or just off the server). This is also the
   seed artifact from Phase B step 4.
@@ -287,13 +288,10 @@ value (daily history) is **not regenerable** by a fresh refresh. Protect it:
 - **Second SQLite file.** `data/cta_prices.db` also exists; the CTA page uses
   the *cloud* collector (live fetch), so this is a local cache and not required
   on the server, but confirm during Phase B that `/api/cta` works without it.
-- **Streamlit still in `requirements.txt`.** `secrets_helper.py` imports
-  streamlit lazily inside a `try/except`, so the API runs fine without it — but
-  the pinned dep bloats the backend image and slows cold starts. Optional
-  follow-up: a `requirements-api.txt` without streamlit for the backend build.
-- **Full Streamlit code removal is a separate cleanup.** ~20 files still import
-  streamlit. Cutover only means *stop serving* Streamlit; deleting that code is
-  its own later phase, not a prerequisite.
+- **Streamlit is gone from the repo (2026-10-19).** `requirements.txt` is
+  backend-only (no streamlit, plotly, scipy, fpdf2, pandas_market_calendars)
+  and `secrets_helper.py` reads the environment only. Nothing in the backend
+  build depends on the old UI.
 - **Node/Python action versions.** CI logs a Node 20 deprecation warning
   (`actions/checkout@v4`, `setup-node@v4`, `setup-python@v5`). Bump to current
   majors when convenient — unrelated to deploy but touches the same workflows.
@@ -312,8 +310,8 @@ value (daily history) is **not regenerable** by a fresh refresh. Protect it:
 3. **Refresh cadence: twice each weekday** — 14:00 UTC (after the open) and
    21:30 UTC (after the close). Workflow committed as
    `.github/workflows/refresh.yml`; the `_refresh_lock` makes extra runs safe.
-4. **Streamlit: unlist-and-keep** as rollback for a couple of weeks after the
-   new stack is verified live, then delete.
+4. **Streamlit: removed from the repo** on 2026-10-19 (tag `streamlit-final`).
+   Delete any Streamlit Cloud app still pointed at this repo; see §6 step 12.
 
 With the artifacts committed, what remains is Phase A–D execution (§6) — the
 provisioning steps that need dashboard access: create the Render service from

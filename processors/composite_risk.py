@@ -1,9 +1,9 @@
 """Composite risk score for the Overview page.
 
-Moved out of the legacy Streamlit helpers so the API's headline number does
-not depend on that package, and so the arithmetic can be tested. The API
-used to import this through a catch-all that blanked the score on any
-failure, and the credit term was never contributing (see normalize()).
+Kept in processors/ (not the API layer) so the arithmetic can be tested on
+its own. The API used to import this through a catch-all that blanked the
+score on any failure, and the credit term was never contributing (see
+normalize()).
 
 Score 0–100: higher = more caution warranted. Each input is normalized to
 0–100 against a fixed window, then weighted; weights are renormalized over

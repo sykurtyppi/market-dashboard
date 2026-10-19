@@ -128,7 +128,3 @@ class TestShape:
         puts = calculate_composite_risk_score({"put_call_ratio": 1.4})["score"]
         calls = calculate_composite_risk_score({"put_call_ratio": 0.6})["score"]
         assert puts < calls
-
-    def test_legacy_ui_import_is_the_same_function(self):
-        from dashboard.ui_helpers import calculate_composite_risk_score as legacy
-        assert legacy is calculate_composite_risk_score

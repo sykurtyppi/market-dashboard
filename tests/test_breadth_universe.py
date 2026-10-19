@@ -11,15 +11,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data_collectors.breadth_collector import SP500ADLineCalculator as Live  # noqa: E402
-from data_collectors.sp500_adline_calculator import SP500ADLineCalculator as Legacy  # noqa: E402
 
 RETIRED = {"MMC": "MRSH"}  # old symbol -> current symbol
 TICKER = re.compile(r"^[A-Z][A-Z0-9.\-]{0,5}$")
 
 UNIVERSES = {
     "live representative": Live.REPRESENTATIVE_STOCKS,
-    "legacy representative": Legacy.REPRESENTATIVE_STOCKS,
-    "legacy full": Legacy.FULL_SP500_STOCKS,
 }
 
 

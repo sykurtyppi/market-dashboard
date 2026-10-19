@@ -3,7 +3,7 @@
 Custom frontend for the Market Risk Dashboard. Next.js (App Router) +
 TypeScript + Tailwind v4, talking to the FastAPI backend in [`../api`](../api).
 
-Part of the Phase 0 rewrite that replaces the Streamlit UI. See
+Replaced the Streamlit UI (removed from the repo in October 2026). Background:
 [`../claudedocs/frontend-rewrite-plan.md`](../claudedocs/frontend-rewrite-plan.md).
 
 ## Prerequisites

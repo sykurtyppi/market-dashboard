@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 
 const SOURCE_LABEL: Record<string, string> = {
   environment: "Environment",
-  streamlit_secrets: "Secrets store",
 };
 
 function Content({ data, freshness }: { data: Settings; freshness: Freshness }) {
