@@ -5,7 +5,7 @@ shapes them into a single JSON-friendly dict the frontend renders directly.
 Everything is defensive: missing fields degrade to null/neutral rather than
 raising, so a partial database still yields a usable page.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -63,10 +63,12 @@ def _series(
 # --- state classification (returns one of good|warn|crit|neutral) ---
 
 def _credit_state(hy_pct: Optional[float]) -> str:
-    """HY OAS in percent. The old 3.0% "watch" line sat near the series' all-time
-    tight (2.59%) and below its 2020–26 median (~3.4%), so a benign tape read
-    "Elevated". Bands follow the distribution: under 4% is tight-to-normal,
-    4–5.5% is wide (long-run mean is ~5.4%), 5.5%+ is stress (2016, 2022)."""
+    """HY OAS in percent. The old 3.0% "watch" line was the median of the last
+    three years locally (2.59–4.61%, median 2.99%), so about half of all days
+    read "Elevated" on a benign tape. Bands follow the distribution: under 4%
+    is tight-to-normal (locally, 1.6% of days exceeded it, all April 2025);
+    4–5.5% is wide (the long-run mean is roughly 5.4%); 5.5%+ is stress, as in
+    2016 and 2022."""
     if hy_pct is None:
         return "neutral"
     if hy_pct < 4.0:
@@ -123,7 +125,7 @@ def _put_call_source(snapshot: Dict) -> str:
     return "Best available"
 
 
-def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) -> tuple[Optional[int], Dict[str, Any]]:
+def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) -> Tuple[Optional[int], Dict[str, Any]]:
     """Headline score plus the breakdown the page shows under it.
 
     Imported directly: the old try/except around a dashboard import returned
@@ -136,6 +138,7 @@ def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) 
         "weights": result.get("weights", {}),
         "missing": result.get("missing", []),
         "interpretation": result.get("interpretation"),
+        "put_call_source": result.get("put_call_source"),
     }
     return (int(round(score)) if score is not None else None), breakdown
 
@@ -176,7 +179,7 @@ def build_overview() -> Dict[str, Any]:
         "breakdown": breakdown,
         "components": [
             {"key": "credit", "label": "Credit", "state": _credit_state(hy),
-             "value": "No stress" if _credit_state(hy) == "good" else "Watch",
+             "value": {"good": "No stress", "warn": "Watch", "crit": "Stress"}.get(_credit_state(hy), "Watch"),
              "note": f"HY spread {hy:.2f}%" if hy is not None else "n/a"},
             {"key": "volatility", "label": "Volatility", "state": _contango_state(contango),
              "value": "Contango" if _contango_state(contango) == "good" else "Backwardation",

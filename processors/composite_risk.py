@@ -3,12 +3,12 @@
 Moved out of the legacy Streamlit helpers so the API's headline number does
 not depend on that package, and so the arithmetic can be tested. The API
 used to import this through a catch-all that blanked the score on any
-failure, and the credit term was never contributing (see below).
+failure, and the credit term was never contributing (see normalize()).
 
-Score 0–100: higher = more caution warranted. Each component is normalized
-to 0–100 against a fixed range, then weighted; weights are renormalized over
-the components actually present, and the absent ones are reported so a
-reader can see what the score is NOT based on.
+Score 0–100: higher = more caution warranted. Each input is normalized to
+0–100 against a fixed window, then weighted; weights are renormalized over
+the inputs actually present, and the absent ones are reported so a reader
+can see what the score is NOT based on.
 
 Design note, not a bug: sentiment and put/call are CONTRARIAN here — extreme
 fear and heavy put buying LOWER the score, on the view that they mark
@@ -21,9 +21,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-# (weight, documented input range) for each component. Ranges are the
-# normalization window: at or below the low end scores 0, at or above the
-# high end scores 100.
+# Weight per input. The normalization windows live in normalize().
 COMPONENTS: Dict[str, Dict[str, Any]] = {
     "vix":       {"weight": 0.15, "label": "VIX"},
     "credit":    {"weight": 0.20, "label": "HY credit spread"},
@@ -33,6 +31,15 @@ COMPONENTS: Dict[str, Dict[str, Any]] = {
     "move":      {"weight": 0.10, "label": "MOVE"},
     "skew":      {"weight": 0.10, "label": "SKEW"},
     "put_call":  {"weight": 0.05, "label": "Put/Call"},
+}
+
+# Put/call windows by source. The CBOE equity ratio (PCCE) and the SPY volume
+# proxy are different series on different scales; one window cannot serve
+# both: the proxy's own median (~1.1) read as "fearful" on the PCCE window.
+PUT_CALL_WINDOWS = {
+    "CBOE equity P/C (PCCE)": (0.5, 1.5),
+    "SPY volume proxy": (0.8, 2.0),   # from the proxy's stored range, 0.94–1.91; revisit with more history
+    "Best available": (0.5, 1.5),
 }
 
 BANDS = [
@@ -50,16 +57,16 @@ def _clamp(value: float) -> float:
 
 def _num(value: Any) -> Optional[float]:
     try:
-        if value is None:
+        if value is None or isinstance(value, bool):
             return None
         out = float(value)
-        return None if out != out else out  # NaN
-    except (TypeError, ValueError):
+        return None if (out != out or out in (float("inf"), float("-inf"))) else out
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
-def normalize(name: str, value: float) -> float:
-    """0–100 risk contribution of one input, by the ranges documented here."""
+def normalize(name: str, value: float, put_call_source: str = "Best available") -> float:
+    """0–100 risk contribution of one input against its documented window."""
     if name == "vix":
         # VIX 10 -> 0, 60 -> 100
         return _clamp((value - 10.0) / 50.0 * 100.0)
@@ -82,12 +89,27 @@ def normalize(name: str, value: float) -> float:
         # MOVE 70 -> 0, 170 -> 100
         return _clamp((value - 70.0) / 100.0 * 100.0)
     if name == "skew":
-        # SKEW 110 -> 0, 150 -> 100
-        return _clamp((value - 110.0) / 40.0 * 100.0)
+        # SKEW 120 -> 0, 170 -> 100. The previous 110–150 window dated from a
+        # regime that ended around 2020: locally SKEW has printed 137–169 with a
+        # median near 146, so a typical day scored ~89 and a third of days
+        # saturated at 100 — a near-constant 7–10 points under the headline.
+        return _clamp((value - 120.0) / 50.0 * 100.0)
     if name == "put_call":
-        # P/C 1.5 -> 0, 0.5 -> 100 (contrarian: heavy put buying lowers risk)
-        return _clamp((1.5 - value) / 1.0 * 100.0)
+        # Contrarian: heavy put buying (high ratio) lowers risk. Window by source.
+        low, high = PUT_CALL_WINDOWS.get(put_call_source, PUT_CALL_WINDOWS["Best available"])
+        return _clamp((high - value) / (high - low) * 100.0)
     raise KeyError(name)
+
+
+def put_call_input(snapshot: Dict[str, Any]) -> tuple[Optional[float], str]:
+    """The put/call series actually present, and which one it is."""
+    cboe = _num(snapshot.get("cboe_equity_pc"))
+    if cboe is not None:
+        return cboe, "CBOE equity P/C (PCCE)"
+    spy = _num(snapshot.get("spy_put_call"))
+    if spy is not None:
+        return spy, "SPY volume proxy"
+    return _num(snapshot.get("put_call_ratio")), "Best available"
 
 
 def calculate_composite_risk_score(
@@ -100,45 +122,49 @@ def calculate_composite_risk_score(
     Args:
         snapshot: latest daily_snapshots row (vix_spot, credit_spread_hy in
             percent, fear_greed_score, market_breadth as a 0–1 share, skew,
-            put_call_ratio).
+            and the put/call columns).
         vrp_data: latest vrp_data row (vrp).
         move_index: latest MOVE level. It lives in its own table, not the
-            snapshot — the old code read snapshot['move_index'], which never
-            existed, so the documented 10% MOVE weight never applied.
+            snapshot, so callers must pass it — the old code read a snapshot
+            key that never existed and the documented 10% weight never applied.
     """
+    empty = {"score": None, "components": {}, "weights": {}, "missing": list(COMPONENTS), "put_call_source": None}
     if not snapshot:
-        return {"score": None, "status": "No data", "components": {}, "weights": {}, "missing": list(COMPONENTS)}
+        return {**empty, "status": "No data"}
 
+    pc_value, pc_source = put_call_input(snapshot)
     raw = {
         "vix": _num(snapshot.get("vix_spot")),
         "credit": _num(snapshot.get("credit_spread_hy")),
         "sentiment": _num(snapshot.get("fear_greed_score")),
         "vrp": _num((vrp_data or {}).get("vrp")),
         "breadth": _num(snapshot.get("market_breadth")),
-        "move": _num(move_index if move_index is not None else snapshot.get("move_index")),
+        "move": _num(move_index),
         "skew": _num(snapshot.get("skew")),
-        "put_call": _num(snapshot.get("put_call_ratio")),
+        "put_call": pc_value,
     }
 
-    components = {name: round(normalize(name, value), 1) for name, value in raw.items() if value is not None}
-    weights = {name: COMPONENTS[name]["weight"] for name in components}
-    missing = [name for name in COMPONENTS if name not in components]
+    scored = {name: normalize(name, value, pc_source) for name, value in raw.items() if value is not None}
+    weights = {name: COMPONENTS[name]["weight"] for name in scored}
+    missing = [name for name in COMPONENTS if name not in scored]
 
-    if not components:
-        return {"score": None, "status": "Insufficient data", "components": {}, "weights": {}, "missing": missing}
+    if not scored:
+        return {**empty, "missing": missing, "status": "Insufficient data"}
 
     total_weight = sum(weights.values())
-    score = round(sum(components[k] * weights[k] for k in components) / total_weight, 1)
+    # Score from unrounded contributions; round only what is displayed.
+    score = round(sum(scored[k] * weights[k] for k in scored) / total_weight, 1)
+    _, interpretation, color, description = next(b for b in BANDS if score >= b[0])
 
-    threshold, interpretation, color, description = next(b for b in BANDS if score >= b[0])
     return {
         "score": score,
         "interpretation": interpretation,
         "color": color,
         "description": description,
-        "components": components,
+        "components": {k: round(v, 1) for k, v in scored.items()},
         "weights": weights,
         "missing": missing,
-        "component_count": len(components),
+        "put_call_source": pc_source if "put_call" in scored else None,
+        "component_count": len(scored),
         "timestamp": datetime.now().isoformat(),
     }

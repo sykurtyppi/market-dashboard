@@ -36,6 +36,13 @@ class TestCreditBands:
     def test_bands_follow_the_series_distribution(self, hy, state):
         assert _credit_state(hy) == state
 
+    def test_credit_and_liquidity_page_uses_the_same_bands(self):
+        # The same 3.23% read "Supportive" on the Overview and "Elevated" on
+        # Credit & Liquidity; one function now serves both.
+        from api import pages_service
+        assert pages_service._credit_state is _credit_state
+        assert not hasattr(pages_service, "_hy_state")
+
 
 class TestPutCallSource:
     def test_names_the_series_actually_stored(self):
@@ -49,11 +56,19 @@ class TestBuildOverview:
         with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1})):
             body = build_overview()
         regime = body["regime"]
-        assert regime["composite_risk"] == 32            # was 26 with credit stuck at 0 and no MOVE
+        assert regime["composite_risk"] == 33            # was 26 with credit stuck at 0 and no MOVE
         assert regime["breakdown"]["missing"] == []
         assert regime["breakdown"]["components"]["credit"] == pytest.approx(24.6)
+        assert regime["breakdown"]["put_call_source"] == "SPY volume proxy"
         credit = next(c for c in regime["components"] if c["key"] == "credit")
         assert credit["state"] == "good" and credit["value"] == "No stress"
+
+    def test_credit_cell_names_stress_not_watch_when_critical(self):
+        with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1})):
+            with patch.dict(SNAPSHOT, {"credit_spread_hy": 6.2}):
+                body = build_overview()
+        credit = next(c for c in body["regime"]["components"] if c["key"] == "credit")
+        assert (credit["state"], credit["value"]) == ("crit", "Stress")
 
     def test_missing_move_is_declared_not_hidden(self):
         with patch("api.overview_service.get_db", return_value=fake_db({})):

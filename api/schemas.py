@@ -43,6 +43,7 @@ class RegimeBreakdown(BaseModel):
     weights: Dict[str, float] = Field(default_factory=dict)
     missing: List[str] = Field(default_factory=list)              # documented inputs absent today
     interpretation: Optional[str] = None
+    put_call_source: Optional[str] = None
 
 
 class Regime(BaseModel):

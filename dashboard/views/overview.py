@@ -165,7 +165,8 @@ NASDAQ_DATA_LINK_KEY = "your_key_here"  # Optional""")
 
     with risk_col:
         # Composite Risk Score
-        risk_score = calculate_composite_risk_score(snapshot, vrp_data)
+        move_row = components["db"].get_latest_move() if components.get("db") else {}
+        risk_score = calculate_composite_risk_score(snapshot, vrp_data, move_index=(move_row or {}).get("move"))
         if risk_score.get('score') is not None:
             st.markdown("#### 📊 Risk Score")
             score = risk_score['score']

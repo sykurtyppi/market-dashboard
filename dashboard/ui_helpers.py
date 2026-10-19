@@ -17,6 +17,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from utils.data_status import DataResult, DataStatus, format_age_string
+# The composite risk score lives in processors; re-exported for dashboard/views/overview.py.
+from processors.composite_risk import calculate_composite_risk_score  # noqa: F401
 
 
 # =============================================================================
@@ -835,11 +837,6 @@ def get_historical_export_data(db_manager, days: int = 90) -> pd.DataFrame:
 # =============================================================================
 # COMPOSITE RISK SCORE
 # =============================================================================
-
-# The score itself lives in processors.composite_risk (API and this UI share
-# it); kept importable here for dashboard/views/overview.py.
-from processors.composite_risk import calculate_composite_risk_score  # noqa: E402,F401
-
 
 # =============================================================================
 # TIMESTAMP DISPLAY HELPERS

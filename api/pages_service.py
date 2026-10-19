@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from typing import Any, Dict, List
 
 from api.deps import get_db
-from api.overview_service import _num, _series
+from api.overview_service import _credit_state, _num, _series
 from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, load_constituents
 
 
@@ -262,14 +262,6 @@ def _latest_val(df) -> float | None:
     return _num(df[cols[0]].iloc[-1]) if cols else None
 
 
-def _hy_state(hy: float | None) -> str:
-    if hy is None:
-        return "neutral"
-    if hy < 3.0:
-        return "good"
-    if hy < 5.0:
-        return "warn"
-    return "crit"
 
 
 def build_credit_liquidity() -> dict:
@@ -297,7 +289,7 @@ def build_credit_liquidity() -> dict:
 
     metrics = [
         {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
-         "state": _hy_state(hy), "source": "FRED (BAMLH0A0HYM2)"},
+         "state": _credit_state(hy), "source": "FRED (BAMLH0A0HYM2)"},
         {"key": "ig", "label": "IG Credit Spread", "value": ig, "unit": "%",
          "state": "neutral", "source": "FRED (BAMLC0A0CM)"},
         {"key": "fed_assets", "label": "Fed Total Assets", "value": to_t(total_assets), "unit": "T",
