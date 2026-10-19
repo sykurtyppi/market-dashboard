@@ -53,7 +53,18 @@ export interface Overview {
   freshness: Freshness;
   warnings: string[];
   left_signal: string | null;
-  regime: { composite_risk: number | null; components: RegimeComponent[] };
+  regime: {
+    composite_risk: number | null;
+    // 0–100 contribution per input, the weights used, and documented inputs
+    // absent today — so the headline is never a number without a basis.
+    breakdown?: {
+      components: Record<string, number>;
+      weights: Record<string, number>;
+      missing: string[];
+      interpretation: string | null;
+    } | null;
+    components: RegimeComponent[];
+  };
   metrics: Metric[];
   charts: {
     vrp_history: Point[];

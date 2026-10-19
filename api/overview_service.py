@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from api.deps import get_db
+from processors.composite_risk import calculate_composite_risk_score
 
 
 def _num(value: Any) -> Optional[float]:
@@ -62,11 +63,15 @@ def _series(
 # --- state classification (returns one of good|warn|crit|neutral) ---
 
 def _credit_state(hy_pct: Optional[float]) -> str:
+    """HY OAS in percent. The old 3.0% "watch" line sat near the series' all-time
+    tight (2.59%) and below its 2020–26 median (~3.4%), so a benign tape read
+    "Elevated". Bands follow the distribution: under 4% is tight-to-normal,
+    4–5.5% is wide (long-run mean is ~5.4%), 5.5%+ is stress (2016, 2022)."""
     if hy_pct is None:
         return "neutral"
-    if hy_pct < 3.0:
+    if hy_pct < 4.0:
         return "good"
-    if hy_pct < 5.0:
+    if hy_pct < 5.5:
         return "warn"
     return "crit"
 
@@ -109,21 +114,38 @@ def _contango_state(c: Optional[float]) -> str:
     return "good" if c > 0 else "crit"
 
 
-def _composite(snapshot: Dict, vrp_data: Optional[Dict]) -> Optional[int]:
-    """Use the dashboard's composite risk score if available; else None."""
-    try:
-        from dashboard.ui_helpers import calculate_composite_risk_score
-        result = calculate_composite_risk_score(snapshot, vrp_data)
-        score = result.get("score") if isinstance(result, dict) else None
-        return int(round(score)) if score is not None else None
-    except Exception:
-        return None
+def _put_call_source(snapshot: Dict) -> str:
+    """Which put/call series the stored 'best available' ratio actually is."""
+    if _num(snapshot.get("cboe_equity_pc")) is not None:
+        return "CBOE equity P/C (PCCE)"
+    if _num(snapshot.get("spy_put_call")) is not None:
+        return "SPY volume proxy"
+    return "Best available"
+
+
+def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) -> tuple[Optional[int], Dict[str, Any]]:
+    """Headline score plus the breakdown the page shows under it.
+
+    Imported directly: the old try/except around a dashboard import returned
+    None on any failure, blanking the headline with no trace.
+    """
+    result = calculate_composite_risk_score(snapshot, vrp_data, move_index=move)
+    score = result.get("score")
+    breakdown = {
+        "components": result.get("components", {}),
+        "weights": result.get("weights", {}),
+        "missing": result.get("missing", []),
+        "interpretation": result.get("interpretation"),
+    }
+    return (int(round(score)) if score is not None else None), breakdown
 
 
 def build_overview() -> Dict[str, Any]:
     db = get_db()
     snapshot = db.get_latest_snapshot(include_age=True) or {}
     vrp_data = db.get_latest_vrp() or {}
+    move_row = db.get_latest_move() or {}
+    composite, breakdown = _composite(snapshot, vrp_data, _num(move_row.get("move")))
 
     hy = _num(snapshot.get("credit_spread_hy"))
     ig = _num(snapshot.get("credit_spread_ig"))
@@ -150,7 +172,8 @@ def build_overview() -> Dict[str, Any]:
     ]
 
     regime = {
-        "composite_risk": _composite(snapshot, vrp_data),
+        "composite_risk": composite,
+        "breakdown": breakdown,
         "components": [
             {"key": "credit", "label": "Credit", "state": _credit_state(hy),
              "value": "No stress" if _credit_state(hy) == "good" else "Watch",
@@ -178,9 +201,9 @@ def build_overview() -> Dict[str, Any]:
         {"indicator": "SKEW Index", "value": _num(snapshot.get("skew")),
          "state": "neutral", "source": "CBOE"},
         {"indicator": "VIX9D", "value": _num(snapshot.get("vix9d")),
-         "state": "good", "source": "CBOE"},
+         "state": _vix_state(_num(snapshot.get("vix9d"))), "source": "CBOE"},
         {"indicator": "Put / Call Ratio", "value": _num(snapshot.get("put_call_ratio")),
-         "state": "neutral", "source": "CBOE (PCCE)"},
+         "state": "neutral", "source": _put_call_source(snapshot)},
         {"indicator": "Market Breadth", "value": (breadth * 100) if breadth is not None else None,
          "unit": "%", "state": _breadth_state(breadth), "source": "S&P 500 A/D"},
     ]

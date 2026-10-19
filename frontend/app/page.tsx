@@ -6,6 +6,19 @@ import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
+const DRIVER_LABELS: Record<string, string> = {
+  vix: "VIX", credit: "credit", sentiment: "sentiment", vrp: "VRP",
+  breadth: "breadth", move: "MOVE", skew: "SKEW", put_call: "put/call",
+};
+
+function driversLine(b: NonNullable<Overview["regime"]["breakdown"]>): string {
+  const parts = Object.entries(b.components)
+    .sort((x, y) => y[1] - x[1])
+    .map(([k, v]) => `${DRIVER_LABELS[k] ?? k} ${Math.round(v)}`);
+  const missing = b.missing.length > 0 ? ` · not included: ${b.missing.map((k) => DRIVER_LABELS[k] ?? k).join(", ")}` : "";
+  return `Drivers (0–100): ${parts.join(" · ")}${missing}`;
+}
+
 function stateLabel(state: string): string {
   switch (state) {
     case "good": return "Supportive";
@@ -58,6 +71,7 @@ function OverviewContent({ data }: { data: Overview }) {
               <span className="note">
                 {data.left_signal ? `LEFT signal: ${data.left_signal}` : "Aggregated risk indicators"}
               </span>
+              {data.regime.breakdown ? <span className="note">{driversLine(data.regime.breakdown)}</span> : null}
             </div>
             {data.regime.components.map((c) => <RegimeCell key={c.key} c={c} />)}
           </div>
