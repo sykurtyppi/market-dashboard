@@ -6,6 +6,30 @@ import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
+const DRIVER_LABELS: Record<string, string> = {
+  vix: "VIX", credit: "Credit", sentiment: "Sentiment", vrp: "VRP",
+  breadth: "Breadth", move: "MOVE", skew: "SKEW", put_call: "Put/call",
+};
+
+// Each input's share of the headline, in points: normalized score × weight,
+// over the weights present. They sum to the score, so the order is the
+// true order of influence (sorting by the 0–100 scores alone put a 5%-weight
+// input ahead of a 20% one).
+function driversLine(b: NonNullable<Overview["regime"]["breakdown"]>): string {
+  const totalWeight = Object.values(b.weights).reduce((acc, w) => acc + w, 0) || 1;
+  const parts = Object.entries(b.components)
+    .map(([k, v]) => [k, (v * (b.weights[k] ?? 0)) / totalWeight] as const)
+    .sort((x, y) => y[1] - x[1])
+    .map(([k, pts]) => {
+      const label = k === "put_call" && b.put_call_source ? `${DRIVER_LABELS[k]} (${b.put_call_source})` : (DRIVER_LABELS[k] ?? k);
+      return `${label} ${pts.toFixed(1)}`;
+    });
+  const missing = b.missing.length > 0 ? `not included: ${b.missing.map((k) => DRIVER_LABELS[k] ?? k).join(", ")}` : "";
+  const hasContrarian = "sentiment" in b.components || "put_call" in b.components;
+  const contrarian = hasContrarian ? "fear and heavy put buying lower the score" : "";
+  return ["Points toward the score: " + (parts.join(" · ") || "none"), missing, contrarian].filter(Boolean).join(" · ");
+}
+
 function stateLabel(state: string): string {
   switch (state) {
     case "good": return "Supportive";
@@ -58,6 +82,7 @@ function OverviewContent({ data }: { data: Overview }) {
               <span className="note">
                 {data.left_signal ? `LEFT signal: ${data.left_signal}` : "Aggregated risk indicators"}
               </span>
+              {data.regime.breakdown ? <span className="note">{driversLine(data.regime.breakdown)}</span> : null}
             </div>
             {data.regime.components.map((c) => <RegimeCell key={c.key} c={c} />)}
           </div>

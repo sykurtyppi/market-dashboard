@@ -38,8 +38,17 @@ class RegimeComponent(BaseModel):
     note: str
 
 
+class RegimeBreakdown(BaseModel):
+    components: Dict[str, float] = Field(default_factory=dict)   # 0–100 per input
+    weights: Dict[str, float] = Field(default_factory=dict)
+    missing: List[str] = Field(default_factory=list)              # documented inputs absent today
+    interpretation: Optional[str] = None
+    put_call_source: Optional[str] = None
+
+
 class Regime(BaseModel):
     composite_risk: Optional[int] = None
+    breakdown: Optional[RegimeBreakdown] = None
     components: List[RegimeComponent]
 
 

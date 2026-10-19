@@ -5,11 +5,12 @@ shapes them into a single JSON-friendly dict the frontend renders directly.
 Everything is defensive: missing fields degrade to null/neutral rather than
 raising, so a partial database still yields a usable page.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
 from api.deps import get_db
+from processors.composite_risk import calculate_composite_risk_score, put_call_input
 
 
 def _num(value: Any) -> Optional[float]:
@@ -62,11 +63,17 @@ def _series(
 # --- state classification (returns one of good|warn|crit|neutral) ---
 
 def _credit_state(hy_pct: Optional[float]) -> str:
+    """HY OAS in percent. The old 3.0% "watch" line was the median of the last
+    three years locally (2.59–4.61%, median 2.99%), so about half of all days
+    read "Elevated" on a benign tape. Bands follow the distribution: under 4%
+    is tight-to-normal (locally, 1.6% of days exceeded it, all April 2025);
+    4–5.5% is wide (the long-run mean is roughly 5.4%); 5.5%+ is stress, as in
+    2016 and 2022."""
     if hy_pct is None:
         return "neutral"
-    if hy_pct < 3.0:
+    if hy_pct < 4.0:
         return "good"
-    if hy_pct < 5.0:
+    if hy_pct < 5.5:
         return "warn"
     return "crit"
 
@@ -109,21 +116,35 @@ def _contango_state(c: Optional[float]) -> str:
     return "good" if c > 0 else "crit"
 
 
-def _composite(snapshot: Dict, vrp_data: Optional[Dict]) -> Optional[int]:
-    """Use the dashboard's composite risk score if available; else None."""
-    try:
-        from dashboard.ui_helpers import calculate_composite_risk_score
-        result = calculate_composite_risk_score(snapshot, vrp_data)
-        score = result.get("score") if isinstance(result, dict) else None
-        return int(round(score)) if score is not None else None
-    except Exception:
-        return None
+def _put_call_source(snapshot: Dict) -> str:
+    """Which put/call series the stored ratio actually is — one rule, shared with the score."""
+    return put_call_input(snapshot)[1]
+
+
+def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) -> Tuple[Optional[int], Dict[str, Any]]:
+    """Headline score plus the breakdown the page shows under it.
+
+    Imported directly: the old try/except around a dashboard import returned
+    None on any failure, blanking the headline with no trace.
+    """
+    result = calculate_composite_risk_score(snapshot, vrp_data, move_index=move)
+    score = result.get("score")
+    breakdown = {
+        "components": result.get("components", {}),
+        "weights": result.get("weights", {}),
+        "missing": result.get("missing", []),
+        "interpretation": result.get("interpretation"),
+        "put_call_source": result.get("put_call_source"),
+    }
+    return (int(round(score)) if score is not None else None), breakdown
 
 
 def build_overview() -> Dict[str, Any]:
     db = get_db()
     snapshot = db.get_latest_snapshot(include_age=True) or {}
     vrp_data = db.get_latest_vrp() or {}
+    move_row = db.get_latest_move() or {}
+    composite, breakdown = _composite(snapshot, vrp_data, _num(move_row.get("move")))
 
     hy = _num(snapshot.get("credit_spread_hy"))
     ig = _num(snapshot.get("credit_spread_ig"))
@@ -150,10 +171,11 @@ def build_overview() -> Dict[str, Any]:
     ]
 
     regime = {
-        "composite_risk": _composite(snapshot, vrp_data),
+        "composite_risk": composite,
+        "breakdown": breakdown,
         "components": [
             {"key": "credit", "label": "Credit", "state": _credit_state(hy),
-             "value": "No stress" if _credit_state(hy) == "good" else "Watch",
+             "value": {"good": "No stress", "warn": "Watch", "crit": "Stress"}.get(_credit_state(hy), "Watch"),
              "note": f"HY spread {hy:.2f}%" if hy is not None else "n/a"},
             {"key": "volatility", "label": "Volatility", "state": _contango_state(contango),
              "value": "Contango" if _contango_state(contango) == "good" else "Backwardation",
@@ -178,9 +200,9 @@ def build_overview() -> Dict[str, Any]:
         {"indicator": "SKEW Index", "value": _num(snapshot.get("skew")),
          "state": "neutral", "source": "CBOE"},
         {"indicator": "VIX9D", "value": _num(snapshot.get("vix9d")),
-         "state": "good", "source": "CBOE"},
+         "state": _vix_state(_num(snapshot.get("vix9d"))), "source": "CBOE"},
         {"indicator": "Put / Call Ratio", "value": _num(snapshot.get("put_call_ratio")),
-         "state": "neutral", "source": "CBOE (PCCE)"},
+         "state": "neutral", "source": _put_call_source(snapshot)},
         {"indicator": "Market Breadth", "value": (breadth * 100) if breadth is not None else None,
          "unit": "%", "state": _breadth_state(breadth), "source": "S&P 500 A/D"},
     ]

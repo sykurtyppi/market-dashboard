@@ -17,6 +17,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from utils.data_status import DataResult, DataStatus, format_age_string
+# The composite risk score lives in processors; re-exported for dashboard/views/overview.py.
+from processors.composite_risk import calculate_composite_risk_score  # noqa: F401
 
 
 # =============================================================================
@@ -835,146 +837,6 @@ def get_historical_export_data(db_manager, days: int = 90) -> pd.DataFrame:
 # =============================================================================
 # COMPOSITE RISK SCORE
 # =============================================================================
-
-def calculate_composite_risk_score(snapshot: Dict, vrp_data: Dict = None) -> Dict[str, Any]:
-    """
-    Calculate a composite risk score (0-100) combining multiple indicators.
-
-    Higher score = More risk/caution warranted
-    Lower score = More bullish/risk-on
-
-    Components (weighted):
-    - VIX level (15%)
-    - Credit spreads (20%)
-    - Fear & Greed inverted (15%)
-    - VRP (10%)
-    - Breadth inverted (15%)
-    - MOVE Index (10%)
-    - SKEW (10%)
-    - Put/Call (5%)
-
-    Args:
-        snapshot: Dashboard snapshot
-        vrp_data: VRP analysis data
-
-    Returns:
-        Dict with score, components, and interpretation
-    """
-    if not snapshot:
-        return {'score': None, 'status': 'No data'}
-
-    components = {}
-    weights = {}
-
-    # VIX (0-100 scale, higher VIX = higher risk score)
-    vix = snapshot.get('vix_spot')
-    if vix is not None:
-        # VIX typically ranges 10-80, normalize to 0-100
-        vix_score = min(100, max(0, (vix - 10) / 50 * 100))
-        components['vix'] = vix_score
-        weights['vix'] = 0.15
-
-    # Credit Spreads (higher spread = higher risk)
-    hy_spread = snapshot.get('credit_spread_hy')
-    if hy_spread is not None:
-        # HY spread typically 200-800 bps
-        spread_score = min(100, max(0, (hy_spread - 200) / 500 * 100))
-        components['credit'] = spread_score
-        weights['credit'] = 0.20
-
-    # Fear & Greed (INVERTED: low F&G = high fear = lower risk score for contrarians)
-    fg = snapshot.get('fear_greed_score')
-    if fg is not None:
-        # Invert: high greed (80+) = high risk, extreme fear (20) = low risk
-        fg_score = fg  # High greed = high score = more risk
-        components['sentiment'] = fg_score
-        weights['sentiment'] = 0.15
-
-    # VRP (negative VRP = higher risk)
-    if vrp_data and vrp_data.get('vrp') is not None:
-        vrp = vrp_data['vrp']
-        # VRP typically -10 to +15, negative = bad
-        vrp_score = min(100, max(0, (10 - vrp) / 20 * 100))
-        components['vrp'] = vrp_score
-        weights['vrp'] = 0.10
-
-    # Breadth (INVERTED: low breadth = higher risk)
-    breadth = snapshot.get('market_breadth')
-    if breadth is not None:
-        # Breadth 0-1, invert so low breadth = high risk score
-        breadth_score = (1 - breadth) * 100
-        components['breadth'] = breadth_score
-        weights['breadth'] = 0.15
-
-    # MOVE Index (higher = more treasury stress = risk)
-    move = snapshot.get('move_index')
-    if move is not None:
-        # MOVE typically 70-200
-        move_score = min(100, max(0, (move - 70) / 100 * 100))
-        components['move'] = move_score
-        weights['move'] = 0.10
-
-    # SKEW (higher = more tail risk = risk)
-    skew = snapshot.get('skew')
-    if skew is not None:
-        # SKEW typically 110-160
-        skew_score = min(100, max(0, (skew - 110) / 40 * 100))
-        components['skew'] = skew_score
-        weights['skew'] = 0.10
-
-    # Put/Call (INVERTED: high P/C = fear = contrarian bullish = lower risk)
-    pc = snapshot.get('put_call_ratio')
-    if pc is not None:
-        # P/C typically 0.5-1.5, invert for contrarian view
-        pc_score = min(100, max(0, (1.5 - pc) / 1.0 * 100))
-        components['put_call'] = pc_score
-        weights['put_call'] = 0.05
-
-    # Calculate weighted score
-    if not components:
-        return {'score': None, 'status': 'Insufficient data'}
-
-    # Normalize weights to sum to 1
-    total_weight = sum(weights.values())
-    if total_weight == 0:
-        return {'score': None, 'status': 'No valid weights'}
-
-    score = sum(components[k] * weights[k] for k in components) / total_weight
-    score = round(score, 1)
-
-    # Interpretation
-    if score >= 75:
-        interpretation = "HIGH RISK"
-        color = "#FF4444"
-        description = "Multiple stress indicators elevated. Defensive positioning warranted."
-    elif score >= 60:
-        interpretation = "ELEVATED"
-        color = "#FFA500"
-        description = "Some caution warranted. Monitor for deterioration."
-    elif score >= 40:
-        interpretation = "NEUTRAL"
-        color = "#FFD700"
-        description = "Mixed signals. Normal market conditions."
-    elif score >= 25:
-        interpretation = "LOW RISK"
-        color = "#90EE90"
-        description = "Favorable conditions. Risk-on appropriate."
-    else:
-        interpretation = "VERY BULLISH"
-        color = "#00CC00"
-        description = "Extreme fear/pessimism. Strong contrarian buy signals."
-
-    return {
-        'score': score,
-        'interpretation': interpretation,
-        'color': color,
-        'description': description,
-        'components': components,
-        'weights': weights,
-        'component_count': len(components),
-        'timestamp': datetime.now().isoformat()
-    }
-
 
 # =============================================================================
 # TIMESTAMP DISPLAY HELPERS
