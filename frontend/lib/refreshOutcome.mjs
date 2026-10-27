@@ -1,23 +1,9 @@
-export type RefreshOutcome = "successful" | "partial" | "failed";
-
-export type RefreshRun = {
-  outcome?: RefreshOutcome;
-  failed_phases?: string[];
-  error?: string | null;
-};
-
-export type RefreshCompletion = {
-  outcome: RefreshOutcome | "unconfirmed";
-  message: string;
-  shouldRefresh: boolean;
-};
-
-const failedPhaseMessage = (prefix: string, failedPhases: string[]) =>
+const failedPhaseMessage = (prefix, failedPhases) =>
   failedPhases.length > 0
     ? `${prefix} — failed phases: ${failedPhases.join(", ")}`
     : `${prefix} — failed phases were not reported`;
 
-export function resolveRefreshCompletion(lastRun: RefreshRun | null): RefreshCompletion {
+export function resolveRefreshCompletion(lastRun) {
   if (!lastRun) {
     return {
       outcome: "unconfirmed",

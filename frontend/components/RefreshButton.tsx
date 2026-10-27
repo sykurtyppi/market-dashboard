@@ -7,7 +7,7 @@ import {
   resolveRefreshCompletion,
   type RefreshCompletion,
   type RefreshRun,
-} from "@/lib/refreshOutcome";
+} from "@/lib/refreshOutcome.mjs";
 
 type RefreshResult = { status: string; detail?: string };
 type StatusResult = { running: boolean; last_run?: RefreshRun | null };

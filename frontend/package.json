@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "node --test lib/refreshOutcome.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -25,7 +25,6 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
     "tailwindcss": "^4",
-    "typescript": "^5",
-    "vitest": "^3.2.7"
+    "typescript": "^5"
   }
 }
