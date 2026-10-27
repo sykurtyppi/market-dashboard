@@ -3,7 +3,7 @@ Test Suite for RepoCollector (data_collectors/repo_collector_enhanced.py)
 
 Tests cover:
 - fetch_fred_series: CSV parsing, missing-value ("." ) handling, HTTP/network errors
-- get_repo_history: SOFR/IORB/RRP merge, spread calc, RRP billions conversion,
+- get_repo_history: SOFR/IORB/RRP merge, spread calc in basis points, RRP $B pass-through,
   SOFR z-score data-quality handling (insufficient data => NaN, not 0.0)
 - get_full_snapshot: liquidity classification by SOFR-IORB spread, empty handling
 
@@ -130,15 +130,17 @@ class TestGetRepoHistory:
 
         # Assert
         assert "sofr_iorb_spread" in df.columns
-        # spread = sofr - iorb = 4.34 - 4.40 = -0.06 on last row
-        assert df["sofr_iorb_spread"].iloc[-1] == pytest.approx(-0.06, abs=1e-6)
+        # Public compatibility key is explicitly basis points:
+        # (4.34% - 4.40%) * 100 = -6 bps.
+        assert df["sofr_iorb_spread"].iloc[-1] == pytest.approx(-6.0, abs=1e-6)
         assert df["iorb_is_actual"].all()
 
-    def test_converts_rrp_to_billions(self):
+    def test_preserves_fred_rrp_billions_values(self):
         # Arrange
         dates = pd.date_range("2023-01-02", periods=3, freq="D")
         sofr = _series_df(dates, [4.30, 4.31, 4.32])
-        rrp = _series_df(dates, [2_000_000.0, 2_100_000.0, 2_200_000.0])  # millions
+        # RRPONTSYD is published by FRED in billions of US dollars.
+        rrp = _series_df(dates, [87.4, 82.5, 79.25])
 
         def fake_fetch(series_id, days_back=730):
             return {
@@ -152,8 +154,8 @@ class TestGetRepoHistory:
             # Act
             df = collector.get_repo_history(days_back=30)
 
-        # Assert - divided by 1000
-        assert df["rrp_on"].iloc[-1] == pytest.approx(2200.0)
+        # Assert - realistic source values pass through unchanged in $B.
+        assert df["rrp_on"].tolist() == pytest.approx([87.4, 82.5, 79.25])
 
     def test_zscore_is_nan_when_insufficient_data(self):
         # Arrange - fewer than MIN_ZSCORE_OBSERVATIONS rows
@@ -206,16 +208,18 @@ class TestGetRepoHistory:
 # get_full_snapshot - liquidity classification
 # ---------------------------------------------------------------------------
 class TestGetFullSnapshot:
-    def _history_with_spread(self, sofr, iorb):
-        """Single-row-ish history where latest SOFR-IORB spread is controlled."""
+    def _history_with_spread_bps(self, spread_bps):
+        """History using realistic percentage rates and a bps spread contract."""
         dates = pd.date_range("2023-01-02", periods=2, freq="D")
+        iorb = 4.30
+        sofr = iorb + spread_bps / 100.0
         return pd.DataFrame(
             {
                 "date": dates.date,
                 "sofr": [sofr, sofr],
                 "iorb": [iorb, iorb],
                 "iorb_is_actual": [True, True],
-                "sofr_iorb_spread": [sofr - iorb, sofr - iorb],
+                "sofr_iorb_spread": [spread_bps, spread_bps],
                 "sofr_z_score": [np.nan, np.nan],
                 "sofr_z_score_quality": ["INSUFFICIENT_DATA", "INSUFFICIENT_DATA"],
             }
@@ -224,17 +228,19 @@ class TestGetFullSnapshot:
     @pytest.mark.parametrize(
         "spread_bps, expected",
         [
-            (-2, "ABUNDANT"),   # spread <= 0
-            (3, "AMPLE"),       # 0 < spread <= 5
-            (10, "NORMAL"),     # 5 < spread <= 15
-            (20, "TIGHTENING"), # 15 < spread <= 30
-            (40, "STRESS"),     # spread > 30
+            (-1, "ABUNDANT"),
+            (0, "ABUNDANT"),
+            (0.01, "AMPLE"),
+            (5, "AMPLE"),
+            (5.01, "NORMAL"),
+            (15, "NORMAL"),
+            (15.01, "TIGHTENING"),
+            (30, "TIGHTENING"),
+            (30.01, "STRESS"),
         ],
     )
-    def test_liquidity_classification(self, spread_bps, expected):
-        # spread stored in same units as sofr/iorb; classification thresholds are
-        # 0/5/15/30 — build sofr/iorb so sofr_iorb_spread == spread_bps
-        df = self._history_with_spread(sofr=4.30 + spread_bps, iorb=4.30)
+    def test_liquidity_classification_at_exact_bps_thresholds(self, spread_bps, expected):
+        df = self._history_with_spread_bps(spread_bps)
         collector = RepoCollector()
         with patch.object(collector, "get_repo_history", return_value=df):
             snap = collector.get_full_snapshot()
@@ -246,7 +252,7 @@ class TestGetFullSnapshot:
             assert collector.get_full_snapshot() == {}
 
     def test_zscore_none_when_insufficient(self):
-        df = self._history_with_spread(sofr=4.33, iorb=4.30)
+        df = self._history_with_spread_bps(3.0)
         collector = RepoCollector()
         with patch.object(collector, "get_repo_history", return_value=df):
             snap = collector.get_full_snapshot()
@@ -255,7 +261,7 @@ class TestGetFullSnapshot:
         assert snap["sofr_z_score_quality"] == "INSUFFICIENT_DATA"
 
     def test_snapshot_includes_core_fields(self):
-        df = self._history_with_spread(sofr=4.33, iorb=4.30)
+        df = self._history_with_spread_bps(3.0)
         collector = RepoCollector()
         with patch.object(collector, "get_repo_history", return_value=df):
             snap = collector.get_full_snapshot()

@@ -895,7 +895,8 @@ class DatabaseManager:
         Save Repo market data to database
         
         Args:
-            df: DataFrame with columns: date, sofr, gc_repo, rrp_on, sofr_z_score
+            df: DataFrame with columns: date, sofr, gc_repo, rrp_on, sofr_z_score.
+                ``rrp_on`` is stored in billions of US dollars.
         
         Returns:
             bool: True if successful

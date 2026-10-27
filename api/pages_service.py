@@ -410,11 +410,9 @@ def build_repo() -> dict:
     metrics = [
         {"key": "sofr", "label": "SOFR", "value": sofr, "unit": "%",
          "state": "neutral", "source": "FRED (SOFR)"},
-        # The collector stores rrp_on in $ trillions (FRED's $B value / 1000,
-        # despite its docstring) — shown raw it rendered "0.00" with no unit,
-        # a unitless mystery number. Present in $B.
+        # Collector and persistence contracts preserve FRED RRPONTSYD in $B.
         {"key": "rrp", "label": "RRP (Overnight)",
-         "value": round(rrp * 1000, 2) if rrp is not None else None, "unit": "B",
+         "value": round(rrp, 2) if rrp is not None else None, "unit": "B",
          "state": "neutral", "source": "FRED (RRPONTSYD), $B"},
         {"key": "sofr_z", "label": "SOFR Z-Score", "value": zscore, "unit": "",
          "state": "neutral", "source": "Derived (252d)"},
@@ -434,10 +432,6 @@ def build_repo() -> dict:
         "warnings": [],
         "charts": {
             "sofr_history": _series(hist, value_col="sofr"),
-            # Same $T→$B conversion as the metric so chart and card agree.
-            "rrp_history": [
-                {"date": p["date"], "value": round(p["value"] * 1000, 2)}
-                for p in _series(hist, value_col="rrp_on")
-            ],
+            "rrp_history": _series(hist, value_col="rrp_on"),
         },
     }
