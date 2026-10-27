@@ -140,6 +140,7 @@ class RefreshResponse(BaseModel):
 
 class RefreshRun(BaseModel):
     completed_at: str
+    outcome: Literal["successful", "partial", "failed"]
     failed_phases: list[str] = Field(default_factory=list)
     error: Optional[str] = None
 

@@ -16,6 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database.db_manager import DatabaseManager  # noqa: E402
+from api import overview_service  # noqa: E402
 from scheduler.daily_update import MarketDataUpdater  # noqa: E402
 
 
@@ -158,6 +159,27 @@ def test_fred_save_false_marks_phase_failed_but_snapshot_still_runs():
     assert db.snapshots, "independent snapshot phase must still run"
 
 
+def test_repo_save_false_marks_phase_failed_without_aborting_snapshot(caplog):
+    repo = pd.DataFrame({
+        "date": [pd.Timestamp("2026-10-26")],
+        "sofr": [3.88],
+        "iorb": [3.90],
+        "rrp_on": [82.5],
+        "sofr_iorb_spread": [-2.0],
+    })
+    db = WorkflowDB()
+    db.save_repo_data = lambda data: False
+    updater = workflow_updater(db=db)
+    updater.repo = SimpleNamespace(get_repo_history=lambda days_back=730: repo)
+
+    with caplog.at_level(logging.INFO):
+        failed = updater.run_full_update()
+
+    assert "repo_market" in failed
+    assert db.snapshots, "independent snapshot phase must still run"
+    assert "Repo data saved to database" not in caplog.text
+
+
 def test_fred_save_exception_marks_phase_failed_but_snapshot_still_runs():
     frame = pd.DataFrame({"date": ["2026-10-26"], "DGS10": [4.1]})
     db = WorkflowDB()
@@ -212,6 +234,50 @@ def test_fred_credit_observation_keeps_its_series_provenance():
 
     assert db.snapshots[0]["credit_spread_hy"] == 3.0
     assert db.snapshots[0]["credit_spread_hy_source"] == "FRED (BAMLH0A0HYM2)"
+
+
+@pytest.mark.parametrize(
+    ("fred", "yahoo", "expected_value", "expected_source"),
+    [
+        (
+            SimpleNamespace(get_all_indicators=lambda: {
+                "credit_spread_hy": pd.DataFrame({
+                    "date": [pd.Timestamp("2026-10-26")],
+                    "BAMLH0A0HYM2": [3.0],
+                })
+            }),
+            SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
+            3.0,
+            "FRED (BAMLH0A0HYM2)",
+        ),
+        (
+            None,
+            SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
+            4.2,
+            "Yahoo Finance (HYG yield − 10Y Treasury proxy)",
+        ),
+    ],
+)
+def test_credit_provenance_survives_selection_persistence_and_api(
+    tmp_path, monkeypatch, fred, yahoo, expected_value, expected_source
+):
+    workflow_db = WorkflowDB()
+    updater = workflow_updater(fred=fred, yahoo=yahoo, db=workflow_db)
+    updater.run_full_update()
+
+    selected = workflow_db.snapshots[0]
+    assert selected["credit_spread_hy"] == expected_value
+    assert selected["credit_spread_hy_source"] == expected_source
+
+    real_db = DatabaseManager(str(tmp_path / "provenance.db"))
+    saved, validation = real_db.save_daily_snapshot(selected)
+    assert saved, validation.errors
+
+    monkeypatch.setattr(overview_service, "get_db", lambda: real_db)
+    body = overview_service.build_overview()
+    credit = next(metric for metric in body["metrics"] if metric["key"] == "hy")
+    assert credit["value"] == expected_value
+    assert credit["source"] == expected_source
 
 
 def test_tuple_save_failures_degrade_their_refresh_phases():

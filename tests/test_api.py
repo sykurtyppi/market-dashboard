@@ -12,9 +12,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import pandas as pd
 from fastapi.testclient import TestClient
 
 from api.main import app
+from scheduler.daily_update import RefreshPhaseFailures
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +59,32 @@ def test_overview_chart_series_are_bounded(client):
     body = r.json()
     assert len(body["charts"]["vrp_history"]) <= 181
     assert len(body["charts"]["credit_spreads"]["hy"]) <= 181
+
+
+def test_overview_http_keeps_put_call_value_and_source_aligned(client):
+    snapshot = {
+        "date": "2026-10-27",
+        "cboe_equity_pc": 0.7,
+        "spy_put_call": 1.1,
+        "put_call_ratio": 1.2,
+        "_status": "fresh",
+        "_age_string": "1h ago",
+        "_is_fresh": True,
+    }
+    db = SimpleNamespace(
+        get_latest_snapshot=lambda include_age=False: snapshot,
+        get_latest_vrp=lambda: {},
+        get_latest_move=lambda: {},
+        get_vrp_history=lambda days=180: pd.DataFrame(),
+        get_indicator_history=lambda name, days=365: pd.DataFrame(),
+    )
+    with patch("api.overview_service.get_db", return_value=db):
+        response = client.get("/api/overview")
+    assert response.status_code == 200
+    body = response.json()
+    detail = next(row for row in body["detail"] if row["indicator"] == "Put / Call Ratio")
+    assert (detail["value"], detail["source"]) == (0.7, "CBOE equity P/C (PCCE)")
+    assert body["regime"]["breakdown"]["components"]["put_call"] == pytest.approx(83.3, abs=0.05)
 
 
 def test_health_endpoint_responds(client):
@@ -106,6 +134,7 @@ def test_refresh_starts_and_reports_status(client):
     body = status.json()
     assert body["running"] is False
     # A 200 from POST only meant "started"; the outcome lives here.
+    assert body["last_run"]["outcome"] == "partial"
     assert body["last_run"]["failed_phases"] == ["liquidity_history"]
     assert body["last_run"]["error"] is None
     assert body["last_run"]["completed_at"]
@@ -118,8 +147,37 @@ def test_refresh_crash_is_reported_and_releases_the_lock(client):
         assert r.status_code == 200
     body = client.get("/api/refresh/status").json()
     assert body["running"] is False
+    assert body["last_run"]["outcome"] == "failed"
     assert body["last_run"]["error"] == "collector exploded"
     assert body["last_run"]["failed_phases"] == []
+
+
+def test_refresh_success_reports_successful_outcome(client):
+    with patch("scheduler.daily_update.MarketDataUpdater") as MockUpdater:
+        MockUpdater.return_value.run_full_update.return_value = []
+        r = client.post("/api/refresh")
+        assert r.status_code == 200
+
+    body = client.get("/api/refresh/status").json()
+    assert body["running"] is False
+    assert body["last_run"]["outcome"] == "successful"
+    assert body["last_run"]["failed_phases"] == []
+    assert body["last_run"]["error"] is None
+
+
+def test_refresh_reports_failed_when_every_attempted_phase_fails(client):
+    attempted = ["fred_indicators", "fear_greed", "daily_snapshot"]
+    result = RefreshPhaseFailures(attempted, attempted_phases=attempted)
+    with patch("scheduler.daily_update.MarketDataUpdater") as MockUpdater:
+        MockUpdater.return_value.run_full_update.return_value = result
+        r = client.post("/api/refresh")
+        assert r.status_code == 200
+
+    body = client.get("/api/refresh/status").json()
+    assert body["running"] is False
+    assert body["last_run"]["outcome"] == "failed"
+    assert body["last_run"]["failed_phases"] == attempted
+    assert body["last_run"]["error"] is None
 
 
 def test_refresh_rejects_bad_token_when_configured(client, monkeypatch):
@@ -149,6 +207,29 @@ def test_credit_liquidity_returns_expected_shape(client):
         assert key in body["charts"]
     valid = {"good", "warn", "crit", "neutral"}
     assert all(m["state"] in valid for m in body["metrics"])
+
+
+def test_credit_liquidity_preserves_yahoo_hy_provenance():
+    from api import pages_service
+
+    db = SimpleNamespace(
+        get_indicator_history=lambda indicator, days=365: pd.DataFrame(
+            {"date": ["2026-10-27"], indicator: [4.2 if indicator == "credit_spread_hy" else 0.9]}
+        ),
+        get_fed_balance_sheet_history=lambda days=365: pd.DataFrame(),
+        get_latest_snapshot=lambda: {
+            "date": "2026-10-27",
+            "credit_spread_hy": 4.2,
+            "credit_spread_hy_source": "Yahoo Finance (HYG proxy)",
+        },
+    )
+
+    with patch.object(pages_service, "get_db", return_value=db):
+        body = pages_service.build_credit_liquidity()
+
+    hy = next(metric for metric in body["metrics"] if metric["key"] == "hy")
+    assert hy["value"] == 4.2
+    assert hy["source"] == "Yahoo Finance (HYG proxy)"
 
 
 def test_sectors_returns_expected_shape(client):

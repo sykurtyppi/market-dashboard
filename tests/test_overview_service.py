@@ -48,8 +48,8 @@ class TestCreditBands:
 class TestPutCallSource:
     def test_names_the_series_actually_stored(self):
         assert _put_call_source({"cboe_equity_pc": 0.7, "spy_put_call": 1.2}) == "CBOE equity P/C (PCCE)"
-        assert _put_call_source({"cboe_equity_pc": None, "spy_put_call": 1.2}) == "SPY volume proxy"
-        assert _put_call_source({}) == "Best available"
+        assert _put_call_source({"cboe_equity_pc": None, "spy_put_call": 1.2}) == "SPY volume proxy (uncalibrated)"
+        assert _put_call_source({}) == "Unavailable"
 
 
 class TestBuildOverview:
@@ -71,9 +71,9 @@ class TestBuildOverview:
             body = build_overview()
         regime = body["regime"]
         assert regime["composite_risk"] == 32            # was 26 with credit stuck at 0 and no MOVE
-        assert regime["breakdown"]["missing"] == []
+        assert regime["breakdown"]["missing"] == ["put_call"]
         assert regime["breakdown"]["components"]["credit"] == pytest.approx(24.6)
-        assert regime["breakdown"]["put_call_source"] == "SPY volume proxy"
+        assert regime["breakdown"]["put_call_source"] == "SPY volume proxy (uncalibrated)"
         credit = next(c for c in regime["components"] if c["key"] == "credit")
         assert credit["state"] == "good" and credit["value"] == "No stress"
 
@@ -87,11 +87,24 @@ class TestBuildOverview:
     def test_missing_move_is_declared_not_hidden(self):
         with patch("api.overview_service.get_db", return_value=fake_db({})):
             body = build_overview()
-        assert body["regime"]["breakdown"]["missing"] == ["move"]
+        assert body["regime"]["breakdown"]["missing"] == ["move", "put_call"]
         assert body["regime"]["composite_risk"] is not None
 
     def test_detail_rows_are_judged_not_hardcoded(self):
         with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1})):
             detail = {r["indicator"]: r for r in build_overview()["detail"]}
         assert detail["VIX9D"]["state"] == "warn"                      # 20.12 is not "good" by the VIX bands
-        assert detail["Put / Call Ratio"]["source"] == "SPY volume proxy"
+        assert detail["Put / Call Ratio"]["source"] == "SPY volume proxy (uncalibrated)"
+
+    def test_put_call_detail_value_and_source_come_from_the_same_observation(self):
+        snapshot = {**SNAPSHOT, "cboe_equity_pc": 0.7, "spy_put_call": 1.1, "put_call_ratio": 1.2}
+        with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1}, snapshot)):
+            body = build_overview()
+        detail = next(row for row in body["detail"] if row["indicator"] == "Put / Call Ratio")
+        assert detail == {
+            "indicator": "Put / Call Ratio",
+            "value": 0.7,
+            "state": "neutral",
+            "source": "CBOE equity P/C (PCCE)",
+        }
+        assert body["regime"]["breakdown"]["components"]["put_call"] == pytest.approx(83.3, abs=0.05)

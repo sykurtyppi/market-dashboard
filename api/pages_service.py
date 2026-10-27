@@ -267,8 +267,15 @@ def build_credit_liquidity() -> dict:
     hy_hist = db.get_indicator_history("credit_spread_hy", days=365)
     ig_hist = db.get_indicator_history("credit_spread_ig", days=365)
     fed = _asc(db.get_fed_balance_sheet_history(days=365))  # method returns DESC
+    snapshot = db.get_latest_snapshot() or {}
 
-    hy = _latest_val(hy_hist)
+    # The headline value and attribution must come from the same persisted
+    # observation. History remains the chart source, while the daily snapshot
+    # carries observation-level provenance for the current metric.
+    hy = _num(snapshot.get("credit_spread_hy"))
+    if hy is None:
+        hy = _latest_val(hy_hist)
+    hy_source = snapshot.get("credit_spread_hy_source") or "Unavailable"
     ig = _latest_val(ig_hist)
 
     total_assets = qt_cum = qt_pace = reserves = None
@@ -287,7 +294,7 @@ def build_credit_liquidity() -> dict:
 
     metrics = [
         {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
-         "state": _credit_state(hy), "source": "FRED (BAMLH0A0HYM2)"},
+         "state": _credit_state(hy), "source": hy_source},
         {"key": "ig", "label": "IG Credit Spread", "value": ig, "unit": "%",
          "state": "neutral", "source": "FRED (BAMLC0A0CM)"},
         {"key": "fed_assets", "label": "Fed Total Assets", "value": to_t(total_assets), "unit": "T",

@@ -59,6 +59,18 @@ class _PhaseSkipped(Exception):
     collector is disabled by configuration (no FRED key), not broken."""
 
 
+class RefreshPhaseFailures(list[str]):
+    """Failed phases plus the phases the updater actually attempted.
+
+    This remains list-compatible for callers that only need failure names,
+    while letting the API distinguish a degraded run from a total failure.
+    """
+
+    def __init__(self, failures=(), *, attempted_phases=()):
+        super().__init__(failures)
+        self.attempted_phases = list(attempted_phases)
+
+
 class MarketDataUpdater:
     """Main class for daily market data updates."""
 
@@ -149,7 +161,10 @@ class MarketDataUpdater:
         else:
             logger.info("UPDATE COMPLETE")
         logger.info("=" * 60)
-        return list(self.failed_phases)
+        return RefreshPhaseFailures(
+            self.failed_phases,
+            attempted_phases=getattr(self, "attempted_phases", ()),
+        )
 
     def run_full_update(self) -> list[str]:
         """Run the complete market data update pipeline.
@@ -160,6 +175,20 @@ class MarketDataUpdater:
         logger.info(f"MARKET DATA UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
         self.failed_phases = []
+        self.attempted_phases = [
+            *(("fred_indicators",) if self.fred else ()),
+            "fear_greed",
+            "cboe",
+            "market_breadth",
+            "yahoo",
+            "vrp",
+            *(("fed_balance_sheet",) if self.fed_bs else ()),
+            "move_index",
+            *(("repo_market",) if self.repo else ()),
+            *(("liquidity_history",) if self.liquidity else ()),
+            "daily_snapshot",
+            "left_signal",
+        ]
 
         # ------------------------------------------------------------------
         # 1. FRED data (optional - requires API key)
@@ -473,8 +502,11 @@ class MarketDataUpdater:
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_repo_data"):
-                    self.db.save_repo_data(repo_df)
-                    logger.info("Repo data saved to database")
+                    saved = self.db.save_repo_data(repo_df)
+                    if saved is False:
+                        self._phase_failed("repo_market", "database save returned False")
+                    else:
+                        logger.info("Repo data saved to database")
             else:
                 logger.warning("No Repo market data available")
         except _PhaseSkipped:
