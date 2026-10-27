@@ -220,10 +220,35 @@ class DatabaseManager:
         'liquidity_history': VALID_LIQUIDITY_COLUMNS,
     }
     VALID_SQL_TYPES = {'REAL', 'TEXT', 'INTEGER', 'BLOB', 'NULL'}
+    RRP_BILLIONS_MIGRATION = 'repo_market_rrp_on_billions_v1'
 
     def _run_migrations(self, conn):
-        """Add missing columns to existing tables (safe migrations)"""
+        """Apply deterministic data migrations and add missing columns."""
         cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                name TEXT PRIMARY KEY,
+                applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?",
+            (self.RRP_BILLIONS_MIGRATION,),
+        )
+        if not cursor.fetchone():
+            cursor.execute(
+                "UPDATE repo_market SET rrp_on = rrp_on * 1000 WHERE rrp_on IS NOT NULL"
+            )
+            converted = cursor.rowcount
+            cursor.execute(
+                "INSERT INTO schema_migrations (name) VALUES (?)",
+                (self.RRP_BILLIONS_MIGRATION,),
+            )
+            logger.info(
+                "Migrated repo_market.rrp_on from trillions to billions for %s rows",
+                converted,
+            )
 
         # Add missing columns using allowlisted values only. Table names,
         # column names and types all come from class constants, never input.

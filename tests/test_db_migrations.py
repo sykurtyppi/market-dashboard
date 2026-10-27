@@ -30,6 +30,21 @@ _LEGACY_INDICATORS = """
     )
 """
 
+_LEGACY_REPO_MARKET = """
+    CREATE TABLE repo_market (
+        date TEXT PRIMARY KEY,
+        sofr REAL,
+        gc_repo REAL,
+        rrp_on REAL,
+        triparty_repo REAL,
+        sofr_z_score REAL,
+        stress_level TEXT,
+        updated_at TEXT
+    )
+"""
+
+_RRP_BILLIONS_MIGRATION = "repo_market_rrp_on_billions_v1"
+
 
 def _make_legacy_db(path, rows):
     with sqlite3.connect(path) as conn:
@@ -45,6 +60,32 @@ def _has_unique_index(path):
     with sqlite3.connect(path) as conn:
         row = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_indicators_name_date'"
+        ).fetchone()
+    return bool(row)
+
+
+def _make_old_contract_repo_db(path, rows):
+    with sqlite3.connect(path) as conn:
+        conn.execute(_LEGACY_REPO_MARKET)
+        conn.executemany(
+            "INSERT INTO repo_market (date, rrp_on) VALUES (?, ?)",
+            rows,
+        )
+        conn.commit()
+
+
+def _repo_values(path):
+    with sqlite3.connect(path) as conn:
+        return conn.execute(
+            "SELECT date, rrp_on FROM repo_market ORDER BY date"
+        ).fetchall()
+
+
+def _has_migration(path, name):
+    with sqlite3.connect(path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?",
+            (name,),
         ).fetchone()
     return bool(row)
 
@@ -131,3 +172,47 @@ def test_daily_snapshot_credit_source_column_is_added_and_round_trips(tmp_path):
     latest = fresh_db.get_latest_snapshot()
     assert latest is not None
     assert latest["credit_spread_hy_source"] == "FRED (BAMLH0A0HYM2)"
+
+
+def test_migration_converts_existing_repo_rrp_to_billions_exactly_once(tmp_path):
+    db_path = str(tmp_path / "old-contract.db")
+    _make_old_contract_repo_db(
+        db_path,
+        [
+            ("2026-10-14", 0.00003),
+            ("2026-10-15", 0.105993),
+            ("2026-10-16", None),
+        ],
+    )
+
+    DatabaseManager(db_path=db_path)
+
+    converted = _repo_values(db_path)
+    assert converted == [
+        ("2026-10-14", 0.00003 * 1000),
+        ("2026-10-15", 0.105993 * 1000),
+        ("2026-10-16", None),
+    ]
+    assert _has_migration(db_path, _RRP_BILLIONS_MIGRATION)
+
+    DatabaseManager(db_path=db_path)
+
+    assert _repo_values(db_path) == converted
+
+
+def test_fresh_db_marks_repo_unit_migration_before_future_rows(tmp_path):
+    db_path = str(tmp_path / "fresh-repo.db")
+    DatabaseManager(db_path=db_path)
+    assert _has_migration(db_path, _RRP_BILLIONS_MIGRATION)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO repo_market (date, rrp_on) VALUES (?, ?)",
+            ("2026-10-27", 82.5),
+        )
+        conn.commit()
+
+    DatabaseManager(db_path=db_path)
+
+    assert _repo_values(db_path) == [("2026-10-27", 82.5)]
+
