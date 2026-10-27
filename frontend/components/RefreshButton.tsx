@@ -3,9 +3,14 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import {
+  resolveRefreshCompletion,
+  type RefreshCompletion,
+  type RefreshRun,
+} from "@/lib/refreshOutcome";
 
 type RefreshResult = { status: string; detail?: string };
-type StatusResult = { running: boolean };
+type StatusResult = { running: boolean; last_run?: RefreshRun | null };
 
 const POLL_MS = 3_000;
 const MAX_POLLS = 100; // 5-minute cap so a wedged backend run can't spin forever
@@ -26,7 +31,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // trigger→poll→done lifecycle one async event: state updates happen only in
 // the mutation callbacks, never in effects (the old two-effect design tripped
 // react-hooks/set-state-in-effect).
-async function pollUntilDone(): Promise<void> {
+async function pollUntilDone(): Promise<RefreshCompletion> {
   let failures = 0;
   for (let i = 0; i < MAX_POLLS; i += 1) {
     await sleep(POLL_MS);
@@ -35,7 +40,7 @@ async function pollUntilDone(): Promise<void> {
       if (!res.ok) throw new Error(`status ${res.status}`);
       const body: StatusResult = await res.json();
       if (typeof body.running !== "boolean") throw new Error("bad status payload");
-      if (!body.running) return;
+      if (!body.running) return resolveRefreshCompletion(body.last_run ?? null);
       failures = 0;
     } catch {
       failures += 1;
@@ -64,17 +69,17 @@ export default function RefreshButton() {
   };
 
   const refresh = useMutation({
-    mutationFn: async (): Promise<void> => {
+    mutationFn: async (): Promise<RefreshCompletion> => {
       const res = await fetch("/api/refresh", { method: "POST" });
       const data: RefreshResult = await res.json();
       if (data.status !== "started" && data.status !== "already_running") {
         throw new Error(data.detail ?? "Could not start refresh");
       }
-      await pollUntilDone();
+      return pollUntilDone();
     },
-    onSuccess: () => {
-      showNote("Data updated", 4000);
-      router.refresh();
+    onSuccess: (completion) => {
+      showNote(completion.message, completion.outcome === "successful" ? 4000 : 5000);
+      if (completion.shouldRefresh) router.refresh();
     },
     onError: (error: Error) => {
       showNote(error.message || "Could not reach the API", 5000);
