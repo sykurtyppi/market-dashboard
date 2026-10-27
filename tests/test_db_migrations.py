@@ -93,3 +93,41 @@ def test_migration_is_idempotent_on_fresh_db(tmp_path):
     DatabaseManager(db_path=db_path)
     DatabaseManager(db_path=db_path)  # second init re-runs migrations
     assert _has_unique_index(db_path)
+
+
+def test_daily_snapshot_credit_source_column_is_added_and_round_trips(tmp_path):
+    db_path = str(tmp_path / "legacy-snapshot.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE daily_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE UNIQUE NOT NULL,
+                credit_spread_hy REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "INSERT INTO daily_snapshots (date, credit_spread_hy) VALUES (?, ?)",
+            ("2026-07-02", 2.75),
+        )
+
+    db = DatabaseManager(db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(daily_snapshots)")}
+        old_row = conn.execute(
+            "SELECT credit_spread_hy, credit_spread_hy_source FROM daily_snapshots"
+        ).fetchone()
+
+    assert "credit_spread_hy_source" in columns
+    assert old_row == (2.75, None)
+
+    fresh_db = DatabaseManager(db_path=str(tmp_path / "fresh-snapshot.db"))
+    saved, validation = fresh_db.save_daily_snapshot({
+        "date": "2026-07-03",
+        "credit_spread_hy": 3.1,
+        "credit_spread_hy_source": "FRED (BAMLH0A0HYM2)",
+    })
+    assert saved, validation.errors
+    latest = fresh_db.get_latest_snapshot()
+    assert latest is not None
+    assert latest["credit_spread_hy_source"] == "FRED (BAMLH0A0HYM2)"

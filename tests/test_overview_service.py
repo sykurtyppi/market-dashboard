@@ -17,12 +17,13 @@ SNAPSHOT = {
     "market_breadth": 0.59, "put_call_ratio": 1.2589, "cboe_equity_pc": None, "spy_put_call": 1.2589,
     "vvix": 109.9, "skew": 168.59, "vrp": 8.4, "treasury_10y": 5.1, "left_signal": "NEUTRAL",
     "_status": "fresh", "_age_string": "1h ago", "_is_fresh": True,
+    "credit_spread_hy_source": "Yahoo Finance (HYG yield − 10Y Treasury proxy)",
 }
 
 
-def fake_db(move):
+def fake_db(move, snapshot=None):
     return SimpleNamespace(
-        get_latest_snapshot=lambda include_age=False: dict(SNAPSHOT),
+        get_latest_snapshot=lambda include_age=False: dict(snapshot or SNAPSHOT),
         get_latest_vrp=lambda: {"vrp": 8.4},
         get_latest_move=lambda: move,
         get_vrp_history=lambda days=180: pd.DataFrame(),
@@ -52,6 +53,19 @@ class TestPutCallSource:
 
 
 class TestBuildOverview:
+    def test_credit_metric_uses_observation_source(self):
+        with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1})):
+            body = build_overview()
+        credit = next(metric for metric in body["metrics"] if metric["key"] == "hy")
+        assert credit["source"] == SNAPSHOT["credit_spread_hy_source"]
+
+    def test_credit_metric_does_not_invent_source_for_legacy_snapshot(self):
+        snapshot = {**SNAPSHOT, "credit_spread_hy_source": None}
+        with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1}, snapshot)):
+            body = build_overview()
+        credit = next(metric for metric in body["metrics"] if metric["key"] == "hy")
+        assert credit["source"] == "Unavailable"
+
     def test_headline_uses_move_and_percent_credit(self):
         with patch("api.overview_service.get_db", return_value=fake_db({"move": 101.1})):
             body = build_overview()

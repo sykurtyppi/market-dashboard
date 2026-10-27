@@ -254,6 +254,16 @@ class DataValidator:
             if warn:
                 result.add_warning(warn)
 
+        # Preserve observation-level provenance for the HY value. It is
+        # metadata rather than a second measurement, so invalid text is
+        # dropped without rejecting otherwise valid market data.
+        credit_source = snapshot.get('credit_spread_hy_source')
+        if credit_source is not None:
+            if isinstance(credit_source, str) and credit_source.strip():
+                result.data['credit_spread_hy_source'] = credit_source.strip()
+            else:
+                result.add_warning("Invalid credit_spread_hy_source; dropped")
+
         # Interest rates
         for field in ['treasury_10y', 'fed_funds']:
             val, err, warn = self._validate_numeric(

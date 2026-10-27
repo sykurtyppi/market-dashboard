@@ -76,3 +76,15 @@ def test_cboe_equity_pc_keeps_the_broad_market_ceiling():
     assert result.is_valid
     assert "cboe_equity_pc" not in result.data
     assert any("cboe_equity_pc" in w for w in result.warnings)
+
+
+def test_credit_source_is_preserved():
+    source = "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
+    result = DataValidator().validate_daily_snapshot({
+        **BASE,
+        "credit_spread_hy": 3.2,
+        "credit_spread_hy_source": source,
+    })
+
+    assert result.is_valid
+    assert result.data["credit_spread_hy_source"] == source
