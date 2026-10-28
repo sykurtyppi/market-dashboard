@@ -507,8 +507,10 @@ class YahooCollector:
             hyg_yield = info.get('yield')  # This is the 30-day SEC yield
 
             if hyg_yield is None:
-                # Fallback: estimate from dividend yield
-                hyg_yield = info.get('dividendYield', 0.06)  # ~6% typical
+                # A reported dividend yield is an imperfect but observable
+                # fallback. Never substitute a "typical" yield when Yahoo
+                # supplies neither field.
+                hyg_yield = info.get('dividendYield')
 
             # Get 10Y Treasury for comparison
             treasury_10y = self.get_treasury_10y()
@@ -528,9 +530,7 @@ class YahooCollector:
                     return spread
                 else:
                     logger.warning(f"HY spread estimate out of range: {spread:.2f}%")
-                    # Return a reasonable estimate based on current market
-                    self._set_cached("hy_spread_proxy", 3.5)
-                    return 3.5  # ~350 bps is typical "normal" spread
+                    return None
 
             logger.warning("Could not calculate HY spread proxy")
             return None

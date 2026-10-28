@@ -59,6 +59,18 @@ class _PhaseSkipped(Exception):
     collector is disabled by configuration (no FRED key), not broken."""
 
 
+class RefreshPhaseFailures(list[str]):
+    """Failed phases plus the phases the updater actually attempted.
+
+    This remains list-compatible for callers that only need failure names,
+    while letting the API distinguish a degraded run from a total failure.
+    """
+
+    def __init__(self, failures=(), *, attempted_phases=()):
+        super().__init__(failures)
+        self.attempted_phases = list(attempted_phases)
+
+
 class MarketDataUpdater:
     """Main class for daily market data updates."""
 
@@ -129,8 +141,17 @@ class MarketDataUpdater:
         old pattern (log an error, carry on, print UPDATE COMPLETE) let a
         failed write hide behind a successful-looking run for weeks.
         """
-        self.failed_phases.append(phase)
+        if phase not in self.failed_phases:
+            self.failed_phases.append(phase)
         logger.error(f"{phase} failed: {detail}")
+
+    def _collect_optional(self, phase: str, collect, default):
+        """Run one collector without allowing it to suppress later phases."""
+        try:
+            return collect()
+        except Exception as exc:
+            self._phase_failed(phase, exc)
+            return default
 
     def _finish(self) -> list[str]:
         """Log the closing banner honestly and return the failed phases."""
@@ -140,7 +161,10 @@ class MarketDataUpdater:
         else:
             logger.info("UPDATE COMPLETE")
         logger.info("=" * 60)
-        return list(self.failed_phases)
+        return RefreshPhaseFailures(
+            self.failed_phases,
+            attempted_phases=getattr(self, "attempted_phases", ()),
+        )
 
     def run_full_update(self) -> list[str]:
         """Run the complete market data update pipeline.
@@ -151,19 +175,41 @@ class MarketDataUpdater:
         logger.info(f"MARKET DATA UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
         self.failed_phases = []
+        self.attempted_phases = [
+            *(("fred_indicators",) if self.fred else ()),
+            "fear_greed",
+            "cboe",
+            "market_breadth",
+            "yahoo",
+            "vrp",
+            *(("fed_balance_sheet",) if self.fed_bs else ()),
+            "move_index",
+            *(("repo_market",) if self.repo else ()),
+            *(("liquidity_history",) if self.liquidity else ()),
+            "daily_snapshot",
+            "left_signal",
+        ]
 
         # ------------------------------------------------------------------
         # 1. FRED data (optional - requires API key)
         # ------------------------------------------------------------------
-        fred_data = None
+        fred_data = {}
         if self.fred:
             logger.info("Fetching FRED data...")
-            fred_data = self.fred.get_all_indicators()
+            fred_data = self._collect_optional(
+                "fred_indicators", self.fred.get_all_indicators, {}
+            )
 
             if fred_data:
                 logger.info(f"Fetched {len(fred_data)} FRED indicator series")
-                self.db.save_indicators_batch(fred_data)
-                logger.info("Saved FRED indicators to database")
+                try:
+                    saved = self.db.save_indicators_batch(fred_data)
+                    if saved is False:
+                        self._phase_failed("fred_indicators", "database save returned False")
+                    else:
+                        logger.info("Saved FRED indicators to database")
+                except Exception as e:
+                    self._phase_failed("fred_indicators", e)
             else:
                 logger.warning("No FRED data returned")
         else:
@@ -186,12 +232,14 @@ class MarketDataUpdater:
                     logger.info(f"  Strength: {left_signal_data['strength']:.1f}/100")
                     logger.info(f"  Distance from EMA: {left_signal_data['pct_from_ema']:+.2f}%")
 
-                    self.db.save_signal(
+                    saved = self.db.save_signal(
                         "LEFT",
                         left_signal_data["signal"],
                         left_signal_data["strength"],
                         left_signal_data,
                     )
+                    if saved is False:
+                        self._phase_failed("left_signal", "database save returned False")
                 else:
                     logger.warning(f"{left_signal_data.get('reason', 'Insufficient data')}")
                     left_signal_data = {"signal": "NEUTRAL"}
@@ -205,7 +253,9 @@ class MarketDataUpdater:
         # 3. Fear & Greed Index
         # ------------------------------------------------------------------
         logger.info("Fetching Fear & Greed Index...")
-        fear_greed_data = self.fear_greed.get_fear_greed_score() or {}
+        fear_greed_data = self._collect_optional(
+            "fear_greed", self.fear_greed.get_fear_greed_score, {}
+        ) or {}
 
         if "score" in fear_greed_data and fear_greed_data["score"] is not None:
             logger.info(
@@ -220,7 +270,7 @@ class MarketDataUpdater:
         # 4. CBOE data (VIX, contango, put/call, etc.)
         # ------------------------------------------------------------------
         logger.info("Fetching CBOE volatility & options data...")
-        cboe_data = self.cboe.get_all_data() or {}
+        cboe_data = self._collect_optional("cboe", self.cboe.get_all_data, {}) or {}
 
         vix_spot_cboe = cboe_data.get("vix_spot")
         vix_contango_cboe = cboe_data.get("vix_contango")
@@ -237,7 +287,7 @@ class MarketDataUpdater:
         # 5. Yahoo Finance data (fallbacks/proxies)
         # ------------------------------------------------------------------
         logger.info("Fetching Yahoo Finance proxies...")
-        yahoo_data = self.yahoo.get_all_data() or {}
+        yahoo_data = self._collect_optional("yahoo", self.yahoo.get_all_data, {}) or {}
 
         if yahoo_data.get("vix") is not None:
             logger.info(f"VIX (Yahoo): {yahoo_data['vix']:.2f}")
@@ -259,7 +309,14 @@ class MarketDataUpdater:
         try:
             breadth_df = self.breadth.get_breadth_history(days=90)
             if not breadth_df.empty:
-                self.db.save_breadth_data(breadth_df)
+                saved = self.db.save_breadth_data(breadth_df)
+                if isinstance(saved, tuple):
+                    rows_saved, errors = saved
+                    save_failed = rows_saved == 0 or bool(errors)
+                else:
+                    save_failed = saved is False
+                if save_failed:
+                    self._phase_failed("market_breadth", "database save returned False")
                 latest_breadth = breadth_df.iloc[-1]['breadth_pct']
                 nyse_breadth_ratio = latest_breadth / 100.0  # Convert to ratio
                 logger.info(f"NYSE Breadth: {latest_breadth:.1f}% advancing")
@@ -267,7 +324,7 @@ class MarketDataUpdater:
             else:
                 logger.warning("No breadth data available")
         except Exception as e:
-            logger.warning(f"Breadth calculation failed: {e}")
+            self._phase_failed("market_breadth", e)
 
         # ------------------------------------------------------------------
         # 7. VRP (Volatility Risk Premium) analysis
@@ -301,28 +358,34 @@ class MarketDataUpdater:
                 # Store VRP and components into the generic indicators table
                 today = datetime.now()
                 try:
-                    self.db.save_indicator(
+                    save_results = [self.db.save_indicator(
                         "vrp_21d", today, vrp_analysis["vrp"], series_id="VRP_21D"
-                    )
-                    self.db.save_indicator(
+                    )]
+                    save_results.append(self.db.save_indicator(
                         "realized_vol_21d",
                         today,
                         vrp_analysis["realized_vol"],
                         series_id="SPY_RV_21D",
-                    )
-                    self.db.save_indicator(
+                    ))
+                    save_results.append(self.db.save_indicator(
                         "vix_spot_vrp", today, vrp_analysis["vix"], series_id="^VIX"
-                    )
+                    ))
+                    if any(saved is False for saved in save_results):
+                        self._phase_failed("vrp", "database save returned False")
                 except Exception as e:
-                    logger.warning(f"Failed to save VRP indicators: {e}")
+                    self._phase_failed("vrp", e)
 
                 # If DatabaseManager has a dedicated helper, use it as well
                 if hasattr(self.db, "save_vrp_data"):
                     try:
-                        self.db.save_vrp_data(vrp_analysis)
-                        logger.info("VRP snapshot saved via save_vrp_data()")
+                        saved = self.db.save_vrp_data(vrp_analysis)
+                        success = saved[0] if isinstance(saved, tuple) else saved
+                        if success is False:
+                            self._phase_failed("vrp", "database save returned False")
+                        else:
+                            logger.info("VRP snapshot saved via save_vrp_data()")
                     except Exception as e:
-                        logger.warning(f"save_vrp_data() failed: {e}")
+                        self._phase_failed("vrp", e)
 
         # ------------------------------------------------------------------
         # 8. PHASE 2: Fed Balance Sheet (for Net Liquidity)
@@ -354,8 +417,11 @@ class MarketDataUpdater:
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_fed_balance_sheet"):
-                    self.db.save_fed_balance_sheet(fed_bs_data)
-                    logger.info("Fed Balance Sheet saved to database")
+                    saved = self.db.save_fed_balance_sheet(fed_bs_data)
+                    if saved is False:
+                        self._phase_failed("fed_balance_sheet", "database save returned False")
+                    else:
+                        logger.info("Fed Balance Sheet saved to database")
             else:
                 logger.warning("No Fed Balance Sheet data available")
         except _PhaseSkipped:
@@ -383,8 +449,11 @@ class MarketDataUpdater:
                 if hasattr(self.db, "save_move_data"):
                     move_df = move_snapshot.get('move_df')
                     if move_df is not None and not move_df.empty:
-                        self.db.save_move_data(move_df)
-                        logger.info("MOVE data saved to database")
+                        saved = self.db.save_move_data(move_df)
+                        if saved is False:
+                            self._phase_failed("move_index", "database save returned False")
+                        else:
+                            logger.info("MOVE data saved to database")
                     else:
                         # Fallback: save only latest observation
                         move_df = pd.DataFrame([{
@@ -393,8 +462,11 @@ class MarketDataUpdater:
                             'percentile': move_snapshot.get('percentile'),
                             'source': 'snapshot'
                         }])
-                        self.db.save_move_data(move_df)
-                        logger.info("MOVE latest value saved to database")
+                        saved = self.db.save_move_data(move_df)
+                        if saved is False:
+                            self._phase_failed("move_index", "database save returned False")
+                        else:
+                            logger.info("MOVE latest value saved to database")
             else:
                 logger.warning("No MOVE data available")
         except Exception as e:
@@ -430,8 +502,11 @@ class MarketDataUpdater:
 
                 # Save to database if method exists
                 if hasattr(self.db, "save_repo_data"):
-                    self.db.save_repo_data(repo_df)
-                    logger.info("Repo data saved to database")
+                    saved = self.db.save_repo_data(repo_df)
+                    if saved is False:
+                        self._phase_failed("repo_market", "database save returned False")
+                    else:
+                        logger.info("Repo data saved to database")
             else:
                 logger.warning("No Repo market data available")
         except _PhaseSkipped:
@@ -502,11 +577,19 @@ class MarketDataUpdater:
                 hy_spread_final = yahoo_hy
                 logger.info(f"Using Yahoo fallback for HY Spread: {hy_spread_final:.2f}%")
 
+        hy_spread_source = None
+        if fred_hy_spread is not None:
+            series_id = fred_data["credit_spread_hy"].columns[1]
+            hy_spread_source = f"FRED ({series_id})"
+        elif hy_spread_final is not None:
+            hy_spread_source = "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
+
         snapshot = {
             # Core identifiers
             "date": datetime.now().strftime("%Y-%m-%d"),
             # Phase 1: Credit & Rates (with Yahoo fallbacks)
             "credit_spread_hy": hy_spread_final,
+            "credit_spread_hy_source": hy_spread_source,
             "credit_spread_ig": self._safe_get_latest_fred(fred_data, "credit_spread_ig"),
             "treasury_10y": treasury_10y_final,
             "fed_funds": self._safe_get_latest_fred(fred_data, "fed_funds"),
@@ -534,11 +617,14 @@ class MarketDataUpdater:
             "rrp_volume": rrp_value,
         }
 
-        saved, validation = self.db.save_daily_snapshot(snapshot)
-        if saved:
-            logger.info("Daily snapshot saved to database")
-        else:
-            self._phase_failed("daily_snapshot", f"validation rejected it: {validation.errors}")
+        try:
+            saved, validation = self.db.save_daily_snapshot(snapshot)
+            if saved:
+                logger.info("Daily snapshot saved to database")
+            else:
+                self._phase_failed("daily_snapshot", f"validation rejected it: {validation.errors}")
+        except Exception as e:
+            self._phase_failed("daily_snapshot", e)
 
         return self._finish()
 

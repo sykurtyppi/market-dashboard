@@ -140,6 +140,7 @@ class RefreshResponse(BaseModel):
 
 class RefreshRun(BaseModel):
     completed_at: str
+    outcome: Literal["successful", "partial", "failed"]
     failed_phases: list[str] = Field(default_factory=list)
     error: Optional[str] = None
 
@@ -172,6 +173,10 @@ class VixTenor(BaseModel):
     maturity: str
     days: int
     value: float
+    symbol: str
+    change: Optional[float] = None
+    change_pct: Optional[float] = None
+    estimated: bool = False
 
 
 class SectorsResponse(BaseModel):
@@ -180,6 +185,7 @@ class SectorsResponse(BaseModel):
     rotation: Rotation
     vix_term: List[VixTenor]
     vix_structure: Optional[str] = None
+    vix_source: str
     warnings: List[str] = Field(default_factory=list)
 
 

@@ -212,11 +212,26 @@ def _run_refresh():
     global _last_refresh
     try:
         from scheduler.daily_update import MarketDataUpdater
-        failed = MarketDataUpdater().run_full_update() or []
-        _last_refresh = {"completed_at": _now_iso(), "failed_phases": list(failed), "error": None}
+        result = MarketDataUpdater().run_full_update() or []
+        failed_phases = list(result)
+        attempted_phases = list(getattr(result, "attempted_phases", ()))
+        total_failure = bool(attempted_phases) and set(attempted_phases).issubset(failed_phases)
+        _last_refresh = {
+            "completed_at": _now_iso(),
+            "outcome": (
+                "failed" if total_failure else "partial" if failed_phases else "successful"
+            ),
+            "failed_phases": failed_phases,
+            "error": None,
+        }
     except Exception as exc:  # noqa: BLE001 - log and move on; lock still releases
         logger.error("Data refresh failed: %s", exc)
-        _last_refresh = {"completed_at": _now_iso(), "failed_phases": [], "error": str(exc)}
+        _last_refresh = {
+            "completed_at": _now_iso(),
+            "outcome": "failed",
+            "failed_phases": [],
+            "error": str(exc),
+        }
     finally:
         _refresh_lock.release()
 

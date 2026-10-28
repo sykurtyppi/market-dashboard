@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from api.deps import get_db
-from processors.composite_risk import calculate_composite_risk_score, put_call_input
+from processors.composite_risk import calculate_composite_risk_score, put_call_observation
 
 
 def _num(value: Any) -> Optional[float]:
@@ -118,7 +118,7 @@ def _contango_state(c: Optional[float]) -> str:
 
 def _put_call_source(snapshot: Dict) -> str:
     """Which put/call series the stored ratio actually is — one rule, shared with the score."""
-    return put_call_input(snapshot)[1]
+    return put_call_observation(snapshot)[1]
 
 
 def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) -> Tuple[Optional[int], Dict[str, Any]]:
@@ -154,12 +154,14 @@ def build_overview() -> Dict[str, Any]:
     breadth = _num(snapshot.get("market_breadth"))
     vrp = _num(snapshot.get("vrp"))
     ten_y = _num(snapshot.get("treasury_10y"))
+    put_call_value, put_call_source, _ = put_call_observation(snapshot)
 
     metrics = [
         {"key": "vix", "label": "VIX Spot", "value": vix, "unit": "",
          "state": _vix_state(vix), "source": "Yahoo Finance (^VIX)"},
         {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
-         "state": _credit_state(hy), "source": "FRED (BAMLH0A0HYM2)"},
+         "state": _credit_state(hy),
+         "source": snapshot.get("credit_spread_hy_source") or "Unavailable"},
         {"key": "ten_y", "label": "10Y Treasury", "value": ten_y, "unit": "%",
          "state": "neutral", "source": "FRED (DGS10)"},
         {"key": "fear_greed", "label": "Fear & Greed", "value": fg, "unit": "",
@@ -201,8 +203,8 @@ def build_overview() -> Dict[str, Any]:
          "state": "neutral", "source": "CBOE"},
         {"indicator": "VIX9D", "value": _num(snapshot.get("vix9d")),
          "state": _vix_state(_num(snapshot.get("vix9d"))), "source": "CBOE"},
-        {"indicator": "Put / Call Ratio", "value": _num(snapshot.get("put_call_ratio")),
-         "state": "neutral", "source": _put_call_source(snapshot)},
+        {"indicator": "Put / Call Ratio", "value": put_call_value,
+         "state": "neutral", "source": put_call_source},
         {"indicator": "Market Breadth", "value": (breadth * 100) if breadth is not None else None,
          "unit": "%", "state": _breadth_state(breadth), "source": "S&P 500 A/D"},
     ]

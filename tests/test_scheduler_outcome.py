@@ -16,7 +16,50 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database.db_manager import DatabaseManager  # noqa: E402
+from api import overview_service  # noqa: E402
 from scheduler.daily_update import MarketDataUpdater  # noqa: E402
+
+
+class WorkflowDB:
+    def __init__(self, *, fred_saved=True, breadth_saved=True, vrp_saved=(True, None)):
+        self.fred_saved = fred_saved
+        self.breadth_saved = breadth_saved
+        self.vrp_saved = vrp_saved
+        self.snapshots = []
+
+    def save_indicators_batch(self, data):
+        return self.fred_saved
+
+    def save_daily_snapshot(self, snapshot):
+        self.snapshots.append(snapshot)
+        return True, SimpleNamespace(errors=[])
+
+    def save_breadth_data(self, data):
+        return self.breadth_saved
+
+    def save_indicator(self, *args, **kwargs):
+        return True
+
+    def save_vrp_data(self, data):
+        return self.vrp_saved
+
+
+def workflow_updater(*, fred=None, fear_greed=None, yahoo=None, db=None):
+    u = MarketDataUpdater.__new__(MarketDataUpdater)
+    u.failed_phases = []
+    u.fred = fred
+    u.fear_greed = fear_greed or SimpleNamespace(get_fear_greed_score=lambda: {"score": 50})
+    u.cboe = SimpleNamespace(get_all_data=lambda: {})
+    u.yahoo = yahoo or SimpleNamespace(get_all_data=lambda: {})
+    u.breadth = SimpleNamespace(get_breadth_history=lambda days=90: pd.DataFrame())
+    u.fed_bs = None
+    u.move = SimpleNamespace(get_full_snapshot=lambda: None)
+    u.repo = None
+    u.liquidity = None
+    u.db = db or WorkflowDB()
+    u.left_strategy = SimpleNamespace(calculate_signal=lambda frame: {"signal": "INSUFFICIENT_DATA"})
+    u.vrp_analyzer = SimpleNamespace(get_complete_analysis=lambda vix: {"error": "not used"})
+    return u
 
 
 def liquidity_frame():
@@ -100,3 +143,183 @@ def test_liquidity_phase_disabled_by_configuration_is_not_a_failure(updater, cap
         updater._update_liquidity_history()
     assert updater.failed_phases == []
     assert "not available" in caplog.text
+
+
+def test_fred_save_false_marks_phase_failed_but_snapshot_still_runs():
+    frame = pd.DataFrame({"date": ["2026-10-26"], "DGS10": [4.1]})
+    db = WorkflowDB(fred_saved=False)
+    updater = workflow_updater(
+        fred=SimpleNamespace(get_all_indicators=lambda: {"treasury_10y": frame}),
+        db=db,
+    )
+
+    failed = updater.run_full_update()
+
+    assert "fred_indicators" in failed
+    assert db.snapshots, "independent snapshot phase must still run"
+
+
+def test_repo_save_false_marks_phase_failed_without_aborting_snapshot(caplog):
+    repo = pd.DataFrame({
+        "date": [pd.Timestamp("2026-10-26")],
+        "sofr": [3.88],
+        "iorb": [3.90],
+        "rrp_on": [82.5],
+        "sofr_iorb_spread": [-2.0],
+    })
+    db = WorkflowDB()
+    db.save_repo_data = lambda data: False
+    updater = workflow_updater(db=db)
+    updater.repo = SimpleNamespace(get_repo_history=lambda days_back=730: repo)
+
+    with caplog.at_level(logging.INFO):
+        failed = updater.run_full_update()
+
+    assert "repo_market" in failed
+    assert db.snapshots, "independent snapshot phase must still run"
+    assert "Repo data saved to database" not in caplog.text
+
+
+def test_fred_save_exception_marks_phase_failed_but_snapshot_still_runs():
+    frame = pd.DataFrame({"date": ["2026-10-26"], "DGS10": [4.1]})
+    db = WorkflowDB()
+    db.save_indicators_batch = lambda data: (_ for _ in ()).throw(RuntimeError("disk full"))
+    updater = workflow_updater(
+        fred=SimpleNamespace(get_all_indicators=lambda: {"treasury_10y": frame}),
+        db=db,
+    )
+
+    failed = updater.run_full_update()
+
+    assert "fred_indicators" in failed
+    assert db.snapshots, "independent snapshot phase must still run"
+
+
+def test_optional_collector_exception_does_not_abort_unrelated_phases():
+    yahoo_calls = []
+    db = WorkflowDB()
+    updater = workflow_updater(
+        fear_greed=SimpleNamespace(
+            get_fear_greed_score=lambda: (_ for _ in ()).throw(RuntimeError("offline"))
+        ),
+        yahoo=SimpleNamespace(
+            get_all_data=lambda: yahoo_calls.append(True) or {"hy_spread_proxy": 4.2}
+        ),
+        db=db,
+    )
+
+    failed = updater.run_full_update()
+
+    assert "fear_greed" in failed
+    assert yahoo_calls == [True]
+    assert db.snapshots[0]["credit_spread_hy"] == 4.2
+    assert db.snapshots[0]["credit_spread_hy_source"] == (
+        "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
+    )
+
+
+def test_fred_credit_observation_keeps_its_series_provenance():
+    credit = pd.DataFrame({
+        "date": [pd.Timestamp("2026-10-26")],
+        "BAMLH0A0HYM2": [3.0],
+    })
+    db = WorkflowDB()
+    updater = workflow_updater(
+        fred=SimpleNamespace(get_all_indicators=lambda: {"credit_spread_hy": credit}),
+        yahoo=SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
+        db=db,
+    )
+
+    updater.run_full_update()
+
+    assert db.snapshots[0]["credit_spread_hy"] == 3.0
+    assert db.snapshots[0]["credit_spread_hy_source"] == "FRED (BAMLH0A0HYM2)"
+
+
+@pytest.mark.parametrize(
+    ("fred", "yahoo", "expected_value", "expected_source"),
+    [
+        (
+            SimpleNamespace(get_all_indicators=lambda: {
+                "credit_spread_hy": pd.DataFrame({
+                    "date": [pd.Timestamp("2026-10-26")],
+                    "BAMLH0A0HYM2": [3.0],
+                })
+            }),
+            SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
+            3.0,
+            "FRED (BAMLH0A0HYM2)",
+        ),
+        (
+            None,
+            SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
+            4.2,
+            "Yahoo Finance (HYG yield − 10Y Treasury proxy)",
+        ),
+    ],
+)
+def test_credit_provenance_survives_selection_persistence_and_api(
+    tmp_path, monkeypatch, fred, yahoo, expected_value, expected_source
+):
+    workflow_db = WorkflowDB()
+    updater = workflow_updater(fred=fred, yahoo=yahoo, db=workflow_db)
+    updater.run_full_update()
+
+    selected = workflow_db.snapshots[0]
+    assert selected["credit_spread_hy"] == expected_value
+    assert selected["credit_spread_hy_source"] == expected_source
+
+    real_db = DatabaseManager(str(tmp_path / "provenance.db"))
+    saved, validation = real_db.save_daily_snapshot(selected)
+    assert saved, validation.errors
+
+    monkeypatch.setattr(overview_service, "get_db", lambda: real_db)
+    body = overview_service.build_overview()
+    credit = next(metric for metric in body["metrics"] if metric["key"] == "hy")
+    assert credit["value"] == expected_value
+    assert credit["source"] == expected_source
+
+
+def test_tuple_save_failures_degrade_their_refresh_phases():
+    breadth = pd.DataFrame({"date": ["2026-10-26"], "breadth_pct": [55.0]})
+    db = WorkflowDB(
+        breadth_saved=(0, ["database error"]),
+        vrp_saved=(False, SimpleNamespace(errors=["invalid"])),
+    )
+    updater = workflow_updater(
+        yahoo=SimpleNamespace(get_all_data=lambda: {"vix": 13.2}),
+        db=db,
+    )
+    updater.breadth = SimpleNamespace(get_breadth_history=lambda days=90: breadth)
+    updater.vrp_analyzer = SimpleNamespace(get_complete_analysis=lambda **kwargs: {
+        "vrp": 1.2, "realized_vol": 12.0, "vix": 13.2,
+        "regime": "Normal", "vix_range": "12-20", "expected_6m_return": 4.0,
+    })
+
+    failed = updater.run_full_update()
+
+    assert "market_breadth" in failed
+    assert "vrp" in failed
+
+
+def test_breadth_save_exception_degrades_phase_and_continues():
+    breadth = pd.DataFrame({"date": ["2026-10-26"], "breadth_pct": [55.0]})
+    db = WorkflowDB()
+    db.save_breadth_data = lambda data: (_ for _ in ()).throw(RuntimeError("disk full"))
+    updater = workflow_updater(db=db)
+    updater.breadth = SimpleNamespace(get_breadth_history=lambda days=90: breadth)
+
+    failed = updater.run_full_update()
+
+    assert "market_breadth" in failed
+    assert db.snapshots, "independent snapshot phase must still run"
+
+
+def test_snapshot_save_exception_degrades_phase_instead_of_aborting():
+    db = WorkflowDB()
+    db.save_daily_snapshot = lambda data: (_ for _ in ()).throw(RuntimeError("disk full"))
+    updater = workflow_updater(db=db)
+
+    failed = updater.run_full_update()
+
+    assert "daily_snapshot" in failed

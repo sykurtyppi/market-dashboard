@@ -514,7 +514,13 @@ class TestHYSpreadProxy:
         # Assert: 8.0 - 4.0 = 4.0 (within the 1-15 sanity range)
         assert spread == pytest.approx(4.0)
 
-    def test_out_of_range_spread_falls_back_to_default(self, collector, monkeypatch):
+    def test_missing_hyg_yield_is_unavailable(self, collector, monkeypatch):
+        collector._set_cached("treasury_10y", 2.5)
+        install_tickers(monkeypatch, {"HYG": FakeTicker(info={})})
+
+        assert collector.get_hy_spread_proxy() is None
+
+    def test_out_of_range_spread_is_unavailable(self, collector, monkeypatch):
         # Arrange: 25% yield gives spread of 21, outside the 1-15 sanity range
         collector._set_cached("treasury_10y", 4.0)
         install_tickers(monkeypatch, {"HYG": FakeTicker(info={"yield": 0.25})})
@@ -522,8 +528,8 @@ class TestHYSpreadProxy:
         # Act
         spread = collector.get_hy_spread_proxy()
 
-        # Assert: hardcoded "normal" fallback estimate
-        assert spread == pytest.approx(3.5)
+        # Assert: implausible observations are unavailable, never fabricated.
+        assert spread is None
 
     def test_missing_yield_uses_dividend_yield_fallback(self, collector, monkeypatch):
         # Arrange: no 'yield' key, dividendYield of 7% (decimal form)

@@ -1,8 +1,8 @@
 """Composite risk score (processors/composite_risk.py).
 
 The 2026-10-19 snapshot is the worked example. The page showed 26; the same
-inputs score 31.5 once credit is read as percent, MOVE is supplied, and SKEW
-is windowed for the levels it actually prints.
+calibrated inputs score 32.2 once credit is read as percent, MOVE is supplied,
+SKEW uses its post-2020 distribution, and an uncalibrated proxy is excluded.
 """
 import sys
 from pathlib import Path
@@ -12,7 +12,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from processors.composite_risk import (  # noqa: E402
-    COMPONENTS, PUT_CALL_WINDOW, calculate_composite_risk_score, normalize, put_call_input,
+    COMPONENTS, PUT_CALL_WINDOW, SKEW_WINDOW,
+    calculate_composite_risk_score, normalize, put_call_input,
 )
 
 LIVE = {
@@ -55,37 +56,53 @@ class TestCreditUnits:
 
 
 class TestWindows:
-    def test_skew_window_for_the_post_2020_regime(self):
-        # Locally SKEW prints 137–169 (median ~146). On 110–150 a typical day
-        # scored ~89 and a third of days saturated; on 120–170 it does not.
+    def test_skew_window_is_anchored_to_post_2020_distribution(self):
+        # Yahoo ^SKEW daily history from 2020-01-02 through 2026-10-27 has
+        # 1,674 readings: p5=118.74, median=140.20, p95=159.96. Rounded
+        # p5/p95 anchors keep the component interpretable without fitting it
+        # to the handful of observations stored in the app database.
+        assert SKEW_WINDOW == (120.0, 160.0)
         assert normalize("skew", 120.0) == 0.0
-        assert normalize("skew", 145.5) == pytest.approx(51.0)
-        assert normalize("skew", 170.0) == 100.0
+        assert normalize("skew", 140.0) == pytest.approx(50.0)
+        assert normalize("skew", 160.0) == 100.0
 
-    def test_put_call_uses_one_window_for_every_source(self):
-        # A per-source SPY window was tried and reverted: only three SPY
-        # readings are stored, and the app's own copy calls >1.0 defensive.
-        assert PUT_CALL_WINDOW == (0.5, 1.5)
-        assert normalize("put_call", 0.6) == pytest.approx(90.0)
-        assert normalize("put_call", 1.2589) == pytest.approx(24.1, abs=0.05)
-        assert normalize("put_call", 1.5) == 0.0
+    def test_put_call_window_matches_documented_cboe_equity_thresholds(self):
+        # The model configuration defines 0.6 as extreme greed/complacency and
+        # 1.2 as extreme fear/hedging for CBOE's equity-only ratio.
+        assert PUT_CALL_WINDOW == (0.6, 1.2)
+        assert normalize("put_call", 0.6) == 100.0
+        assert normalize("put_call", 0.9) == pytest.approx(50.0)
+        assert normalize("put_call", 1.2) == 0.0
 
     def test_put_call_input_prefers_the_official_series(self):
         assert put_call_input({"cboe_equity_pc": 0.7, "spy_put_call": 1.2, "put_call_ratio": 1.2}) == (0.7, "CBOE equity P/C (PCCE)")
-        assert put_call_input({"cboe_equity_pc": None, "spy_put_call": 1.2, "put_call_ratio": 1.2}) == (1.2, "SPY volume proxy")
-        assert put_call_input({"put_call_ratio": 0.9}) == (0.9, "Best available")
+        assert put_call_input({"cboe_equity_pc": None, "spy_put_call": 1.2, "put_call_ratio": 1.2}) == (None, "SPY volume proxy (uncalibrated)")
+        assert put_call_input({"put_call_ratio": 0.9}) == (None, "Unverified put/call source")
+
+    @pytest.mark.parametrize(
+        "snapshot, source",
+        [
+            ({"spy_put_call": 1.1}, "SPY volume proxy (uncalibrated)"),
+            ({"put_call_ratio": 0.9}, "Unverified put/call source"),
+        ],
+    )
+    def test_uncalibrated_source_survives_when_no_component_is_scoreable(self, snapshot, source):
+        result = calculate_composite_risk_score(snapshot)
+        assert result["score"] is None
+        assert result["put_call_source"] == source
 
 
 class TestWorkedExample:
     def test_corrected_score(self):
         r = calculate_composite_risk_score(LIVE, VRP, move_index=MOVE)
-        # 17.2·.15 + 24.6·.20 + 19.94·.15 + 8·.10 + 41·.15 + 31.1·.10 + 97.18·.10 + 24.11·.05 = 31.47
-        assert r["score"] == pytest.approx(31.5, abs=0.05)
+        # The SPY proxy is displayed but not scored against CBOE PCCE bounds.
+        # Remaining numerator 30.55 / available weight .95 = 32.16.
+        assert r["score"] == pytest.approx(32.2, abs=0.05)
         assert r["components"]["credit"] == pytest.approx(24.6)
         assert r["components"]["move"] == pytest.approx(31.1)
-        assert r["put_call_source"] == "SPY volume proxy"
-        assert r["missing"] == [] and r["component_count"] == 8
-        assert sum(r["weights"].values()) == pytest.approx(1.0)
+        assert r["put_call_source"] == "SPY volume proxy (uncalibrated)"
+        assert r["missing"] == ["put_call"] and r["component_count"] == 7
+        assert sum(r["weights"].values()) == pytest.approx(0.95)
         assert r["interpretation"] == "LOW RISK"
 
     def test_the_published_26_is_the_old_arithmetic(self):
@@ -95,9 +112,9 @@ class TestWorkedExample:
 
     def test_missing_move_is_reported_and_weights_renormalize(self):
         r = calculate_composite_risk_score(LIVE, VRP)
-        assert r["missing"] == ["move"]
-        assert sum(r["weights"].values()) == pytest.approx(0.90)
-        assert r["score"] == pytest.approx(31.5, abs=0.05)   # (31.47 − 3.11) / 0.9
+        assert r["missing"] == ["move", "put_call"]
+        assert sum(r["weights"].values()) == pytest.approx(0.85)
+        assert r["score"] == pytest.approx(32.3, abs=0.05)
 
 
 class TestShape:
@@ -125,6 +142,6 @@ class TestShape:
         fear = calculate_composite_risk_score({"fear_greed_score": 10})["score"]
         greed = calculate_composite_risk_score({"fear_greed_score": 90})["score"]
         assert fear < greed
-        puts = calculate_composite_risk_score({"put_call_ratio": 1.4})["score"]
-        calls = calculate_composite_risk_score({"put_call_ratio": 0.6})["score"]
+        puts = calculate_composite_risk_score({"cboe_equity_pc": 1.15})["score"]
+        calls = calculate_composite_risk_score({"cboe_equity_pc": 0.65})["score"]
         assert puts < calls

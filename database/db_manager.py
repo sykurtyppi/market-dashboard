@@ -199,6 +199,7 @@ class DatabaseManager:
         'spy_put_call': 'REAL',    # SPY-specific P/C (institutional hedging)
         'spy_put_oi': 'INTEGER',   # SPY put open interest
         'spy_call_oi': 'INTEGER',  # SPY call open interest
+        'credit_spread_hy_source': 'TEXT',
     }
     # liquidity_history data columns the refresh writes. CREATE TABLE IF NOT
     # EXISTS is a no-op on a database that already has the table in an older
@@ -219,10 +220,35 @@ class DatabaseManager:
         'liquidity_history': VALID_LIQUIDITY_COLUMNS,
     }
     VALID_SQL_TYPES = {'REAL', 'TEXT', 'INTEGER', 'BLOB', 'NULL'}
+    RRP_BILLIONS_MIGRATION = 'repo_market_rrp_on_billions_v1'
 
     def _run_migrations(self, conn):
-        """Add missing columns to existing tables (safe migrations)"""
+        """Apply deterministic data migrations and add missing columns."""
         cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                name TEXT PRIMARY KEY,
+                applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?",
+            (self.RRP_BILLIONS_MIGRATION,),
+        )
+        if not cursor.fetchone():
+            cursor.execute(
+                "UPDATE repo_market SET rrp_on = rrp_on * 1000 WHERE rrp_on IS NOT NULL"
+            )
+            converted = cursor.rowcount
+            cursor.execute(
+                "INSERT INTO schema_migrations (name) VALUES (?)",
+                (self.RRP_BILLIONS_MIGRATION,),
+            )
+            logger.info(
+                "Migrated repo_market.rrp_on from trillions to billions for %s rows",
+                converted,
+            )
 
         # Add missing columns using allowlisted values only. Table names,
         # column names and types all come from class constants, never input.
@@ -353,14 +379,15 @@ class DatabaseManager:
 
             cursor.execute("""
                 INSERT OR REPLACE INTO daily_snapshots
-                (date, credit_spread_hy, credit_spread_ig, treasury_10y, fed_funds,
+                (date, credit_spread_hy, credit_spread_hy_source, credit_spread_ig, treasury_10y, fed_funds,
                  vix_spot, vix9d, vvix, vvix_signal, skew, vrp, vix_contango, put_call_ratio,
                  cboe_equity_pc, spy_put_call, spy_put_oi, spy_call_oi,
                  fear_greed_score, market_breadth, left_signal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 validated.get('date'),
                 validated.get('credit_spread_hy'),
+                validated.get('credit_spread_hy_source'),
                 validated.get('credit_spread_ig'),
                 validated.get('treasury_10y'),
                 validated.get('fed_funds'),
@@ -893,7 +920,8 @@ class DatabaseManager:
         Save Repo market data to database
         
         Args:
-            df: DataFrame with columns: date, sofr, gc_repo, rrp_on, sofr_z_score
+            df: DataFrame with columns: date, sofr, gc_repo, rrp_on, sofr_z_score.
+                ``rrp_on`` is stored in billions of US dollars.
         
         Returns:
             bool: True if successful

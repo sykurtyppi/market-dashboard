@@ -267,8 +267,15 @@ def build_credit_liquidity() -> dict:
     hy_hist = db.get_indicator_history("credit_spread_hy", days=365)
     ig_hist = db.get_indicator_history("credit_spread_ig", days=365)
     fed = _asc(db.get_fed_balance_sheet_history(days=365))  # method returns DESC
+    snapshot = db.get_latest_snapshot() or {}
 
-    hy = _latest_val(hy_hist)
+    # The headline value and attribution must come from the same persisted
+    # observation. History remains the chart source, while the daily snapshot
+    # carries observation-level provenance for the current metric.
+    hy = _num(snapshot.get("credit_spread_hy"))
+    if hy is None:
+        hy = _latest_val(hy_hist)
+    hy_source = snapshot.get("credit_spread_hy_source") or "Unavailable"
     ig = _latest_val(ig_hist)
 
     total_assets = qt_cum = qt_pace = reserves = None
@@ -287,7 +294,7 @@ def build_credit_liquidity() -> dict:
 
     metrics = [
         {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
-         "state": _credit_state(hy), "source": "FRED (BAMLH0A0HYM2)"},
+         "state": _credit_state(hy), "source": hy_source},
         {"key": "ig", "label": "IG Credit Spread", "value": ig, "unit": "%",
          "state": "neutral", "source": "FRED (BAMLC0A0CM)"},
         {"key": "fed_assets", "label": "Fed Total Assets", "value": to_t(total_assets), "unit": "T",
@@ -410,11 +417,9 @@ def build_repo() -> dict:
     metrics = [
         {"key": "sofr", "label": "SOFR", "value": sofr, "unit": "%",
          "state": "neutral", "source": "FRED (SOFR)"},
-        # The collector stores rrp_on in $ trillions (FRED's $B value / 1000,
-        # despite its docstring) — shown raw it rendered "0.00" with no unit,
-        # a unitless mystery number. Present in $B.
+        # Collector and persistence contracts preserve FRED RRPONTSYD in $B.
         {"key": "rrp", "label": "RRP (Overnight)",
-         "value": round(rrp * 1000, 2) if rrp is not None else None, "unit": "B",
+         "value": round(rrp, 2) if rrp is not None else None, "unit": "B",
          "state": "neutral", "source": "FRED (RRPONTSYD), $B"},
         {"key": "sofr_z", "label": "SOFR Z-Score", "value": zscore, "unit": "",
          "state": "neutral", "source": "Derived (252d)"},
@@ -434,10 +439,6 @@ def build_repo() -> dict:
         "warnings": [],
         "charts": {
             "sofr_history": _series(hist, value_col="sofr"),
-            # Same $T→$B conversion as the metric so chart and card agree.
-            "rrp_history": [
-                {"date": p["date"], "value": round(p["value"] * 1000, 2)}
-                for p in _series(hist, value_col="rrp_on")
-            ],
+            "rrp_history": _series(hist, value_col="rrp_on"),
         },
     }

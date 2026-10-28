@@ -5,6 +5,8 @@ Collects SOFR, IORB, and calculates key spreads
 Data Quality Notes:
 - IORB changes infrequently (only on Fed policy changes) - forward-filled values are flagged
 - RRP volume is daily but may have gaps on holidays - forward-filled values are flagged
+- FRED RRPONTSYD values are already billions of US dollars and pass through unchanged
+- The compatibility key ``sofr_iorb_spread`` is expressed in basis points
 - SOFR z-score requires 252+ days of history; insufficient data is explicitly flagged
 """
 
@@ -101,7 +103,7 @@ class RepoCollector:
         - date
         - sofr: Secured Overnight Financing Rate
         - iorb: Interest on Reserve Balances  
-        - sofr_iorb_spread: SOFR - IORB (key liquidity indicator)
+        - sofr_iorb_spread: (SOFR - IORB) * 100, in basis points
         - rrp_on: Overnight Reverse Repo volume ($B)
         - sofr_z_score: SOFR z-score vs historical
         """
@@ -126,8 +128,6 @@ class RepoCollector:
             rrp_df = self.fetch_fred_series("RRPONTSYD", days_back)
             if not rrp_df.empty:
                 rrp_df = rrp_df.rename(columns={"value": "rrp_on"})
-                # Convert to billions
-                rrp_df["rrp_on"] = rrp_df["rrp_on"] / 1000.0
             else:
                 self.logger.warning("RRP data unavailable")
                 rrp_df = pd.DataFrame()
@@ -142,8 +142,10 @@ class RepoCollector:
                 df["iorb_is_actual"] = df["iorb"].notna()
                 df["iorb"] = df["iorb"].ffill()
 
-                # Calculate SOFR-IORB spread (KEY LIQUIDITY INDICATOR)
-                df["sofr_iorb_spread"] = df["sofr"] - df["iorb"]
+                # SOFR and IORB are percentage rates; convert their percentage-
+                # point difference to basis points. Keep the established external
+                # key for compatibility while making its unit contract explicit.
+                df["sofr_iorb_spread"] = (df["sofr"] - df["iorb"]) * 100.0
 
             if not rrp_df.empty:
                 df = df.merge(rrp_df, on="date", how="left")
@@ -236,7 +238,7 @@ class RepoCollector:
                 snapshot["iorb"] = float(latest["iorb"])
                 snapshot["sofr_iorb_spread"] = float(latest["sofr_iorb_spread"])
                 
-                # Classify liquidity based on spread
+                # Classify liquidity using basis-point thresholds.
                 spread = snapshot["sofr_iorb_spread"]
                 if spread <= 0:
                     snapshot["liquidity_status"] = "ABUNDANT"

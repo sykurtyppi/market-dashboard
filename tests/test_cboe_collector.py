@@ -261,6 +261,39 @@ class TestGetVix3m:
         ticker_mock.assert_not_called()
 
 
+class TestLongerDatedVixIndices:
+    """VIX6M/VIX1Y complete the index-based volatility curve."""
+
+    @pytest.mark.parametrize(
+        "method_name,symbol,expected",
+        [
+            ("get_vix6m", "^VIX6M", 21.4),
+            ("get_vix1y", "^VIX1Y", 22.1),
+        ],
+    )
+    def test_returns_latest_close(self, collector, method_name, symbol, expected):
+        with patch(YF_TICKER, return_value=make_ticker_mock(expected)) as ticker_mock:
+            result = getattr(collector, method_name)()
+
+        assert result == pytest.approx(expected)
+        ticker_mock.assert_called_once_with(symbol)
+
+    @pytest.mark.parametrize("method_name", ["get_vix6m", "get_vix1y"])
+    def test_returns_none_when_history_is_empty(self, collector, method_name):
+        empty_ticker = Mock()
+        empty_ticker.history.return_value = pd.DataFrame()
+
+        with patch(YF_TICKER, return_value=empty_ticker):
+            assert getattr(collector, method_name)() is None
+
+    def test_marks_rate_limit_fallback_as_stale(self, collector):
+        with patch.object(collector, "_get_cached", side_effect=[None, 21.4]), \
+             patch.object(collector, "_rate_limited_recently", return_value=True):
+            assert collector.get_vix6m() == pytest.approx(21.4)
+
+        assert "VIX6M" in collector.stale_fields
+
+
 class TestInterpolateVix3mMultiplier:
     """Smooth piecewise-linear VIX3M multiplier"""
 

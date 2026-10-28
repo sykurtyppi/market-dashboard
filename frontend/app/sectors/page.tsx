@@ -59,10 +59,13 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
           </div>
         </Section>
 
-        <section className="grid-2">
-          <Panel title="VIX Term Structure" sub={data.vix_structure ?? undefined}>
-            <VixTermChart term={data.vix_term} />
-          </Panel>
+        <section className="sectors-market-grid">
+          <VixTermChart
+            term={data.vix_term}
+            structure={data.vix_structure}
+            source={data.vix_source}
+            asOf={data.as_of ?? "Latest available"}
+          />
           <Panel title="Sector Performance" sub="1d">
             <div className="table-wrap" style={{ border: "none" }}>
               <table>
@@ -86,7 +89,7 @@ function Content({ data, freshness }: { data: Sectors; freshness: Freshness }) {
           points={[
             { label: "Rotation:", text: "cyclicals (tech, industrials, discretionary) leading = risk appetite; defensives (utilities, staples, health care) leading = caution." },
             { label: "VIX term structure:", text: "upward-sloping (contango) is the calm norm — future uncertainty priced above today's. Inverted (backwardation) means the market fears something near-term." },
-            { label: "Tenors:", text: "9D vs 30D vs 3M — the front of the curve prices immediate event risk." },
+            { label: "Tenors:", text: "9D through 1Y shows how expected volatility changes from immediate event risk to the longer horizon. These are Cboe volatility index closes, not monthly futures contracts." },
           ]}
           caveat="Not investment advice."
         />

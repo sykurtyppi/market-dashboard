@@ -33,12 +33,16 @@ COMPONENTS: Dict[str, Dict[str, Any]] = {
     "put_call":  {"weight": 0.05, "label": "Put/Call"},
 }
 
-# Put/call window. The stored ratio may be the CBOE equity P/C (PCCE) or the
-# SPY volume proxy, which runs higher — but a separate SPY window would need
-# real SPY history (three readings stored so far), so one window serves both,
-# matching the app's own guidance that above ~1.0 reads defensive. The source
-# is reported alongside the score. Revisit with history.
-PUT_CALL_WINDOW = (0.5, 1.5)
+# SKEW window. Yahoo ^SKEW daily history for the current post-2020 regime
+# (2020-01-02 through 2026-10-27, 1,674 readings) has p5=118.74,
+# median=140.20, and p95=159.96. Rounded p5/p95 anchors prevent a normal
+# reading from appearing near maximum risk while still saturating true tails.
+SKEW_WINDOW = (120.0, 160.0)
+
+# CBOE equity-only P/C window from the model's documented thresholds:
+# 0.6 is extreme call-heavy complacency and 1.2 is extreme put-heavy fear.
+# Proxy or source-unknown ratios are not scored against these CBOE bounds.
+PUT_CALL_WINDOW = (0.6, 1.2)
 
 BANDS = [
     (75, "HIGH RISK", "#FF4444", "Multiple stress indicators elevated. Defensive positioning warranted."),
@@ -87,29 +91,38 @@ def normalize(name: str, value: float) -> float:
         # MOVE 70 -> 0, 170 -> 100
         return _clamp((value - 70.0) / 100.0 * 100.0)
     if name == "skew":
-        # SKEW 120 -> 0, 170 -> 100. On the previous 110–150 window the stored
-        # sample (137–169, median ~146) scored ~89 on a typical day and a third
-        # of days saturated at 100 — a near-constant 6.8–10 points under the
-        # headline. Bounds are fit to that same sample; calibrate once against
-        # a longer ^SKEW history (CBOECollector.get_skew_history) and record
-        # the percentiles here.
-        return _clamp((value - 120.0) / 50.0 * 100.0)
+        low, high = SKEW_WINDOW
+        return _clamp((value - low) / (high - low) * 100.0)
     if name == "put_call":
-        # Contrarian: heavy put buying (high ratio) lowers risk. 1.5 -> 0, 0.5 -> 100.
+        # Contrarian: heavy put buying lowers risk; documented CBOE bounds map
+        # 1.2 -> 0 and 0.6 -> 100.
         low, high = PUT_CALL_WINDOW
         return _clamp((high - value) / (high - low) * 100.0)
     raise KeyError(name)
 
 
-def put_call_input(snapshot: Dict[str, Any]) -> tuple[Optional[float], str]:
-    """The put/call series actually present, and which one it is."""
+def put_call_observation(snapshot: Dict[str, Any]) -> tuple[Optional[float], str, bool]:
+    """Select one put/call observation with its provenance and calibration.
+
+    The selected raw value remains available for display. Only CBOE's
+    equity-only series is calibrated for the composite score.
+    """
     cboe = _num(snapshot.get("cboe_equity_pc"))
     if cboe is not None:
-        return cboe, "CBOE equity P/C (PCCE)"
+        return cboe, "CBOE equity P/C (PCCE)", True
     spy = _num(snapshot.get("spy_put_call"))
     if spy is not None:
-        return spy, "SPY volume proxy"
-    return _num(snapshot.get("put_call_ratio")), "Best available"
+        return spy, "SPY volume proxy (uncalibrated)", False
+    legacy = _num(snapshot.get("put_call_ratio"))
+    if legacy is not None:
+        return legacy, "Unverified put/call source", False
+    return None, "Unavailable", False
+
+
+def put_call_input(snapshot: Dict[str, Any]) -> tuple[Optional[float], str]:
+    """Return only a calibrated scoring input plus selected provenance."""
+    value, source, calibrated = put_call_observation(snapshot)
+    return (value if calibrated else None), source
 
 
 def calculate_composite_risk_score(
@@ -149,7 +162,8 @@ def calculate_composite_risk_score(
     missing = [name for name in COMPONENTS if name not in scored]
 
     if not scored:
-        return {**empty, "missing": missing, "status": "Insufficient data"}
+        source = pc_source if pc_source != "Unavailable" else None
+        return {**empty, "missing": missing, "put_call_source": source, "status": "Insufficient data"}
 
     total_weight = sum(weights.values())
     # Score from unrounded contributions; round only what is displayed.
@@ -164,7 +178,7 @@ def calculate_composite_risk_score(
         "components": {k: round(v, 1) for k, v in scored.items()},
         "weights": weights,
         "missing": missing,
-        "put_call_source": pc_source if "put_call" in scored else None,
+        "put_call_source": pc_source,
         "component_count": len(scored),
         "timestamp": datetime.now().isoformat(),
     }

@@ -73,20 +73,72 @@ def _build_live() -> Dict[str, Any]:
     }
 
     cboe = CBOECollector()
-    tenors = [("9D", 9, cboe.get_vix9d), ("VIX (30D)", 30, cboe.get_vix), ("3M", 90, cboe.get_vix3m)]
-    vix_term = []
-    for label, days, fn in tenors:
+    tenors = [
+        ("9D", 9, "VIX9D", cboe.get_vix9d, False),
+        ("1M", 30, "VIX", cboe.get_vix, False),
+        ("3M", 90, "VIX3M", cboe.get_vix3m, True),
+        ("6M", 180, "VIX6M", cboe.get_vix6m, False),
+        ("1Y", 365, "VIX1Y", cboe.get_vix1y, False),
+    ]
+    raw_curve = []
+    raw_values: dict[str, float | None] = {}
+    for label, days, symbol, fn, may_estimate in tenors:
         try:
             v = fn()
         except Exception:
             v = None
-        if v is not None:
-            vix_term.append({"maturity": label, "days": days, "value": float(v)})
+        raw_value = float(v) if v is not None else None
+        raw_values[symbol] = raw_value
+        if raw_value is not None:
+            estimated = may_estimate and any(
+                isinstance(item, dict) and item.get("field") == "vix3m"
+                for item in getattr(cboe, "estimated_fields", [])
+            )
+            raw_curve.append((label, days, symbol, round(raw_value, 2), estimated))
+        else:
+            warnings.append(f"{symbol} unavailable; adjacent curve comparison suppressed.")
+
+    vix_term = []
+    curve_by_symbol = {point[2]: point for point in raw_curve}
+    previous_value = None
+    for _label, _days, symbol, _fn, _may_estimate in tenors:
+        point = curve_by_symbol.get(symbol)
+        if point is None:
+            previous_value = None
+            continue
+        label, days, _, value, estimated = point
+        change = round(value - previous_value, 2) if previous_value is not None else None
+        change_pct = (
+            round((value / previous_value - 1) * 100, 2)
+            if previous_value not in (None, 0)
+            else None
+        )
+        vix_term.append(
+            {
+                "maturity": label,
+                "days": days,
+                "value": value,
+                "symbol": symbol,
+                "change": change,
+                "change_pct": change_pct,
+                "estimated": estimated,
+            }
+        )
+        previous_value = value
 
     structure = None
-    if len(vix_term) >= 2:
-        near, far = vix_term[0]["value"], vix_term[-1]["value"]
-        structure = "Contango" if far > near else "Backwardation"
+    near, far = raw_values.get("VIX9D"), raw_values.get("VIX1Y")
+    if near is not None and far is not None:
+        slope = far - near
+        if abs(slope) <= 0.01:
+            structure = "Flat"
+        else:
+            structure = "Contango" if slope > 0 else "Backwardation"
+    stale_fields = getattr(cboe, "stale_fields", [])
+    if isinstance(stale_fields, list) and stale_fields:
+        warnings.append(
+            "Cached last-known-good VIX closes used for: " + ", ".join(stale_fields) + "."
+        )
     if not vix_term:
         warnings.append("VIX term-structure data unavailable (CBOE).")
 
@@ -96,6 +148,7 @@ def _build_live() -> Dict[str, Any]:
         "rotation": rotation,
         "vix_term": vix_term,
         "vix_structure": structure,
+        "vix_source": "Yahoo Finance · Cboe volatility index closes",
         "warnings": warnings,
     }
 
