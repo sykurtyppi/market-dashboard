@@ -111,6 +111,10 @@ export interface VixTenor {
   maturity: string;
   days: number;
   value: number;
+  symbol: string;
+  change: number | null;
+  change_pct: number | null;
+  estimated: boolean;
 }
 
 export interface Sectors {
@@ -124,6 +128,7 @@ export interface Sectors {
   };
   vix_term: VixTenor[];
   vix_structure: string | null;
+  vix_source: string;
   warnings: string[];
 }
 

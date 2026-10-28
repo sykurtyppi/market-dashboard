@@ -251,6 +251,9 @@ def test_sectors_returns_expected_shape(client):
         MockCBOE.return_value.get_vix9d.return_value = 12.0
         MockCBOE.return_value.get_vix.return_value = 15.0
         MockCBOE.return_value.get_vix3m.return_value = 18.0
+        MockCBOE.return_value.get_vix6m.return_value = 19.5
+        MockCBOE.return_value.get_vix1y.return_value = 20.0
+        MockCBOE.return_value.estimated_fields = []
         r = client.get("/api/sectors")
 
     svc._cache.clear()
@@ -259,6 +262,17 @@ def test_sectors_returns_expected_shape(client):
     assert len(body["sectors"]) == 2
     assert body["sectors"][0]["ticker"] == "XLK"  # sorted desc by change
     assert body["vix_structure"] == "Contango"
+    assert body["vix_source"] == "Yahoo Finance · Cboe volatility index closes"
+    assert [point["maturity"] for point in body["vix_term"]] == ["9D", "1M", "3M", "6M", "1Y"]
+    assert body["vix_term"][1] == {
+        "maturity": "1M",
+        "days": 30,
+        "value": 15.0,
+        "symbol": "VIX",
+        "change": 3.0,
+        "change_pct": 25.0,
+        "estimated": False,
+    }
     assert body["rotation"]["state"] == "good"
 
 
@@ -275,6 +289,9 @@ def test_sectors_empty_data_warns_and_is_not_cached(client):
         MockCBOE.return_value.get_vix9d.return_value = 12.0
         MockCBOE.return_value.get_vix.return_value = 15.0
         MockCBOE.return_value.get_vix3m.return_value = 18.0
+        MockCBOE.return_value.get_vix6m.return_value = 19.5
+        MockCBOE.return_value.get_vix1y.return_value = 20.0
+        MockCBOE.return_value.estimated_fields = []
         r = client.get("/api/sectors")
         body = r.json()
 
@@ -282,10 +299,77 @@ def test_sectors_empty_data_warns_and_is_not_cached(client):
         assert body["sectors"] == []
         assert any("unavailable" in w.lower() for w in body["warnings"])
         # VIX still served even when sectors fail
-        assert len(body["vix_term"]) == 3
+        assert len(body["vix_term"]) == 5
         # The failed fetch was not cached
         assert "sectors" not in svc._cache
 
+    svc._cache.clear()
+
+
+def test_sectors_does_not_compare_across_a_missing_tenor(client):
+    import api.sectors_service as svc
+    svc._cache.clear()
+
+    with patch("data_collectors.sector_collector.SectorCollector") as MockSC, \
+         patch("data_collectors.cboe_collector.CBOECollector") as MockCBOE:
+        MockSC.return_value.get_sector_performance.return_value = {"XLK": {"change_pct": 1.0}}
+        MockSC.return_value.get_rotation_signal.return_value = {}
+        MockCBOE.return_value.get_vix9d.return_value = 12.0
+        MockCBOE.return_value.get_vix.return_value = 15.0
+        MockCBOE.return_value.get_vix3m.return_value = None
+        MockCBOE.return_value.get_vix6m.return_value = 19.5
+        MockCBOE.return_value.get_vix1y.return_value = 20.0
+        MockCBOE.return_value.estimated_fields = []
+        MockCBOE.return_value.stale_fields = []
+        body = client.get("/api/sectors").json()
+
+    six_month = next(point for point in body["vix_term"] if point["symbol"] == "VIX6M")
+    assert six_month["change"] is None
+    assert six_month["change_pct"] is None
+    assert any("VIX3M" in warning and "comparison" in warning for warning in body["warnings"])
+    svc._cache.clear()
+
+
+def test_sectors_requires_exact_endpoints_and_treats_flat_as_neutral(client):
+    import api.sectors_service as svc
+    svc._cache.clear()
+
+    with patch("data_collectors.sector_collector.SectorCollector") as MockSC, \
+         patch("data_collectors.cboe_collector.CBOECollector") as MockCBOE:
+        MockSC.return_value.get_sector_performance.return_value = {"XLK": {"change_pct": 1.0}}
+        MockSC.return_value.get_rotation_signal.return_value = {}
+        MockCBOE.return_value.get_vix9d.return_value = None
+        MockCBOE.return_value.get_vix.return_value = 15.0
+        MockCBOE.return_value.get_vix3m.return_value = 17.0
+        MockCBOE.return_value.get_vix6m.return_value = 18.0
+        MockCBOE.return_value.get_vix1y.return_value = 20.0
+        MockCBOE.return_value.estimated_fields = []
+        MockCBOE.return_value.stale_fields = []
+        assert client.get("/api/sectors").json()["vix_structure"] is None
+
+        svc._cache.clear()
+        MockCBOE.return_value.get_vix9d.return_value = 20.004
+        MockCBOE.return_value.get_vix1y.return_value = 20.0
+        assert client.get("/api/sectors").json()["vix_structure"] == "Flat"
+
+    svc._cache.clear()
+
+
+def test_sectors_discloses_stale_vix_fallbacks(client):
+    import api.sectors_service as svc
+    svc._cache.clear()
+
+    with patch("data_collectors.sector_collector.SectorCollector") as MockSC, \
+         patch("data_collectors.cboe_collector.CBOECollector") as MockCBOE:
+        MockSC.return_value.get_sector_performance.return_value = {"XLK": {"change_pct": 1.0}}
+        MockSC.return_value.get_rotation_signal.return_value = {}
+        for method, value in (("get_vix9d", 12.0), ("get_vix", 15.0), ("get_vix3m", 17.0), ("get_vix6m", 19.0), ("get_vix1y", 20.0)):
+            getattr(MockCBOE.return_value, method).return_value = value
+        MockCBOE.return_value.estimated_fields = []
+        MockCBOE.return_value.stale_fields = ["VIX6M"]
+        body = client.get("/api/sectors").json()
+
+    assert any("cached" in warning.lower() and "VIX6M" in warning for warning in body["warnings"])
     svc._cache.clear()
 
 

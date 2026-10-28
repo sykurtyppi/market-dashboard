@@ -146,6 +146,59 @@ body {
 .chart-tag { position: absolute; right: 4px; transform: translateY(-50%); font-size: 11px; font-weight: 600; line-height: 1; padding: 2px 5px; border-radius: 5px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 1px 2px rgba(22,24,29,.05); white-space: nowrap; pointer-events: none; }
 .chart-wrap.interactive { cursor: crosshair; }
 .chart.tall { min-height: 260px; }
+
+/* ---------- VIX index curve ---------- */
+.sectors-market-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, .75fr); gap: 16px; align-items: start; min-width: 0; }
+.sectors-market-grid > * { min-width: 0; }
+.vix-panel { padding: 0; overflow: hidden; min-width: 0; }
+.vix-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
+.vix-heading .eyebrow { font-size: 10px; font-weight: 750; letter-spacing: .13em; color: #7c3aed; margin-bottom: 7px; }
+.vix-heading h2 { margin: 0; font-size: 19px; line-height: 1.2; letter-spacing: -.025em; }
+.vix-heading p { margin: 5px 0 0; color: var(--ink-faint); font-size: 11.5px; }
+.vix-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; color: var(--ink-faint); font-size: 11px; white-space: nowrap; }
+.vix-summary { display: grid; grid-template-columns: .7fr .8fr 1.5fr; border-bottom: 1px solid var(--line); background: linear-gradient(90deg, #fffaf2 0%, #faf8ff 100%); }
+.vix-stat { padding: 14px 18px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.vix-stat:last-child { border-right: 0; }
+.vix-stat > span { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+.vix-stat > strong { font-size: 23px; font-weight: 600; letter-spacing: -.025em; }
+.vix-stat > small { color: var(--ink-faint); font-size: 10.5px; }
+.vix-source-stat > strong { font-size: 12px; line-height: 1.35; letter-spacing: 0; }
+.vix-chart-frame { padding: 8px 9px 0 3px; }
+.vix-curve { display: block; width: 100%; height: auto; min-height: 260px; }
+.vix-grid-line { stroke: #e5e7eb; stroke-width: 1; stroke-dasharray: 3 5; }
+.vix-axis-label, .vix-x-label { fill: #98a2b3; font-size: 11px; }
+.vix-x-label { fill: #667085; font-size: 12px; font-weight: 600; }
+.vix-reference-line { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 5 5; }
+.vix-reference-label { fill: #667085; font-size: 10px; font-weight: 650; }
+.vix-curve-line { fill: none; stroke: url(#vixLine); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.vix-point { fill: #fff; stroke: #7c3aed; stroke-width: 3; }
+.vix-value-label { fill: #344054; font-size: 10px; font-weight: 650; }
+.vix-tooltip { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; background: rgba(255,255,255,.97); border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 8px 28px rgba(22,24,29,.12); font-size: 11px; }
+.vix-tooltip span { color: var(--ink-faint); }
+.vix-tooltip b { margin-top: 2px; font-size: 18px; }
+.vix-tooltip em { color: #b45309; font-style: normal; font-weight: 650; }
+.vix-table-wrap { overflow-x: auto; border-top: 1px solid var(--line); }
+.vix-table { min-width: 520px; }
+.vix-table th, .vix-table td { padding: 9px 14px; }
+.vix-table td:first-child b { display: inline-block; min-width: 31px; }
+.vix-table td:first-child span { margin-left: 7px; color: var(--ink-faint); font-size: 10px; }
+.estimated-tag { display: inline-block; margin-left: 6px; padding: 1px 4px; border-radius: 4px; background: #fff7ed; color: #b45309; font-size: 9px; font-style: normal; font-weight: 700; }
+.positive { color: var(--good); }
+.negative { color: var(--bad); }
+
+@media (max-width: 1000px) {
+  .sectors-market-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .topbar { padding: 14px 16px; gap: 8px; }
+  .topbar .crumb, .freshness { display: none; }
+  .content { padding: 18px 14px 32px; }
+  .vix-heading { flex-direction: column; }
+  .vix-meta { align-items: flex-start; }
+  .vix-summary { grid-template-columns: 1fr 1fr; }
+  .vix-source-stat { grid-column: 1 / -1; border-top: 1px solid var(--line); }
+}
 .chart-focus line { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 3 3; opacity: .75; }
 .chart-focus circle { stroke: var(--surface); stroke-width: 1.5; }
 .chart-tooltip { position: absolute; top: 10px; transform: translateX(-50%); min-width: 178px; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.96); box-shadow: 0 12px 30px rgba(22,24,29,.12); pointer-events: none; z-index: 2; }

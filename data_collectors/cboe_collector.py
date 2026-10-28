@@ -50,6 +50,8 @@ class CBOECollector:
         })
         # Track which fields contain estimated (not real) data
         self.estimated_fields = []
+        # Track curve values served from an expired last-known-good cache.
+        self.stale_fields = []
         self.cache_ttl_seconds = 120
         self.stale_ttl_seconds = 3600
         self.persistent_ttl_seconds = 86400
@@ -144,6 +146,22 @@ class CBOECollector:
         })
         logger.warning(f"ESTIMATED DATA: {field_name} - {reason}")
 
+    def _get_stale_cached(self, key: str):
+        """Return an expired last-known-good value and disclose its use."""
+        value = self._get_cached(key, allow_stale=True)
+        if value is not None:
+            labels = {
+                "vix9d": "VIX9D",
+                "vix": "VIX",
+                "vix3m": "VIX3M",
+                "vix6m": "VIX6M",
+                "vix1y": "VIX1Y",
+            }
+            label = labels.get(key, key)
+            if label not in self.stale_fields:
+                self.stale_fields.append(label)
+        return value
+
     def _interpolate_vix3m_multiplier(self, vix: float) -> tuple:
         """
         Compute VIX3M/VIX multiplier using smooth piecewise linear interpolation.
@@ -220,12 +238,12 @@ class CBOECollector:
             return float(cached)
 
         if self._rate_limited_recently():
-            stale = self._get_cached("vix", allow_stale=True)
+            stale = self._get_stale_cached("vix")
             if stale is not None:
                 return float(stale)
 
         if self._is_fetch_miss_recent("vix"):
-            stale = self._get_cached("vix", allow_stale=True)
+            stale = self._get_stale_cached("vix")
             return float(stale) if stale is not None else None
 
         try:
@@ -243,7 +261,7 @@ class CBOECollector:
         except YFRateLimitError:
             type(self)._LAST_RATE_LIMIT_AT = time.time()
             self._mark_fetch_miss("vix")
-            stale = self._get_cached("vix", allow_stale=True)
+            stale = self._get_stale_cached("vix")
             if stale is not None:
                 logger.warning("Using last-known-good VIX (rate-limited)")
                 return float(stale)
@@ -251,7 +269,7 @@ class CBOECollector:
             logger.error(f"Error fetching VIX: {e}")
             self._mark_fetch_miss("vix")
 
-        stale = self._get_cached("vix", allow_stale=True)
+        stale = self._get_stale_cached("vix")
         if stale is not None:
             logger.warning("Using last-known-good VIX")
             return float(stale)
@@ -278,7 +296,7 @@ class CBOECollector:
             return float(cached)
 
         if self._rate_limited_recently():
-            stale = self._get_cached("vix3m", allow_stale=True)
+            stale = self._get_stale_cached("vix3m")
             if isinstance(stale, dict) and stale.get("value") is not None:
                 if track_estimation and stale.get("estimated"):
                     self._mark_estimated("vix3m", stale.get("reason", "Estimated value"))
@@ -287,7 +305,7 @@ class CBOECollector:
                 return float(stale)
 
         if self._is_fetch_miss_recent("vix3m"):
-            stale = self._get_cached("vix3m", allow_stale=True)
+            stale = self._get_stale_cached("vix3m")
             if isinstance(stale, dict) and stale.get("value") is not None:
                 if track_estimation and stale.get("estimated"):
                     self._mark_estimated("vix3m", stale.get("reason", "Estimated value"))
@@ -352,7 +370,7 @@ class CBOECollector:
             logger.error(f"Error fetching VIX3M: {e}")
             self._mark_fetch_miss("vix3m")
 
-        stale = self._get_cached("vix3m", allow_stale=True)
+        stale = self._get_stale_cached("vix3m")
         if isinstance(stale, dict) and stale.get("value") is not None:
             if track_estimation and stale.get("estimated"):
                 self._mark_estimated("vix3m", stale.get("reason", "Estimated value"))
@@ -371,12 +389,12 @@ class CBOECollector:
             return float(cached)
 
         if self._rate_limited_recently():
-            stale = self._get_cached("vix9d", allow_stale=True)
+            stale = self._get_stale_cached("vix9d")
             if stale is not None:
                 return float(stale)
 
         if self._is_fetch_miss_recent("vix9d"):
-            stale = self._get_cached("vix9d", allow_stale=True)
+            stale = self._get_stale_cached("vix9d")
             return float(stale) if stale is not None else None
 
         try:
@@ -398,11 +416,56 @@ class CBOECollector:
             logger.error(f"Error fetching VIX9D: {e}")
             self._mark_fetch_miss("vix9d")
 
-        stale = self._get_cached("vix9d", allow_stale=True)
+        stale = self._get_stale_cached("vix9d")
         if stale is not None:
             logger.warning("Using last-known-good VIX9D")
             return float(stale)
         return None
+
+    def _get_vix_index_close(self, cache_key: str, symbol: str, label: str) -> Optional[float]:
+        """Fetch a longer-dated Cboe volatility index close from Yahoo Finance."""
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return float(cached)
+
+        if self._rate_limited_recently():
+            stale = self._get_stale_cached(cache_key)
+            return float(stale) if stale is not None else None
+
+        if self._is_fetch_miss_recent(cache_key):
+            stale = self._get_stale_cached(cache_key)
+            return float(stale) if stale is not None else None
+
+        try:
+            data = yf.Ticker(symbol).history(period="5d")
+            if not data.empty:
+                value = float(data["Close"].iloc[-1])
+                self._set_cached(cache_key, value)
+                logger.info(f"{label}: {value:.2f}")
+                return value
+
+            logger.warning(f"{label} data unavailable")
+            self._mark_fetch_miss(cache_key)
+        except YFRateLimitError:
+            type(self)._LAST_RATE_LIMIT_AT = time.time()
+            self._mark_fetch_miss(cache_key)
+        except Exception as exc:
+            logger.error(f"Error fetching {label}: {exc}")
+            self._mark_fetch_miss(cache_key)
+
+        stale = self._get_stale_cached(cache_key)
+        if stale is not None:
+            logger.warning(f"Using last-known-good {label}")
+            return float(stale)
+        return None
+
+    def get_vix6m(self) -> Optional[float]:
+        """Get the Cboe 6-month volatility index close."""
+        return self._get_vix_index_close("vix6m", "^VIX6M", "VIX6M")
+
+    def get_vix1y(self) -> Optional[float]:
+        """Get the Cboe 1-year volatility index close."""
+        return self._get_vix_index_close("vix1y", "^VIX1Y", "VIX1Y")
     
     def get_skew(self) -> Optional[float]:
         """Get CBOE SKEW Index (tail risk measure) from Yahoo Finance"""
