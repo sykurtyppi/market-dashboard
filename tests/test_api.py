@@ -254,11 +254,9 @@ def test_sectors_returns_expected_shape(client):
         MockCBOE.return_value.get_vix6m.return_value = 19.5
         MockCBOE.return_value.get_vix1y.return_value = 20.0
         MockCBOE.return_value.estimated_fields = []
-        r = client.get("/api/sectors")
+        body = svc._build_live()
 
     svc._cache.clear()
-    assert r.status_code == 200
-    body = r.json()
     assert len(body["sectors"]) == 2
     assert body["sectors"][0]["ticker"] == "XLK"  # sorted desc by change
     assert body["vix_structure"] == "Contango"
@@ -292,10 +290,8 @@ def test_sectors_empty_data_warns_and_is_not_cached(client):
         MockCBOE.return_value.get_vix6m.return_value = 19.5
         MockCBOE.return_value.get_vix1y.return_value = 20.0
         MockCBOE.return_value.estimated_fields = []
-        r = client.get("/api/sectors")
-        body = r.json()
+        body = svc._build_live()
 
-        assert r.status_code == 200
         assert body["sectors"] == []
         assert any("unavailable" in w.lower() for w in body["warnings"])
         # VIX still served even when sectors fail
@@ -321,7 +317,7 @@ def test_sectors_does_not_compare_across_a_missing_tenor(client):
         MockCBOE.return_value.get_vix1y.return_value = 20.0
         MockCBOE.return_value.estimated_fields = []
         MockCBOE.return_value.stale_fields = []
-        body = client.get("/api/sectors").json()
+        body = svc._build_live()
 
     six_month = next(point for point in body["vix_term"] if point["symbol"] == "VIX6M")
     assert six_month["change"] is None
@@ -345,12 +341,12 @@ def test_sectors_requires_exact_endpoints_and_treats_flat_as_neutral(client):
         MockCBOE.return_value.get_vix1y.return_value = 20.0
         MockCBOE.return_value.estimated_fields = []
         MockCBOE.return_value.stale_fields = []
-        assert client.get("/api/sectors").json()["vix_structure"] is None
+        assert svc._build_live()["vix_structure"] is None
 
         svc._cache.clear()
         MockCBOE.return_value.get_vix9d.return_value = 20.004
         MockCBOE.return_value.get_vix1y.return_value = 20.0
-        assert client.get("/api/sectors").json()["vix_structure"] == "Flat"
+        assert svc._build_live()["vix_structure"] == "Flat"
 
     svc._cache.clear()
 
@@ -367,7 +363,7 @@ def test_sectors_discloses_stale_vix_fallbacks(client):
             getattr(MockCBOE.return_value, method).return_value = value
         MockCBOE.return_value.estimated_fields = []
         MockCBOE.return_value.stale_fields = ["VIX6M"]
-        body = client.get("/api/sectors").json()
+        body = svc._build_live()
 
     assert any("cached" in warning.lower() and "VIX6M" in warning for warning in body["warnings"])
     svc._cache.clear()
@@ -614,10 +610,8 @@ def test_options_flow_returns_expected_shape(client):
     svc._cache.clear()
     with patch("data_collectors.options_flow_collector.OptionsFlowCollector") as MockOF:
         MockOF.return_value.get_market_options_summary.return_value = _options_summary()
-        r = client.get("/api/options-flow")
+        body = svc._build_options_flow()
     svc._cache.clear()
-    assert r.status_code == 200
-    body = r.json()
     assert len(body["etfs"]) == 3  # all present
     assert body["etfs"][0]["ticker"] == "SPY"
     assert body["etfs"][0]["state"] == "good"  # BULLISH -> good
@@ -633,9 +627,7 @@ def test_options_flow_partial_data_warns_and_not_cached(client):
         MockOF.return_value.get_market_options_summary.return_value = _options_summary(
             spy={"status": "error"}, qqq={"status": "error"},
         )
-        r = client.get("/api/options-flow")
-        body = r.json()
-        assert r.status_code == 200
+        body = svc._build_options_flow()
         assert [e["ticker"] for e in body["etfs"]] == ["IWM"]
         assert any("partially unavailable" in w.lower() for w in body["warnings"])
         assert "SPY" in body["warnings"][0] and "QQQ" in body["warnings"][0]
@@ -648,9 +640,7 @@ def test_options_flow_empty_data_warns_and_not_cached(client):
     svc._cache.clear()
     with patch("data_collectors.options_flow_collector.OptionsFlowCollector") as MockOF:
         MockOF.return_value.get_market_options_summary.return_value = {}
-        r = client.get("/api/options-flow")
-        body = r.json()
-        assert r.status_code == 200
+        body = svc._build_options_flow()
         assert body["etfs"] == []
         assert any("unavailable" in w.lower() for w in body["warnings"])
         assert "options_flow" not in svc._cache

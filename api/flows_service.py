@@ -6,6 +6,7 @@ empty fetches are never cached, so a transient outage can't pin a blank page.
 import time
 from typing import Any, Callable, Dict
 
+from api.deps import get_db
 from api.overview_service import _num
 
 _TTL_SECONDS = 300
@@ -129,12 +130,18 @@ def _build_options_flow() -> Dict[str, Any]:
 
 
 def build_options_flow() -> Dict[str, Any]:
-    # Only cache a complete fetch (all expected ETFs present); partial/empty
-    # results are retried on the next request rather than pinned for the TTL.
-    return _cached(
+    """Serve only the latest durable snapshot; never collect on an HTTP read."""
+    from api.snapshot_service import snapshot_response
+
+    return snapshot_response(
+        get_db(),
         "options_flow",
-        _build_options_flow,
-        lambda d: len(d.get("etfs", [])) == len(_EXPECTED_ETFS),
+        {
+            "as_of": None,
+            "etfs": [],
+            "warnings": ["Options-flow snapshot is not available yet."],
+        },
+        stale_after_seconds=4 * 60 * 60,
     )
 
 
