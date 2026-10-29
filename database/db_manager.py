@@ -173,6 +173,20 @@ class DatabaseManager:
                 )
             """)
 
+            # Latest successful payload for provider-backed API datasets. A
+            # failed attempt updates only status metadata, never payload_json.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS api_snapshots (
+                    dataset TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL DEFAULT '{}',
+                    as_of TEXT,
+                    refreshed_at TEXT,
+                    refresh_status TEXT NOT NULL DEFAULT 'missing',
+                    last_attempt_at TEXT,
+                    last_error TEXT
+                )
+            """)
+
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_date ON indicators(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_name ON indicators(indicator_name)")
@@ -1168,3 +1182,62 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error getting latest breadth: {e}")
             return None
+
+    def save_api_snapshot(self, dataset: str, payload: Dict, as_of: Optional[str] = None) -> None:
+        """Atomically replace a dataset snapshot after a validated success."""
+        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO api_snapshots
+                    (dataset, payload_json, as_of, refreshed_at, refresh_status, last_attempt_at, last_error)
+                VALUES (?, ?, ?, ?, 'ok', ?, NULL)
+                ON CONFLICT(dataset) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    as_of = excluded.as_of,
+                    refreshed_at = excluded.refreshed_at,
+                    refresh_status = 'ok',
+                    last_attempt_at = excluded.last_attempt_at,
+                    last_error = NULL
+                """,
+                (dataset, encoded, as_of, now, now),
+            )
+            conn.commit()
+
+    def record_api_snapshot_failure(self, dataset: str, error: str) -> None:
+        """Record a failed attempt without destroying the last good payload."""
+        now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        safe_error = (error or "snapshot validation failed")[:500]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO api_snapshots
+                    (dataset, payload_json, refresh_status, last_attempt_at, last_error)
+                VALUES (?, '{}', 'failed', ?, ?)
+                ON CONFLICT(dataset) DO UPDATE SET
+                    refresh_status = 'failed',
+                    last_attempt_at = excluded.last_attempt_at,
+                    last_error = excluded.last_error
+                """,
+                (dataset, now, safe_error),
+            )
+            conn.commit()
+
+    def get_api_snapshot(self, dataset: str) -> Optional[Dict]:
+        """Return a decoded latest-good API snapshot plus refresh metadata."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT dataset, payload_json, as_of, refreshed_at,
+                       refresh_status, last_attempt_at, last_error
+                FROM api_snapshots WHERE dataset = ?
+                """,
+                (dataset,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["payload"] = json.loads(result.pop("payload_json"))
+        return result

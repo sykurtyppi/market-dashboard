@@ -187,6 +187,9 @@ class SectorsResponse(BaseModel):
     vix_structure: Optional[str] = None
     vix_source: str
     warnings: List[str] = Field(default_factory=list)
+    stale: bool = False
+    refresh_status: str = "ok"
+    data_age_seconds: Optional[int] = None
 
 
 class CreditCharts(BaseModel):
@@ -330,6 +333,9 @@ class OptionsFlowResponse(BaseModel):
     as_of: Optional[str] = None
     etfs: List[OptionsETF]
     warnings: List[str] = Field(default_factory=list)
+    stale: bool = False
+    refresh_status: str = "ok"
+    data_age_seconds: Optional[int] = None
 
 
 # --- Phase 6 pages ---

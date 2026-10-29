@@ -57,7 +57,7 @@ function NavLink({ item, active }: { item: Item; active: boolean }) {
     );
   }
   return (
-    <Link className={`nav-item${active ? " active" : ""}`} href={item.href} aria-current={active ? "page" : undefined}>
+    <Link className={`nav-item${active ? " active" : ""}`} href={item.href} prefetch={false} aria-current={active ? "page" : undefined}>
       {item.icon}{item.label}
     </Link>
   );

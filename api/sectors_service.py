@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from typing import Any, Dict
 
+from api.deps import get_db
+
 from api.overview_service import _num
 
 _TTL_SECONDS = 300
@@ -154,13 +156,25 @@ def _build_live() -> Dict[str, Any]:
 
 
 def build_sectors() -> Dict[str, Any]:
-    """Return sectors data, TTL-cached — but never cache a failed (empty) fetch,
-    so one Yahoo hiccup can't pin an empty page for the whole TTL window."""
-    now = time.monotonic()
-    hit = _cache.get("sectors")
-    if hit and (now - hit[0]) < _TTL_SECONDS:
-        return hit[1]
-    data = _build_live()
-    if data.get("sectors"):  # only cache a successful fetch
-        _cache["sectors"] = (now, data)
-    return data
+    """Serve only the latest durable snapshot; never collect on an HTTP read."""
+    from api.snapshot_service import snapshot_response
+
+    return snapshot_response(
+        get_db(),
+        "sectors",
+        {
+            "as_of": None,
+            "sectors": [],
+            "rotation": {
+                "signal": "Unavailable",
+                "state": "neutral",
+                "interpretation": "Waiting for the first scheduled snapshot.",
+                "leading_sectors": [],
+            },
+            "vix_term": [],
+            "vix_structure": None,
+            "vix_source": "Yahoo Finance · Cboe volatility index closes",
+            "warnings": ["Sectors snapshot is not available yet."],
+        },
+        stale_after_seconds=4 * 60 * 60,
+    )

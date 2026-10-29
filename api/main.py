@@ -6,6 +6,7 @@ Read endpoints never call collectors live per request.
 """
 import logging
 import os
+import secrets
 import threading
 from datetime import datetime, timezone
 
@@ -263,3 +264,29 @@ def refresh(
 @app.get("/api/refresh/status", response_model=RefreshStatus)
 def refresh_status():
     return {"running": _refresh_lock.locked(), "last_run": _last_refresh}
+
+
+@app.post("/api/snapshots/refresh/{dataset}")
+def refresh_api_snapshot(
+    dataset: str,
+    x_api_token: str | None = Header(default=None),
+):
+    """Refresh one slow dataset outside the user-facing request path."""
+    from api.snapshot_service import available_datasets, refresh_snapshot
+
+    expected = os.getenv("MARKET_API_TOKEN")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Snapshot refresh authentication is not configured",
+        )
+    if x_api_token is None or not secrets.compare_digest(x_api_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Token")
+    if dataset not in available_datasets():
+        raise HTTPException(status_code=404, detail="Unknown snapshot dataset")
+    result = refresh_snapshot(dataset)
+    if result["status"] == "already_running":
+        raise HTTPException(status_code=409, detail="Snapshot refresh already running")
+    if result["status"] == "failed":
+        raise HTTPException(status_code=503, detail=f"{dataset} snapshot refresh failed")
+    return result

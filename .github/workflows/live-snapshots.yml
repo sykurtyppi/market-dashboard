@@ -1,0 +1,63 @@
+# Slow Yahoo/Cboe-backed views refresh independently from user requests.
+# Six distinct UTC slots prevent sector and options collectors from bursting
+# together. A small random delay avoids synchronization with other cron work.
+name: Staggered live API snapshots
+
+on:
+  schedule:
+    - cron: "15 13 * * 1-5"
+    - cron: "45 14 * * 1-5"
+    - cron: "15 17 * * 1-5"
+    - cron: "45 18 * * 1-5"
+    - cron: "15 20 * * 1-5"
+    - cron: "45 21 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      dataset:
+        description: Snapshot dataset
+        required: true
+        default: sectors
+        type: choice
+        options:
+          - sectors
+          - options_flow
+
+jobs:
+  refresh-snapshot:
+    if: github.event_name == 'workflow_dispatch' || vars.REFRESH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    env:
+      BACKEND_URL: ${{ secrets.BACKEND_URL }}
+      MARKET_API_TOKEN: ${{ secrets.MARKET_API_TOKEN }}
+    steps:
+      - name: Select one dataset for this slot
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_DATASET: ${{ inputs.dataset }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            dataset="$MANUAL_DATASET"
+          else
+            case "$SCHEDULE" in
+              "15 13 * * 1-5"|"15 17 * * 1-5"|"15 20 * * 1-5") dataset="sectors" ;;
+              "45 14 * * 1-5"|"45 18 * * 1-5"|"45 21 * * 1-5") dataset="options_flow" ;;
+              *) echo "::error::unknown schedule: $SCHEDULE"; exit 1 ;;
+            esac
+          fi
+          echo "DATASET=$dataset" >> "$GITHUB_ENV"
+
+      - name: Require configuration
+        run: |
+          test -n "$BACKEND_URL" || { echo "::error::BACKEND_URL is not configured"; exit 1; }
+          test -n "$MARKET_API_TOKEN" || { echo "::error::MARKET_API_TOKEN is not configured"; exit 1; }
+
+      - name: Add bounded schedule jitter
+        run: sleep $(( RANDOM % 301 ))
+
+      - name: Refresh selected snapshot
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 180 \
+            --retry 2 --retry-delay 10 --retry-all-errors \
+            -X POST -H "X-API-Token: $MARKET_API_TOKEN" \
+            "${BACKEND_URL%/}/api/snapshots/refresh/$DATASET"
