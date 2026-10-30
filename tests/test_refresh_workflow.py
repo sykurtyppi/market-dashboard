@@ -98,5 +98,7 @@ def test_the_verification_chain_is_intact(job):
     bodies = {step["name"]: step["run"] for step in job["steps"]}
     assert "last_run.error" in bodies["Report failed phases"]
     assert "last_run.failed_phases" in bodies["Report failed phases"]
+    assert 'index("daily_briefing")' in bodies["Report failed phases"]
+    assert "critical refresh phase failed" in bodies["Report failed phases"]
     assert ".is_fresh" in bodies["Gate on data freshness"]
     assert ".overall_status" in bodies["Check system health"]

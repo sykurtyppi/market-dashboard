@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import json
 import time
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 
 import pandas as pd
@@ -36,9 +36,36 @@ import data_collectors.yahoo_collector as yahoo_module
 from data_collectors.yahoo_collector import RetryConfig, YahooCollector, with_retry
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def test_benchmark_prices_returns_date_close_pairs(monkeypatch, collector):
+    history = make_history([100, 101, 102])
+    ticker = SimpleNamespace(history=lambda period="3mo": history)
+    monkeypatch.setattr(yahoo_module.yf, "Ticker", lambda symbol: ticker)
+
+    prices = collector.get_benchmark_prices(
+        "SPY", completed_before=history.index[-1].date()
+    )
+
+    assert [price for _, price in prices] == [100.0, 101.0]
+    assert all(len(date) == 10 for date, _ in prices)
+
+
+def test_benchmark_prices_excludes_intraday_bar_until_session_is_complete(monkeypatch, collector):
+    session = pd.Timestamp("2026-10-29", tz="America/New_York")
+    intraday = pd.DataFrame({"Close": [100.0]}, index=[session])
+    finalized = pd.DataFrame({"Close": [105.0]}, index=[session])
+    ticker = SimpleNamespace(history=lambda period="3mo": intraday)
+    monkeypatch.setattr(yahoo_module.yf, "Ticker", lambda symbol: ticker)
+
+    assert collector.get_benchmark_prices(
+        "SPY", completed_before=date(2026, 10, 29)
+    ) == []
+
+    ticker.history = lambda period="3mo": finalized
+    assert collector.get_benchmark_prices(
+        "SPY", completed_before=date(2026, 10, 30)
+    ) == [("2026-10-29", 105.0)]
+
+
 
 def make_history(closes):
     """Build a DataFrame shaped like yf.Ticker().history() output."""

@@ -75,7 +75,7 @@ export default function Sidebar() {
         </div>
       </div>
       <nav className="nav" aria-label="Primary">
-        <NavLink item={{ label: "Overview", icon: I.grid, href: "/" }} active={pathname === "/"} />
+        <NavLink item={{ label: "Daily Briefing", icon: I.grid, href: "/" }} active={pathname === "/"} />
         {GROUPS.map((g) => (
           <div className="nav-group" key={g.label}>
             <div className="nav-group-label">{g.label}</div>

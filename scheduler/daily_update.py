@@ -18,6 +18,7 @@ from pathlib import Path
 import sys
 import logging
 import pandas as pd
+from zoneinfo import ZoneInfo
 
 # Configure logging for scheduled tasks
 logging.basicConfig(
@@ -166,13 +167,20 @@ class MarketDataUpdater:
             attempted_phases=getattr(self, "attempted_phases", ()),
         )
 
-    def run_full_update(self) -> list[str]:
+    def run_full_update(self, *, run_at: datetime | None = None) -> list[str]:
         """Run the complete market data update pipeline.
 
         Returns the names of phases that failed (empty when everything ran).
         """
+        market_tz = ZoneInfo("America/New_York")
+        market_now = run_at or datetime.now(market_tz)
+        if market_now.tzinfo is None:
+            market_now = market_now.replace(tzinfo=market_tz)
+        else:
+            market_now = market_now.astimezone(market_tz)
+        market_date = market_now.date()
         logger.info("=" * 60)
-        logger.info(f"MARKET DATA UPDATE - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"MARKET DATA UPDATE - {market_now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info("=" * 60)
         self.failed_phases = []
         self.attempted_phases = [
@@ -181,12 +189,14 @@ class MarketDataUpdater:
             "cboe",
             "market_breadth",
             "yahoo",
+            "benchmark_prices",
             "vrp",
             *(("fed_balance_sheet",) if self.fed_bs else ()),
             "move_index",
             *(("repo_market",) if self.repo else ()),
             *(("liquidity_history",) if self.liquidity else ()),
             "daily_snapshot",
+            "daily_briefing",
             "left_signal",
         ]
 
@@ -288,6 +298,20 @@ class MarketDataUpdater:
         # ------------------------------------------------------------------
         logger.info("Fetching Yahoo Finance proxies...")
         yahoo_data = self._collect_optional("yahoo", self.yahoo.get_all_data, {}) or {}
+        benchmark_fetch = getattr(self.yahoo, "get_benchmark_prices", None)
+        if benchmark_fetch is not None:
+            benchmark_prices = self._collect_optional(
+                "benchmark_prices",
+                lambda: benchmark_fetch(completed_before=market_date),
+                [],
+            ) or []
+            if benchmark_prices:
+                try:
+                    self.db.save_benchmark_prices("SPY", benchmark_prices)
+                except Exception as exc:
+                    self._phase_failed("benchmark_prices", exc)
+            else:
+                self._phase_failed("benchmark_prices", "no SPY benchmark prices returned")
 
         if yahoo_data.get("vix") is not None:
             logger.info(f"VIX (Yahoo): {yahoo_data['vix']:.2f}")
@@ -586,7 +610,7 @@ class MarketDataUpdater:
 
         snapshot = {
             # Core identifiers
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": market_date.isoformat(),
             # Phase 1: Credit & Rates (with Yahoo fallbacks)
             "credit_spread_hy": hy_spread_final,
             "credit_spread_hy_source": hy_spread_source,
@@ -617,14 +641,34 @@ class MarketDataUpdater:
             "rrp_volume": rrp_value,
         }
 
+        snapshot_saved = False
         try:
             saved, validation = self.db.save_daily_snapshot(snapshot)
             if saved:
+                snapshot_saved = True
                 logger.info("Daily snapshot saved to database")
             else:
                 self._phase_failed("daily_snapshot", f"validation rejected it: {validation.errors}")
         except Exception as e:
             self._phase_failed("daily_snapshot", e)
+
+        if snapshot_saved:
+            try:
+                from api.daily_briefing_service import generate_latest_briefing
+
+                briefing = generate_latest_briefing(self.db)
+                if briefing is None:
+                    self._phase_failed("daily_briefing", "no briefing was generated")
+                else:
+                    logger.info(
+                        "Daily briefing saved: %s posture, score %s",
+                        briefing.get("posture"),
+                        briefing.get("change", {}).get("current_score"),
+                    )
+            except Exception as exc:
+                self._phase_failed("daily_briefing", exc)
+        else:
+            self._phase_failed("daily_briefing", "daily snapshot was not saved")
 
         return self._finish()
 

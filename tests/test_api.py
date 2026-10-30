@@ -44,6 +44,18 @@ def test_overview_returns_expected_shape(client):
     assert "credit_spreads" in body["charts"]
 
 
+def test_daily_briefing_returns_persisted_decision_record(client):
+    payload = {
+        "latest": {"as_of": "2026-10-29", "posture": "cautious", "alert": {"should_alert": False, "triggers": []}},
+        "history": [],
+        "warning": None,
+    }
+    with patch("api.main.get_daily_briefing", return_value=payload):
+        response = client.get("/api/daily-briefing")
+    assert response.status_code == 200
+    assert response.json() == payload
+
+
 def test_overview_metrics_have_valid_states(client):
     r = client.get("/api/overview")
     body = r.json()

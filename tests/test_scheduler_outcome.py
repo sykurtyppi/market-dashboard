@@ -7,6 +7,7 @@ _phase_failed(); _finish() reports them and run_full_update returns them.
 import logging
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,6 +43,9 @@ class WorkflowDB:
 
     def save_vrp_data(self, data):
         return self.vrp_saved
+
+    def save_benchmark_prices(self, symbol, prices):
+        return None
 
 
 def workflow_updater(*, fred=None, fear_greed=None, yahoo=None, db=None):
@@ -216,6 +220,26 @@ def test_optional_collector_exception_does_not_abort_unrelated_phases():
     assert db.snapshots[0]["credit_spread_hy_source"] == (
         "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
     )
+
+
+def test_refresh_uses_one_new_york_market_date_across_utc_midnight():
+    benchmark_cutoffs = []
+    db = WorkflowDB()
+    updater = workflow_updater(
+        yahoo=SimpleNamespace(
+            get_all_data=lambda: {},
+            get_benchmark_prices=lambda *, completed_before: benchmark_cutoffs.append(
+                completed_before
+            ) or [("2026-10-28", 100.0)],
+        ),
+        db=db,
+    )
+    updater.run_full_update(
+        run_at=datetime(2026, 10, 30, 0, 30, tzinfo=timezone.utc)
+    )
+
+    assert benchmark_cutoffs == [datetime(2026, 10, 29).date()]
+    assert db.snapshots[0]["date"] == "2026-10-29"
 
 
 def test_fred_credit_observation_keeps_its_series_provenance():
