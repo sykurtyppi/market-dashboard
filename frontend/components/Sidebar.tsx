@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 type Item = { label: string; icon: ReactNode; href?: string };
 type Group = { label: string; items: Item[] };
@@ -48,7 +48,7 @@ const GROUPS: Group[] = [
   ]},
 ];
 
-function NavLink({ item, active }: { item: Item; active: boolean }) {
+function NavLink({ item, active, onNavigate }: { item: Item; active: boolean; onNavigate?: (href: string) => void }) {
   if (!item.href) {
     return (
       <a className="nav-item soon" aria-disabled="true" title="Available in a later phase">
@@ -56,17 +56,18 @@ function NavLink({ item, active }: { item: Item; active: boolean }) {
       </a>
     );
   }
+  const href = item.href;
   return (
-    <Link className={`nav-item${active ? " active" : ""}`} href={item.href} prefetch={false} aria-current={active ? "page" : undefined}>
+    <Link className={`nav-item${active ? " active" : ""}`} href={href} prefetch={false} aria-current={active ? "page" : undefined} onClick={() => onNavigate?.(href)}>
       {item.icon}{item.label}
     </Link>
   );
 }
 
-export default function Sidebar() {
+export function NavigationContent({ onNavigate }: { onNavigate?: (href: string) => void }) {
   const pathname = usePathname();
   return (
-    <aside className="sidebar">
+    <>
       <div className="brand">
         <div className="brand-mark" aria-hidden />
         <div>
@@ -75,12 +76,12 @@ export default function Sidebar() {
         </div>
       </div>
       <nav className="nav" aria-label="Primary">
-        <NavLink item={{ label: "Daily Briefing", icon: I.grid, href: "/" }} active={pathname === "/"} />
+        <NavLink item={{ label: "Daily Briefing", icon: I.grid, href: "/" }} active={pathname === "/"} onNavigate={onNavigate} />
         {GROUPS.map((g) => (
           <div className="nav-group" key={g.label}>
             <div className="nav-group-label">{g.label}</div>
             {g.items.map((it) => (
-              <NavLink key={it.label} item={it} active={!!it.href && pathname === it.href} />
+              <NavLink key={it.label} item={it} active={!!it.href && pathname === it.href} onNavigate={onNavigate} />
             ))}
           </div>
         ))}
@@ -88,6 +89,14 @@ export default function Sidebar() {
       <div className="sidebar-foot">
         Not financial advice. Data: FRED, CBOE, Yahoo Finance, Fed, Treasury.
       </div>
+    </>
+  );
+}
+
+export default function Sidebar() {
+  return (
+    <aside className="sidebar">
+      <NavigationContent />
     </aside>
   );
 }
