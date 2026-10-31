@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "node --test lib/refreshOutcome.test.mjs",
+    "test": "node --test lib/*.test.mjs",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },

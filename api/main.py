@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.admin_service import build_settings, build_system_health
 from api.deps import get_db, get_health
 from api.overview_service import build_overview
+from api.daily_briefing_service import get_daily_briefing
 from api.pages_service import (
     build_breadth,
     build_credit_liquidity,
@@ -102,6 +103,11 @@ def freshness():
 @app.get("/api/overview", response_model=OverviewResponse)
 def overview():
     return build_overview()
+
+
+@app.get("/api/daily-briefing")
+def daily_briefing():
+    return get_daily_briefing()
 
 
 @app.get("/api/volatility", response_model=VolatilityResponse)

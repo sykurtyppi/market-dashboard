@@ -80,6 +80,7 @@ jobs:
           echo "$body"
           err=$(echo "$body" | jq -r '.last_run.error // empty')
           failed=$(echo "$body" | jq -r '(.last_run.failed_phases // []) | join(", ")')
+          critical=$(echo "$body" | jq -r '(.last_run.failed_phases // []) | index("daily_briefing") != null')
           if [ -n "$err" ]; then
             echo "::error::refresh crashed before completing: $err"
             exit 1
@@ -88,6 +89,10 @@ jobs:
             echo "::warning::refresh completed with failed phases: $failed"
           else
             echo "all phases succeeded"
+          fi
+          if [ "$critical" = "true" ]; then
+            echo "::error::critical refresh phase failed: daily_briefing"
+            exit 1
           fi
 
       - name: Gate on data freshness

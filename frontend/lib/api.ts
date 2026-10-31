@@ -48,6 +48,51 @@ export interface DetailRow {
   source: string;
 }
 
+export interface DailyBriefingDriver {
+  key: string;
+  label: string;
+  risk_delta: number;
+  direction: "deteriorating" | "improving";
+  evidence_label: string;
+  evidence_href: string;
+}
+
+export interface DailyBriefingRecord {
+  as_of: string;
+  posture: "normal" | "cautious" | "defensive" | "stress" | "unknown";
+  previous_posture: string | null;
+  change: {
+    current_score: number | null;
+    previous_score: number | null;
+    score_delta: number | null;
+    inputs_comparable: boolean;
+    regime_changed: boolean;
+  };
+  drivers: DailyBriefingDriver[];
+  confirming: DailyBriefingDriver[];
+  conflicting: DailyBriefingDriver[];
+  why_it_matters: string;
+  inspect_next: { label: string; href: string; reason: string }[];
+  alert: { should_alert: boolean; triggers: { type: string; message: string }[] };
+  data_quality: { status: string; issues: string[]; missing_inputs: string[]; snapshot_status?: string | null };
+  rules: Record<string, unknown>;
+  outcomes: {
+    benchmark: string;
+    anchor_status?: "finalized" | "no_session";
+    anchor_date?: string;
+    anchor_close?: number;
+    "1d": number | null;
+    "5d": number | null;
+    "20d": number | null;
+  };
+}
+
+export interface DailyBriefing {
+  latest: DailyBriefingRecord | null;
+  history: DailyBriefingRecord[];
+  warning: string | null;
+}
+
 export interface Overview {
   as_of: string | null;
   freshness: Freshness;
@@ -387,6 +432,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const getOverview = () => getJson<Overview>("/api/overview");
+export const getDailyBriefing = () => getJson<DailyBriefing>("/api/daily-briefing");
 export const getVolatility = () => getJson<Volatility>("/api/volatility");
 export const getBreadth = () => getJson<Breadth>("/api/breadth");
 export const getSectors = () => getJson<Sectors>("/api/sectors");

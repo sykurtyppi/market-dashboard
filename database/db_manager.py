@@ -187,6 +187,25 @@ class DatabaseManager:
                 )
             """)
 
+            # Deterministic decision record shown as the primary product view.
+            # One row per market date keeps regeneration idempotent while the
+            # JSON payload preserves the exact rules, inputs and alert decision.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS daily_briefings (
+                    briefing_date TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS benchmark_prices (
+                    symbol TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    close REAL NOT NULL,
+                    PRIMARY KEY (symbol, date)
+                )
+            """)
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_date ON indicators(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_indicators_name ON indicators(indicator_name)")
@@ -196,6 +215,8 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_move_date ON move_index(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_repo_date ON repo_market(date)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_breadth_date ON breadth_history(date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_daily_briefings_date ON daily_briefings(briefing_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_benchmark_prices_date ON benchmark_prices(symbol, date)")
 
             conn.commit()
 
@@ -1241,3 +1262,149 @@ class DatabaseManager:
         result = dict(row)
         result["payload"] = json.loads(result.pop("payload_json"))
         return result
+
+    def save_daily_briefing(self, payload: Dict) -> None:
+        """Persist one briefing; regenerating a date replaces that date only."""
+        briefing_date = payload.get("as_of")
+        if not briefing_date:
+            raise ValueError("daily briefing requires an as_of date")
+        payload = dict(payload)
+        with sqlite3.connect(self.db_path) as conn:
+            existing = conn.execute(
+                "SELECT payload_json FROM daily_briefings WHERE briefing_date = ?",
+                (str(briefing_date),),
+            ).fetchone()
+            if existing:
+                prior_outcomes = json.loads(existing[0]).get("outcomes", {})
+                outcomes = dict(payload.get("outcomes", {}))
+                for key, value in prior_outcomes.items():
+                    if value is not None and outcomes.get(key) is None:
+                        outcomes[key] = value
+                payload["outcomes"] = outcomes
+            encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False)
+            conn.execute(
+                """
+                INSERT INTO daily_briefings (briefing_date, payload_json)
+                VALUES (?, ?)
+                ON CONFLICT(briefing_date) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (str(briefing_date), encoded),
+            )
+            conn.commit()
+
+    def get_latest_daily_briefing(self) -> Optional[Dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM daily_briefings ORDER BY briefing_date DESC LIMIT 1"
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def get_recent_snapshots(self, limit: int = 2) -> List[Dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM daily_snapshots ORDER BY date DESC LIMIT ?",
+                (max(1, min(int(limit), 30)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_vrp_for_date(self, date: str) -> Optional[Dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM vrp_data WHERE date <= ? ORDER BY date DESC LIMIT 1",
+                (str(date)[:10],),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_move_for_date(self, date: str) -> Optional[float]:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT move FROM move_index WHERE date <= ? ORDER BY date DESC LIMIT 1",
+                (str(date)[:10],),
+            ).fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
+    def get_daily_briefing_history(self, limit: int = 90) -> List[Dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT payload_json FROM daily_briefings ORDER BY briefing_date DESC LIMIT ?",
+                (max(1, min(int(limit), 365)),),
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def save_benchmark_prices(self, symbol: str, prices) -> int:
+        """Upsert (date, close) pairs used only for retrospective outcomes."""
+        clean = []
+        for date, close in prices:
+            if date is None or close is None:
+                continue
+            clean.append((symbol.upper(), str(date)[:10], float(close)))
+        if not clean:
+            return 0
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO benchmark_prices (symbol, date, close) VALUES (?, ?, ?)",
+                clean,
+            )
+            conn.commit()
+        return len(clean)
+
+    def backfill_daily_briefing_outcomes(self, symbol: str = "SPY") -> int:
+        """Fill 1/5/20-trading-day returns when enough closes exist."""
+        updated = 0
+        with sqlite3.connect(self.db_path) as conn:
+            briefings = conn.execute(
+                "SELECT briefing_date, payload_json FROM daily_briefings ORDER BY briefing_date"
+            ).fetchall()
+            prices = conn.execute(
+                "SELECT date, close FROM benchmark_prices WHERE symbol = ? ORDER BY date",
+                (symbol.upper(),),
+            ).fetchall()
+            for briefing_date, encoded in briefings:
+                payload = json.loads(encoded)
+                outcomes = payload.setdefault("outcomes", {"benchmark": symbol.upper()})
+                anchor_date = outcomes.get("anchor_date")
+                anchor_close = outcomes.get("anchor_close")
+                if anchor_date is None or anchor_close is None:
+                    exact_anchor = next(
+                        ((date, close) for date, close in prices if date == briefing_date),
+                        None,
+                    )
+                    if exact_anchor is None:
+                        later_session_exists = any(date > briefing_date for date, _ in prices)
+                        if later_session_exists and outcomes.get("anchor_status") != "no_session":
+                            outcomes["anchor_status"] = "no_session"
+                            conn.execute(
+                                "UPDATE daily_briefings SET payload_json = ?, updated_at = CURRENT_TIMESTAMP WHERE briefing_date = ?",
+                                (json.dumps(payload, separators=(",", ":"), allow_nan=False), briefing_date),
+                            )
+                            updated += 1
+                        continue
+                    anchor_date, anchor_close = exact_anchor
+                    outcomes["anchor_date"] = anchor_date
+                    outcomes["anchor_close"] = float(anchor_close)
+                    outcomes["anchor_status"] = "finalized"
+                    changed = True
+                else:
+                    changed = False
+
+                future = [(date, close) for date, close in prices if date > anchor_date]
+                base = float(anchor_close)
+                for horizon in (1, 5, 20):
+                    key = f"{horizon}d"
+                    if outcomes.get(key) is not None or len(future) < horizon:
+                        continue
+                    outcomes[key] = round((float(future[horizon - 1][1]) / base - 1) * 100, 2)
+                    changed = True
+                outcomes["benchmark"] = symbol.upper()
+                if changed:
+                    conn.execute(
+                        "UPDATE daily_briefings SET payload_json = ?, updated_at = CURRENT_TIMESTAMP WHERE briefing_date = ?",
+                        (json.dumps(payload, separators=(",", ":"), allow_nan=False), briefing_date),
+                    )
+                    updated += 1
+            conn.commit()
+        return updated

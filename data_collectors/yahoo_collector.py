@@ -8,8 +8,9 @@ Includes centralized rate limiting via utils.retry_utils
 
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, Optional, Callable, Any
+from zoneinfo import ZoneInfo
 import time
 import logging
 import json
@@ -399,6 +400,29 @@ class YahooCollector:
                 logger.warning("Using last-known-good SPY put/call ratio")
             return stale
 
+
+    def get_benchmark_prices(
+        self,
+        ticker: str = "SPY",
+        period: str = "3mo",
+        *,
+        completed_before: Optional[date] = None,
+    ):
+        """Return closes only for sessions completed before the cutoff date."""
+        try:
+            data = yf.Ticker(ticker).history(period=period)
+            if data is None or data.empty or "Close" not in data:
+                logger.warning(f"No benchmark history returned for {ticker}")
+                return []
+            cutoff = completed_before or datetime.now(ZoneInfo("America/New_York")).date()
+            return [
+                (index.strftime("%Y-%m-%d"), float(close))
+                for index, close in data["Close"].dropna().items()
+                if pd.Timestamp(index).date() < cutoff
+            ]
+        except Exception as exc:
+            logger.error(f"Error fetching benchmark history for {ticker}: {exc}")
+            return []
 
     def get_all_data(self) -> Dict:
         """Get all Yahoo Finance data
