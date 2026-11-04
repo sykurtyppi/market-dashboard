@@ -219,6 +219,10 @@ class DataStatusTracker:
         if DataStatus.UNAVAILABLE in statuses:
             return DataStatus.PARTIAL
 
+        # A partial source also keeps the overall status PARTIAL, even mixed with OK.
+        if DataStatus.PARTIAL in statuses:
+            return DataStatus.PARTIAL
+
         # If any stale or estimated, overall is PARTIAL
         if DataStatus.STALE in statuses or DataStatus.ESTIMATED in statuses:
             return DataStatus.PARTIAL
