@@ -246,9 +246,13 @@ class DataStatusTracker:
 
     def get_summary(self) -> Dict[str, Any]:
         """Get complete status summary"""
+        overall_status = self.get_overall_status()
+        overall_emoji = "❓" if not self.sources else DataResult(
+            data=None, status=overall_status
+        ).status_emoji
         return {
-            "overall_status": self.get_overall_status().value,
-            "overall_emoji": self.sources and list(self.sources.values())[0].status_emoji or "❓",
+            "overall_status": overall_status.value,
+            "overall_emoji": overall_emoji,
             "sources": {
                 name: {
                     "status": result.status.value,
