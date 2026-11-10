@@ -32,7 +32,7 @@ function Content({ data, freshness }: { data: Institutional; freshness: Freshnes
         ) : null}
 
         <Section title="Institutional Activity" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
-          <section className="grid-2" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+          <section className="grid-2 grid-3">
             <Panel title="Dark Pool" sub={dp ? undefined : "unavailable"}>
               {dp ? (
                 <>
