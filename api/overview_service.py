@@ -223,7 +223,8 @@ def build_overview() -> Dict[str, Any]:
              "value": "Fear" if (fg is not None and fg < 45) else ("Greed" if (fg is not None and fg > 60) else "Neutral"),
              "note": f"F&G at {fg:.0f}" if fg is not None else "n/a"},
             {"key": "breadth", "label": "Breadth", "state": _breadth_state(breadth),
-             "value": "Healthy" if _breadth_state(breadth) == "good" else "Mixed",
+             "value": "Unavailable" if breadth is None
+             else ("Healthy" if _breadth_state(breadth) == "good" else "Mixed"),
              "note": f"{breadth_pct:.0f}% advancing" if breadth_pct is not None else "n/a"},
         ],
     }

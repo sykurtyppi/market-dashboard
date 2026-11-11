@@ -3,6 +3,7 @@ import json
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from api import overview_service as overview
 from api.pages_service import _aligned_series
@@ -30,10 +31,27 @@ def test_series_filters_invalid_before_sampling_and_keeps_last_valid():
         {'date': 'b', 'value': 1.0}, {'date': 'd', 'value': 3.0}, {'date': 'f', 'value': 5.0}]
 
 
-def test_overview_scaled_breadth_degrades_to_null(monkeypatch):
-    # A finite 1e308 breadth overflows on the *100 scale; the detail row must
-    # degrade to null instead of emitting an "inf% advancing" note.
-    snapshot = {'date': '2026-11-11', 'market_breadth': 1e308}
+def test_aligned_over_cap_sampling_shares_index():
+    # Two columns with different NaN/inf patterns drop the WHOLE row before
+    # sampling, so after filtering six valid rows both series pick the same
+    # three points and stay index-aligned.
+    frame = pd.DataFrame({
+        'date': list('abcdefgh'),
+        'vix': [0, float('nan'), 2, 3, 4, 5, 6, float('inf')],
+        'vrp': [0, 1, 2, 3, 4, 5, 6, 7]})
+    result = _aligned_series(frame, ['vix', 'vrp'], max_points=3)
+    assert result == {
+        'vix': [{'date': 'a', 'value': 0.0}, {'date': 'd', 'value': 3.0},
+                {'date': 'g', 'value': 6.0}],
+        'vrp': [{'date': 'a', 'value': 0.0}, {'date': 'd', 'value': 3.0},
+                {'date': 'g', 'value': 6.0}],
+    }
+
+
+@pytest.mark.parametrize("breadth", [None, 1e308])
+def test_overview_unavailable_breadth(monkeypatch, breadth):
+    # The detail stays null for both missing and overflowed breadth.
+    snapshot = {'date': '2026-11-11', 'market_breadth': breadth}
     db = SimpleNamespace(
         get_latest_snapshot=lambda **kwargs: snapshot,
         get_latest_vrp=lambda: {},
@@ -47,4 +65,5 @@ def test_overview_scaled_breadth_degrades_to_null(monkeypatch):
     assert breadth_row["value"] is None
     assert breadth_row["state"] == "neutral"
     breadth_component = next(row for row in body["regime"]["components"] if row["key"] == "breadth")
+    assert breadth_component["value"] == "Unavailable"
     assert breadth_component["note"] == "n/a"
