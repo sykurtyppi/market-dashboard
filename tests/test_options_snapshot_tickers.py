@@ -5,6 +5,7 @@ The options_flow validator used to accept any three rows, so a snapshot with
 duplicate or unexpected tickers overwrote a good one. A valid snapshot must
 have exactly one SPY, QQQ and IWM row in any order.
 """
+import pytest
 from unittest.mock import call, patch
 
 from api import snapshot_service as svc
@@ -13,22 +14,38 @@ from database.db_manager import DatabaseManager
 
 OPTION_TICKERS = ("SPY", "QQQ", "IWM")
 
+# A None sentinel stands in for a row dict that carries no ticker field,
+# which the validator must reject as a missing ticker key.
+MISSING_TICKER = None
+
+REJECTED_TICKERS = [
+    pytest.param(["SPY", "QQQ", "QQQ"], id="duplicate"),
+    pytest.param(["SPY", "QQQ", "DIA"], id="unexpected_ticker"),
+    pytest.param(["SPY", "QQQ", 123], id="non_string_ticker"),
+    pytest.param(["SPY", "QQQ", MISSING_TICKER], id="missing_ticker_key"),
+]
+
 
 def _payload(tickers, as_of):
-    return {"as_of": as_of, "etfs": [{"ticker": t} for t in tickers]}
+    etfs = [
+        {} if ticker is MISSING_TICKER else {"ticker": ticker}
+        for ticker in tickers
+    ]
+    return {"as_of": as_of, "etfs": etfs}
 
 
-def test_duplicate_ticker_refresh_is_rejected(tmp_path, monkeypatch):
+@pytest.mark.parametrize("rejected", REJECTED_TICKERS)
+def test_rejected_ticker_refresh_is_rejected(tmp_path, monkeypatch, rejected):
     db = DatabaseManager(str(tmp_path / "snapshot.sqlite"))
     original = _payload(OPTION_TICKERS, "first")
     db.save_api_snapshot("options_flow", original, as_of=original["as_of"])
 
-    # Preserve the real validator; stub only the collector to a duplicate row.
+    # Preserve the real validator; stub only the collector to a bad row.
     _, validator = svc._collectors["options_flow"]
     monkeypatch.setitem(
         svc._collectors,
         "options_flow",
-        (lambda: _payload(["SPY", "QQQ", "QQQ"], "second"), validator),
+        (lambda: _payload(rejected, "second"), validator),
     )
 
     result = refresh_snapshot("options_flow", db=db)
