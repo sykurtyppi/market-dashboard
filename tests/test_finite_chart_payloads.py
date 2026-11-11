@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from api import overview_service as overview
+from api.signals_service import _snapshot_fallback_series
 from api.pages_service import _aligned_series
 
 
@@ -74,3 +75,29 @@ def test_overview_breadth_labels(monkeypatch, breadth, expected_label, expected_
     breadth_component = next(row for row in body["regime"]["components"] if row["key"] == "breadth")
     assert breadth_component["note"] == expected_note
     assert breadth_component["value"] == expected_label
+
+
+def test_snapshot_fallback_drops_missing_dates_and_keeps_source_priority():
+    # Missing dates (None, NaN, NaT and pandas NA) must be dropped so a gap can
+    # never become a bogus chart point, while row-level source priority and the
+    # input frame are preserved.
+    frame = pd.DataFrame({
+        "date": pd.Series(
+            ["2026-11-06", None, "2026-11-08", float("nan"),
+             "2026-11-10", pd.NaT, "2026-11-11", pd.NA],
+            dtype=object),
+        "cboe_equity_pc": [0.7, 9.0, 0.8, 9.0, 0.9, 9.0, float("inf"), 9.0],
+        "spy_put_call": [1.5, 1.5, 1.6, 1.6, 1.7, 1.7, 1.2, 1.8],
+        "put_call_ratio": [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.3, 2.0],
+    })
+    expected = [
+        {"date": "2026-11-06", "value": 0.7},
+        {"date": "2026-11-08", "value": 0.8},
+        {"date": "2026-11-10", "value": 0.9},
+        {"date": "2026-11-11", "value": 1.2},
+    ]
+    before = frame.copy(deep=True)
+    points = _snapshot_fallback_series(
+        frame, ("cboe_equity_pc", "spy_put_call", "put_call_ratio"))
+    assert points == expected
+    pd.testing.assert_frame_equal(frame, before)
