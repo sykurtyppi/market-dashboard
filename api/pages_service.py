@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from typing import Any, Dict, List
 
 from api.deps import get_db
-from api.overview_service import _credit_state, _num, _series
+from api.overview_service import _credit_state, _num, _sample_indices, _series
 from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, load_constituents
 
 
@@ -17,8 +17,8 @@ def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, L
     Charts that compare columns (VIX vs realized vs VRP) zip the series by index
     on the frontend, so they must stay aligned. Dropping NaNs and downsampling
     each column independently (as _series does) can desync them when the columns
-    have different NaN patterns — so keep only rows where *all* requested columns
-    are present, then downsample once on a shared index.
+    have different NaN patterns — so keep only rows where *all* requested
+    present columns are valid, then downsample once on a shared index.
     """
     empty = {c: [] for c in cols}
     if hist is None or getattr(hist, "empty", True):
@@ -27,21 +27,24 @@ def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, L
     present = [c for c in cols if c in hist.columns]
     if not present:
         return empty
-    clean = hist[[date_col, *present]].dropna().reset_index(drop=True)
-    if clean.empty:
+    # Collect valid rows as (original date, converted values) tuples and drop any
+    # row that is NaN, non-convertible or non-finite in ANY present column, all
+    # before downsampling. Keeping the original date alongside the values (rather
+    # than rebuilding a value-only frame) preserves the date on the emitted
+    # arrays. Absent columns are kept empty. Inputs are not mutated.
+    valid = []
+    for _, row in hist.dropna(subset=[date_col]).iterrows():
+        vals = [_num(row[c]) for c in present]
+        if all(v is not None for v in vals):
+            d = row[date_col]
+            d_str = str(d.date()) if hasattr(d, "date") else str(d)
+            valid.append((d_str, vals))
+    if not valid:
         return empty
-    if len(clean) > max_points:
-        step = len(clean) / max_points
-        idx = sorted({int(i * step) for i in range(max_points)} | {len(clean) - 1})
-        clean = clean.iloc[idx]
     out: Dict[str, List[Dict[str, Any]]] = {c: [] for c in cols}
-    for _, row in clean.iterrows():
-        d = row[date_col]
-        d_str = str(d.date()) if hasattr(d, "date") else str(d)
-        for c in present:
-            v = _num(row[c])
-            if v is not None:
-                out[c].append({"date": d_str, "value": v})
+    for d_str, vals in (valid[i] for i in _sample_indices(len(valid), max_points)):
+        for c, v in zip(present, vals):
+            out[c].append({"date": d_str, "value": v})
     return out
 
 

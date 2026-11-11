@@ -28,6 +28,23 @@ def _num(value: Any) -> Optional[float]:
     return result
 
 
+def _sample_indices(n: int, budget: int) -> list:
+    """Shared index selection for chart downsampling.
+
+    Empty for a non-positive budget, all indices when the series fits, the
+    latest index alone for a budget of one, otherwise an evenly-spaced pick that
+    always includes the last valid row without exceeding the cap. Both _series
+    and _aligned_series call this so the two helpers stay in sync.
+    """
+    if budget <= 0:
+        return []
+    if n <= budget:
+        return list(range(n))
+    if budget == 1:
+        return [n - 1]
+    return [i * (n - 1) // (budget - 1) for i in range(budget)]
+
+
 def _series(
     df: pd.DataFrame,
     value_col: Optional[str] = None,
@@ -50,11 +67,11 @@ def _series(
     clean = df[[date_col, value_col]].dropna()
     if clean.empty:
         return []
-    if len(clean) > max_points:
-        step = len(clean) / max_points
-        idx = sorted({int(i * step) for i in range(max_points)} | {len(clean) - 1})
-        clean = clean.iloc[idx]
-
+    # Collect valid rows as (original date, converted value) pairs and drop any
+    # row whose value is invalid (non-numeric, NaN or non-finite) BEFORE
+    # downsampling, so a bad point can't be skipped after the last point was
+    # already kept. Keeping the original date (not just the converted value) is
+    # what lets the caller re-emit aligned arrays without losing the date column.
     out = []
     for _, row in clean.iterrows():
         y = _num(row[value_col])
@@ -62,8 +79,15 @@ def _series(
             continue
         d = row[date_col]
         d_str = str(d.date()) if hasattr(d, "date") else str(d)
-        out.append({"date": d_str, "value": y})
-    return out
+        out.append((d_str, y))
+    if not out:
+        return []
+    # Shared bounded downsample across every helper: a non-positive budget keeps
+    # nothing, a budget of one keeps only the latest valid point, and a larger
+    # budget picks i*(n-1)//(budget-1) so the last point is always included
+    # without exceeding the cap.
+    selected = _sample_indices(len(out), max_points)
+    return [{"date": d_str, "value": y} for d_str, y in (out[i] for i in selected)]
 
 
 # --- state classification (returns one of good|warn|crit|neutral) ---
@@ -158,6 +182,13 @@ def build_overview() -> Dict[str, Any]:
     contango = _num(snapshot.get("vix_contango"))
     fg = _num(snapshot.get("fear_greed_score"))
     breadth = _num(snapshot.get("market_breadth"))
+    # Normalize to a percentage and re-check finiteness: a finite input such as
+    # 1e308 would overflow to infinity on the *100 scale, which is not strict-JSON
+    # safe. _num rejects the overflow, so the detail row degrades to null instead
+    # of emitting "inf% advancing".
+    breadth_pct = _num(breadth * 100) if breadth is not None else None
+    if breadth_pct is None:
+        breadth = None
     vrp = _num(snapshot.get("vrp"))
     ten_y = _num(snapshot.get("treasury_10y"))
     put_call_value, put_call_source, _ = put_call_observation(snapshot)
@@ -193,7 +224,7 @@ def build_overview() -> Dict[str, Any]:
              "note": f"F&G at {fg:.0f}" if fg is not None else "n/a"},
             {"key": "breadth", "label": "Breadth", "state": _breadth_state(breadth),
              "value": "Healthy" if _breadth_state(breadth) == "good" else "Mixed",
-             "note": f"{breadth * 100:.0f}% advancing" if breadth is not None else "n/a"},
+             "note": f"{breadth_pct:.0f}% advancing" if breadth_pct is not None else "n/a"},
         ],
     }
 
@@ -211,7 +242,7 @@ def build_overview() -> Dict[str, Any]:
          "state": _vix_state(_num(snapshot.get("vix9d"))), "source": "CBOE"},
         {"indicator": "Put / Call Ratio", "value": put_call_value,
          "state": "neutral", "source": put_call_source},
-        {"indicator": "Market Breadth", "value": (breadth * 100) if breadth is not None else None,
+        {"indicator": "Market Breadth", "value": breadth_pct,
          "unit": "%", "state": _breadth_state(breadth), "source": "S&P 500 A/D"},
     ]
 
