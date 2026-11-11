@@ -5,6 +5,7 @@ shapes them into a single JSON-friendly dict the frontend renders directly.
 Everything is defensive: missing fields degrade to null/neutral rather than
 raising, so a partial database still yields a usable page.
 """
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -17,9 +18,14 @@ def _num(value: Any) -> Optional[float]:
     try:
         if value is None or (isinstance(value, float) and pd.isna(value)):
             return None
-        return float(value)
-    except (TypeError, ValueError):
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    # Strict JSON rejects inf/-inf/NaN; reject them too so a partial or
+    # overflowing value degrades to null instead of breaking serialization.
+    if not math.isfinite(result):
+        return None
+    return result
 
 
 def _series(
