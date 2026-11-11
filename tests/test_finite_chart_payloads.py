@@ -48,9 +48,16 @@ def test_aligned_over_cap_sampling_shares_index():
     }
 
 
-@pytest.mark.parametrize("breadth", [None, 1e308])
-def test_overview_unavailable_breadth(monkeypatch, breadth):
-    # The detail stays null for both missing and overflowed breadth.
+@pytest.mark.parametrize("breadth,expected_label,expected_state,expected_note,finite", [
+    (None, "Unavailable", "neutral", "n/a", False),
+    (1e308, "Unavailable", "neutral", "n/a", False),
+    (0.8, "Healthy", "good", "80% advancing", True),
+    (0.2, "Mixed", "warn", "20% advancing", True),
+])
+def test_overview_breadth_labels(monkeypatch, breadth, expected_label, expected_state, expected_note, finite):
+    # Breadth degrades to a null detail (Unavailable) when missing or overflowed,
+    # otherwise the regime component maps the percentage to a label and note.
+    expected_pct = None if not finite else breadth * 100
     snapshot = {'date': '2026-11-11', 'market_breadth': breadth}
     db = SimpleNamespace(
         get_latest_snapshot=lambda **kwargs: snapshot,
@@ -62,8 +69,8 @@ def test_overview_unavailable_breadth(monkeypatch, breadth):
     body = overview.build_overview()
     json.dumps(body, allow_nan=False)
     breadth_row = next(row for row in body['detail'] if row['indicator'] == 'Market Breadth')
-    assert breadth_row["value"] is None
-    assert breadth_row["state"] == "neutral"
+    assert breadth_row["value"] == expected_pct
+    assert breadth_row["state"] == expected_state
     breadth_component = next(row for row in body["regime"]["components"] if row["key"] == "breadth")
-    assert breadth_component["value"] == "Unavailable"
-    assert breadth_component["note"] == "n/a"
+    assert breadth_component["note"] == expected_note
+    assert breadth_component["value"] == expected_label
