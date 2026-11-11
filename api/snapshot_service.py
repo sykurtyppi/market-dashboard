@@ -18,9 +18,34 @@ def _collect_options_flow() -> Dict[str, Any]:
     return _build_options_flow()
 
 
+_EXPECTED_OPTION_TICKERS = frozenset({"SPY", "QQQ", "IWM"})
+
+
+def _validate_options_flow(data: Dict[str, Any]) -> bool:
+    """Accept a snapshot with exactly one SPY, QQQ and IWM row, in any order.
+
+    A count check alone accepts three rows of duplicate or unexpected tickers
+    and lets them overwrite a good snapshot, so the ticker multiset must match
+    the expected set exactly. Malformed or non-dict rows are not counted as a
+    valid ticker, so missing or malformed rows fail as well.
+    """
+    etfs = data.get("etfs")
+    if not isinstance(etfs, list) or len(etfs) != 3:
+        return False
+    tickers = []
+    for item in etfs:
+        if not isinstance(item, dict):
+            return False
+        ticker = item.get("ticker")
+        if not isinstance(ticker, str) or ticker not in _EXPECTED_OPTION_TICKERS:
+            return False
+        tickers.append(ticker)
+    return set(tickers) == _EXPECTED_OPTION_TICKERS
+
+
 _collectors: dict[str, tuple[Callable[[], Dict[str, Any]], Callable[[Dict[str, Any]], bool]]] = {
     "sectors": (_collect_sectors, lambda data: bool(data.get("sectors"))),
-    "options_flow": (_collect_options_flow, lambda data: len(data.get("etfs", [])) == 3),
+    "options_flow": (_collect_options_flow, _validate_options_flow),
 }
 _locks = {dataset: threading.Lock() for dataset in _collectors}
 
