@@ -32,6 +32,11 @@ def _snapshot_fallback_series(hist, fields: tuple[str, ...]) -> list[dict[str, A
     if "date" not in hist.columns:
         return []
 
+    # Drop rows whose date is missing (None, NaN, NaT or pandas NA) BEFORE
+    # iterating, so a collection gap can't become a bogus chart point. This
+    # mirrors the aligned chart helper's use of dropna and handles all four
+    # missing markers in one pass without mutating the input frame.
+    hist = hist.dropna(subset=["date"])
     out: list[dict[str, Any]] = []
     for _, row in hist.iterrows():
         value = None
