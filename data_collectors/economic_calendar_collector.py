@@ -134,9 +134,16 @@ class EconomicCalendarCollector:
             logger.debug("No FRED API key configured, skipping data fetch")
             return None
 
-        # Check cache
+        # Check cache. Measure the complete elapsed age with total_seconds();
+        # timedelta.seconds discards whole days, so a cache entry older than a
+        # day would otherwise look fresh.
         cache_key = f"{series_id}_{observations}"
-        if self._fred_cache_time and (datetime.now() - self._fred_cache_time).seconds < self._fred_cache_ttl:
+        # On a cold cache _fred_cache_time is None; guard the subtraction so a
+        # first fetch proceeds instead of raising a TypeError on None.
+        age_seconds = None
+        if self._fred_cache_time:
+            age_seconds = (datetime.now() - self._fred_cache_time).total_seconds()
+        if age_seconds is not None and age_seconds < self._fred_cache_ttl:
             if cache_key in self._fred_data_cache:
                 return self._fred_data_cache[cache_key]
 
