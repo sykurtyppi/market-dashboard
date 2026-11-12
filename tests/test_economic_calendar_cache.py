@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -113,53 +113,41 @@ def test_fred_cache_first_fetch_with_cold_cache():
     assert collector._fred_data_cache["CPIAUCSL_15"] == expected
 
 
-def test_fred_cache_expires_independently_by_series():
-    """A fetch for key B must not extend the freshness of key A.
-
-    With a fixed clock, fetch A, then fetch B twenty minutes later, then at
-    minute 31 key A is older than the 1800s TTL and refreshes while key B is
-    still within the TTL and stays cached. Each series owns its own timestamp.
-    """
-    base = datetime(2026, 11, 11, 12)
+@pytest.mark.parametrize("other_series,other_limit", [("PAYEMS", 15), ("CPIAUCSL", 10)])
+def test_fred_cache_keys_age_independently(monkeypatch, other_series, other_limit):
+    now = datetime(2026, 11, 11, 12)
+    monkeypatch.setattr(module, "datetime", SimpleNamespace(now=lambda: now))
     collector = module.EconomicCalendarCollector(fred_api_key="dummy")
-    collector._fred_cache_time = {}
-    collector._fred_data_cache = {}
 
-    a_cold = [{"date": "2026-10-01", "value": 1.0}]
-    a_refreshed = [{"date": "2026-11-01", "value": 2.0}]
-    b_expected = [{"date": "2026-09-01", "value": 3.0}]
-
-    def make_get(rows):
+    def fake_get(url, params, timeout):
         response = Mock()
-        response.json.return_value = {"observations": rows}
-        return Mock(return_value=response)
+        response.json.return_value = {
+            "observations": [{"date": "2026-11-01", "value": str(request.call_count)}]
+        }
+        return response
 
-    old_datetime = module.datetime
-    old_get = module.requests.get
-    try:
-        module.datetime = SimpleNamespace(now=lambda: base)
-        module.requests.get = make_get([
-            {"date": "2026-10-01", "value": "1"},
-        ])
-        collector._fetch_fred_series("A")
-
-        module.datetime = SimpleNamespace(now=lambda: base + timedelta(minutes=20))
-        module.requests.get = make_get([
-            {"date": "2026-09-01", "value": "3"},
-        ])
-        b_first = collector._fetch_fred_series("B")
-
-        module.datetime = SimpleNamespace(now=lambda: base + timedelta(minutes=31))
-        module.requests.get = make_get([
-            {"date": "2026-11-01", "value": "2"},
-        ])
-        refreshed = collector._fetch_fred_series("A")
-        expected = a_refreshed
-        b_second = collector._fetch_fred_series("B")
-    finally:
-        module.datetime = old_datetime
-        module.requests.get = old_get
-
-    assert refreshed == expected
-    assert b_second == b_expected
-    assert collector._fred_cache_time.get("A_15") != collector._fred_cache_time.get("B_15")
+    request = Mock(side_effect=fake_get)
+    monkeypatch.setattr(module.requests, "get", request)
+    assert collector._fetch_fred_series("CPIAUCSL", 15)[0]["value"] == 1
+    assert request.call_count == 1
+    now += timedelta(minutes=20)
+    assert collector._fetch_fred_series(other_series, other_limit)[0]["value"] == 2
+    assert request.call_count == 2
+    now += timedelta(minutes=11)
+    assert collector._fetch_fred_series("CPIAUCSL", 15)[0]["value"] == 3
+    assert collector._fetch_fred_series(other_series, other_limit)[0]["value"] == 2
+    assert request.call_count == 3
+    assert request.call_args_list == [
+        call("https://api.stlouisfed.org/fred/series/observations",
+             params={"series_id": "CPIAUCSL", "api_key": "dummy", "file_type": "json",
+                     "sort_order": "desc", "limit": 15},
+             timeout=10),
+        call("https://api.stlouisfed.org/fred/series/observations",
+             params={"series_id": other_series, "api_key": "dummy", "file_type": "json",
+                     "sort_order": "desc", "limit": other_limit},
+             timeout=10),
+        call("https://api.stlouisfed.org/fred/series/observations",
+             params={"series_id": "CPIAUCSL", "api_key": "dummy", "file_type": "json",
+                     "sort_order": "desc", "limit": 15},
+             timeout=10),
+    ]
