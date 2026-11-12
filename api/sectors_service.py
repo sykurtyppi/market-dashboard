@@ -89,7 +89,7 @@ def _build_live() -> Dict[str, Any]:
             v = fn()
         except Exception:
             v = None
-        raw_value = float(v) if v is not None else None
+        raw_value = _num(v)
         raw_values[symbol] = raw_value
         if raw_value is not None:
             estimated = may_estimate and any(
