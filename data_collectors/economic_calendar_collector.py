@@ -209,7 +209,7 @@ class EconomicCalendarCollector:
         return {
             'current': current,
             'previous': previous,
-            'yoy_change': round(yoy_change, 2) if yoy_change else None,
+            'yoy_change': round(yoy_change, 2) if yoy_change is not None else None,
             'current_date': data[0]['date'],
             'previous_date': data[1]['date']
         }
