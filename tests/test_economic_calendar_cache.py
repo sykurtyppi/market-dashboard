@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -24,7 +24,7 @@ def test_fred_cache_ages_over_a_full_day():
     cached = [{"date": "2026-10-01", "value": 1.0}]
     expected = [{"date": "2026-11-01", "value": 2.0}]
     collector._fred_data_cache["CPIAUCSL_15"] = cached
-    collector._fred_cache_time = now - timedelta(days=1, minutes=1)
+    collector._fred_cache_time["CPIAUCSL_15"] = now - timedelta(days=1, minutes=1)
 
     response = Mock()
     response.json.return_value = {
@@ -55,7 +55,7 @@ def test_fred_cache_avoids_request_when_fresh():
     cached = [{"date": "2026-10-01", "value": 1.0}]
     expected = cached
     collector._fred_data_cache["CPIAUCSL_15"] = cached
-    collector._fred_cache_time = now - timedelta(minutes=1)
+    collector._fred_cache_time["CPIAUCSL_15"] = now - timedelta(minutes=1)
 
     response = Mock()
     response.json.return_value = {
@@ -109,5 +109,45 @@ def test_fred_cache_first_fetch_with_cold_cache():
 
     assert first_fetch == expected
     assert request.call_count == 1
-    assert collector._fred_cache_time is not None
+    assert collector._fred_cache_time["CPIAUCSL_15"] is not None
     assert collector._fred_data_cache["CPIAUCSL_15"] == expected
+
+
+@pytest.mark.parametrize("other_series,other_limit", [("PAYEMS", 15), ("CPIAUCSL", 10)])
+def test_fred_cache_keys_age_independently(monkeypatch, other_series, other_limit):
+    now = datetime(2026, 11, 11, 12)
+    monkeypatch.setattr(module, "datetime", SimpleNamespace(now=lambda: now))
+    collector = module.EconomicCalendarCollector(fred_api_key="dummy")
+
+    def fake_get(url, params, timeout):
+        response = Mock()
+        response.json.return_value = {
+            "observations": [{"date": "2026-11-01", "value": str(request.call_count)}]
+        }
+        return response
+
+    request = Mock(side_effect=fake_get)
+    monkeypatch.setattr(module.requests, "get", request)
+    assert collector._fetch_fred_series("CPIAUCSL", 15)[0]["value"] == 1
+    assert request.call_count == 1
+    now += timedelta(minutes=20)
+    assert collector._fetch_fred_series(other_series, other_limit)[0]["value"] == 2
+    assert request.call_count == 2
+    now += timedelta(minutes=11)
+    assert collector._fetch_fred_series("CPIAUCSL", 15)[0]["value"] == 3
+    assert collector._fetch_fred_series(other_series, other_limit)[0]["value"] == 2
+    assert request.call_count == 3
+    assert request.call_args_list == [
+        call("https://api.stlouisfed.org/fred/series/observations",
+             params={"series_id": "CPIAUCSL", "api_key": "dummy", "file_type": "json",
+                     "sort_order": "desc", "limit": 15},
+             timeout=10),
+        call("https://api.stlouisfed.org/fred/series/observations",
+             params={"series_id": other_series, "api_key": "dummy", "file_type": "json",
+                     "sort_order": "desc", "limit": other_limit},
+             timeout=10),
+        call("https://api.stlouisfed.org/fred/series/observations",
+             params={"series_id": "CPIAUCSL", "api_key": "dummy", "file_type": "json",
+                     "sort_order": "desc", "limit": 15},
+             timeout=10),
+    ]

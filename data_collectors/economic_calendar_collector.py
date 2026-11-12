@@ -116,7 +116,7 @@ class EconomicCalendarCollector:
         self._cache_time = None
         self._cache_ttl = 3600  # 1 hour cache
         self._fred_data_cache = {}
-        self._fred_cache_time = None
+        self._fred_cache_time = {}
         self._fred_cache_ttl = 1800  # 30 min cache for FRED data
 
     def _fetch_fred_series(self, series_id: str, observations: int = 15) -> Optional[List[Dict]]:
@@ -138,11 +138,11 @@ class EconomicCalendarCollector:
         # timedelta.seconds discards whole days, so a cache entry older than a
         # day would otherwise look fresh.
         cache_key = f"{series_id}_{observations}"
-        # On a cold cache _fred_cache_time is None; guard the subtraction so a
+        # On a cold cache the key has no timestamp; guard the subtraction so a
         # first fetch proceeds instead of raising a TypeError on None.
         age_seconds = None
-        if self._fred_cache_time:
-            age_seconds = (datetime.now() - self._fred_cache_time).total_seconds()
+        if cache_key in self._fred_cache_time:
+            age_seconds = (datetime.now() - self._fred_cache_time[cache_key]).total_seconds()
         if age_seconds is not None and age_seconds < self._fred_cache_ttl:
             if cache_key in self._fred_data_cache:
                 return self._fred_data_cache[cache_key]
@@ -176,7 +176,7 @@ class EconomicCalendarCollector:
 
             # Cache results
             self._fred_data_cache[cache_key] = result
-            self._fred_cache_time = datetime.now()
+            self._fred_cache_time[cache_key] = datetime.now()
 
             return result
 
