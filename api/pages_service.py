@@ -169,6 +169,18 @@ def _mcclellan_state(m: float | None) -> str:
     return "warn"
 
 
+def _breadth_percentage(stored, advancing, total) -> float | None:
+    percentage = _num(stored)
+    if percentage is None or not 0 <= percentage <= 100:
+        return None
+    advancing, total = _num(advancing), _num(total)
+    if (advancing is not None and total is not None
+            and 0 <= advancing <= total and total > 0
+            and advancing.is_integer() and total.is_integer()):
+        return (advancing / total) * 100
+    return percentage
+
+
 def build_breadth() -> Dict[str, Any]:
     db = get_db()
     hist = db.get_breadth_history(days=120)
@@ -219,9 +231,12 @@ def build_breadth() -> Dict[str, Any]:
             f"{constituents.as_of}); run scripts/update_sp500_constituents.py."
         )
 
-    # breadth_pct may be stored 0–1 or 0–100; normalize to a percentage
-    raw_pct = _num(latest.get("breadth_pct"))
-    pct = (raw_pct * 100) if (raw_pct is not None and raw_pct <= 1.0) else raw_pct
+    # SQLite stores percentages. Valid counts also resolve older ratio readings.
+    percentages = [
+        _breadth_percentage(row.get("breadth_pct"), row.get("advancing"), row.get("total"))
+        for row in hist.to_dict("records")
+    ]
+    pct = percentages[-1]
     advancing = _num(latest.get("advancing"))
     declining = _num(latest.get("declining"))
     mcclellan = _num(latest.get("mcclellan"))
@@ -240,10 +255,7 @@ def build_breadth() -> Dict[str, Any]:
          "state": _mcclellan_state(mcclellan), "source": "EMA(19)−EMA(39) of A/D"},
     ]
 
-    # Normalize the breadth_pct series the same way for the chart
-    pct_series = _series(hist, value_col="breadth_pct")
-    if pct_series and all(p["value"] <= 1.0 for p in pct_series):
-        pct_series = [{"date": p["date"], "value": p["value"] * 100} for p in pct_series]
+    pct_series = _series(hist.assign(breadth_pct=percentages), value_col="breadth_pct")
 
     return {
         "as_of": str(latest.get("date")),
