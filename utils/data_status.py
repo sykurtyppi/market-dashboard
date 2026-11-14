@@ -12,7 +12,7 @@ Helps distinguish between:
 
 from enum import Enum
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 import logging
 
@@ -104,11 +104,11 @@ def calculate_data_age(data_timestamp: datetime) -> float:
     if data_timestamp is None:
         return float('inf')
 
-    now = datetime.now()
-
-    # Handle timezone-naive vs timezone-aware
-    if data_timestamp.tzinfo is not None and now.tzinfo is None:
-        data_timestamp = data_timestamp.replace(tzinfo=None)
+    # Handle timezone-naive vs timezone-aware inputs.
+    if data_timestamp.tzinfo is not None:
+        now = datetime.now(timezone.utc)
+    else:
+        now = datetime.now()
 
     age = now - data_timestamp
     return age.total_seconds() / 3600  # Convert to hours
