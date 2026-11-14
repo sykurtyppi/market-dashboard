@@ -394,7 +394,11 @@ def build_treasury_stress() -> dict:
     latest = hist.iloc[-1]
     move = _num(latest.get("move"))
     pct = _num(latest.get("percentile"))
+    # A stored NaN regime (or any non-string value) has no state/note meaning;
+    # treat it as missing so the existing state and note rules handle it as None.
     stress = latest.get("stress_level")
+    if not isinstance(stress, str):
+        stress = None
 
     metrics = [
         {"key": "move", "label": "MOVE Index", "value": move, "unit": "",
