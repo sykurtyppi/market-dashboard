@@ -240,10 +240,15 @@ def build_breadth() -> Dict[str, Any]:
          "state": _mcclellan_state(mcclellan), "source": "EMA(19)−EMA(39) of A/D"},
     ]
 
-    # Normalize the breadth_pct series the same way for the chart
+    # Normalize the breadth_pct series the same way as the headline: the rule is
+    # per-reading (a value <= 1.0 is a 0–1 share, else already a 0–100 percent),
+    # not series-wide — a single percentage point must not leave the rest as a
+    # 0–1 share. Rebuild with new dicts rather than mutating _series's output.
     pct_series = _series(hist, value_col="breadth_pct")
-    if pct_series and all(p["value"] <= 1.0 for p in pct_series):
-        pct_series = [{"date": p["date"], "value": p["value"] * 100} for p in pct_series]
+    pct_series = [
+        {**p, "value": (p["value"] * 100 if p["value"] <= 1.0 else p["value"])}
+        for p in pct_series
+    ]
 
     return {
         "as_of": str(latest.get("date")),
