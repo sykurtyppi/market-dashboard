@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 import sqlite3
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 
 def business_days_behind(last: date, today: date) -> int:
@@ -82,8 +83,10 @@ class HealthCheckSystem:
         "net_liquidity": 3,  # needs TGA
     }
 
-    def __init__(self, db_path: str = "data/market_data.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        # Keep health reads aligned with DatabaseManager, even across cwd changes.
+        path = Path(db_path) if db_path is not None else Path(__file__).resolve().parents[1] / "data/market_data.db"
+        self.db_path = str(path.expanduser().resolve())
 
     def _today(self) -> date:
         """Today's date; a method so tests can pin the calendar."""

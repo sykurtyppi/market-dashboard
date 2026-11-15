@@ -280,4 +280,39 @@ a:focus-visible, .btn:focus-visible, .nav-item:focus-visible, .mobile-nav-trigge
   .range-select { display: flex; width: 100%; }
   .range-select .range-btn { min-width: 0; flex: 1; padding-inline: 4px; }
 }
+/* ---------- Read-only source health ---------- */
+.health-toggle { cursor: pointer; white-space: nowrap; }
+.health-toggle:hover { border-color: var(--accent); color: var(--accent-ink); }
+.health-toggle:focus-visible, .health-filters input:focus-visible, .health-filters select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.source-health-popover { position: absolute; top: calc(100% + 8px); right: 16px; width: min(680px, calc(100vw - 32px)); max-height: min(72dvh, 720px); overflow-y: auto; box-shadow: 0 12px 32px rgba(22,24,29,.14); }
+.health-heading, .health-check-row, .health-source-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.health-heading h2 { margin: 0; font-size: 15px; font-weight: 600; display: flex; gap: 12px; align-items: center; }
+.source-health-panel p { margin: 8px 0; overflow-wrap: anywhere; }
+.health-explanation { color: var(--ink-muted); font-size: 12.5px; }
+.health-error { background: var(--crit-soft); color: var(--crit); border: 1px solid var(--crit); border-radius: 7px; padding: 10px; }
+.health-check-row { margin-top: 14px; }
+.health-snapshot { border-top: 1px solid var(--line); padding-top: 10px; }
+.health-counts { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
+.health-counts .btn { font-size: 12px; }
+.health-counts [aria-pressed="true"] { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-soft); }
+.health-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.health-filter-field { display: flex; flex: 1 1 150px; min-width: 0; flex-direction: column; gap: 4px; color: var(--ink-muted); font-size: 12px; }
+.health-filters input, .health-filters select { min-width: 0; width: 100%; padding: 8px 10px; min-height: 40px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; }
+.health-source-list { list-style: none; padding: 0; margin: 10px 0; }
+.health-source-list li { border-top: 1px solid var(--line); padding: 12px 0; }
+.health-source-list strong { font-size: 13px; }
+.health-source-list p { font-size: 12.5px; color: var(--ink-muted); }
+.health-source-list dl { display: flex; gap: 10px 24px; flex-wrap: wrap; font-size: 11.5px; color: var(--ink-muted); }
+.health-source-list dl > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.health-source-list dt { color: var(--ink-faint); }
+.health-source-list dd { margin: 0; overflow-wrap: anywhere; }
+.health-page-link { display: inline-block; color: var(--accent-ink); margin-top: 8px; text-decoration: underline; }
+@media (max-width: 720px) {
+  .topbar { flex-wrap: wrap; padding: 12px 16px; gap: 10px; }
+  .topbar-right { width: 100%; justify-content: space-between; }
+  .topbar .health-toggle { display: inline-flex; min-height: 40px; }
+  .source-health-panel .btn { min-height: 40px; }
+  .source-health-popover { right: 12px; width: calc(100vw - 24px); }
+  .health-filter-field { flex-basis: 100%; }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

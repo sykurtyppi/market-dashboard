@@ -76,7 +76,8 @@ class MarketDataUpdater:
     """Main class for daily market data updates."""
 
     def __init__(self):
-        # Phase 1 collectors - FRED is optional (requires API key)
+        # Phase 1 collectors - construction tolerates a missing FRED API key;
+        # the refresh still reports the missing required data as a failure.
         try:
             self.fred = FREDCollector()
         except ValueError as e:
@@ -184,7 +185,7 @@ class MarketDataUpdater:
         logger.info("=" * 60)
         self.failed_phases = []
         self.attempted_phases = [
-            *(("fred_indicators",) if self.fred else ()),
+            "fred_indicators",
             "fear_greed",
             "cboe",
             "market_breadth",
@@ -201,7 +202,7 @@ class MarketDataUpdater:
         ]
 
         # ------------------------------------------------------------------
-        # 1. FRED data (optional - requires API key)
+        # 1. Required FRED data (missing credentials degrade the refresh)
         # ------------------------------------------------------------------
         fred_data = {}
         if self.fred:
@@ -210,6 +211,9 @@ class MarketDataUpdater:
                 "fred_indicators", self.fred.get_all_indicators, {}
             )
 
+            # Collectors can return a nonempty mapping of empty frames.
+            fred_data = {name: df for name, df in (fred_data or {}).items()
+                         if df is not None and not df.empty}
             if fred_data:
                 logger.info(f"Fetched {len(fred_data)} FRED indicator series")
                 try:
@@ -221,9 +225,9 @@ class MarketDataUpdater:
                 except Exception as e:
                     self._phase_failed("fred_indicators", e)
             else:
-                logger.warning("No FRED data returned")
+                self._phase_failed("fred_indicators", "No usable FRED data returned")
         else:
-            logger.warning("Skipping FRED data (no API key configured)")
+            self._phase_failed("fred_indicators", "FRED API key is not configured; required data unavailable")
 
         # ------------------------------------------------------------------
         # 2. LEFT strategy signal (uses HY credit spreads from FRED)
@@ -608,14 +612,25 @@ class MarketDataUpdater:
         elif hy_spread_final is not None:
             hy_spread_source = "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
 
+        treasury_source = None
+        if fred_treasury_10y is not None:
+            treasury_source = f"FRED ({fred_data['treasury_10y'].columns[1]})"
+        elif treasury_10y_final is not None:
+            treasury_source = "Yahoo Finance (^TNX)"
+        ig_spread = self._safe_get_latest_fred(fred_data, "credit_spread_ig")
+        ig_source = (f"FRED ({fred_data['credit_spread_ig'].columns[1]})"
+                     if ig_spread is not None else None)
+
         snapshot = {
             # Core identifiers
             "date": market_date.isoformat(),
             # Phase 1: Credit & Rates (with Yahoo fallbacks)
             "credit_spread_hy": hy_spread_final,
             "credit_spread_hy_source": hy_spread_source,
-            "credit_spread_ig": self._safe_get_latest_fred(fred_data, "credit_spread_ig"),
+            "credit_spread_ig": ig_spread,
+            "credit_spread_ig_source": ig_source,
             "treasury_10y": treasury_10y_final,
+            "treasury_10y_source": treasury_source,
             "fed_funds": self._safe_get_latest_fred(fred_data, "fed_funds"),
             # Phase 1: Volatility
             "vix_spot": vix_spot,

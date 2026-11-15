@@ -121,7 +121,29 @@ const volatility = {
   charts: { vix: history, realized_vol: history.map((point) => ({ ...point, value: point.value - 2 })), vrp_history: history.map((point) => ({ ...point, value: 2 })) },
 };
 
+// Test-only fault injection; never part of the real API.
+let healthMode = "healthy";
+let freshnessUnavailable = false;
+const healthFixture = {
+  overall_status: "healthy", timestamp: "2026-11-15T12:00:00",
+  internal_metadata: "fixture-only-not-public",
+  sources: { vix: { name: "VIX", status: "healthy", last_update: "2026-11-13", age_hours: 60, message: "Data current (last: 2026-11-13)", internal_metadata: "fixture-only-not-public" } },
+};
+
 createServer((request, response) => {
+  const testUrl = new URL(request.url, "http://localhost");
+  if (testUrl.pathname === "/__test/health") {
+    healthMode = testUrl.searchParams.get("mode") ?? "healthy";
+    freshnessUnavailable = testUrl.searchParams.get("freshness") === "unavailable";
+    response.writeHead(204);
+    response.end();
+    return;
+  }
+  if (request.url === "/api/health") {
+    response.writeHead(healthMode === "down" ? 500 : 200, { "content-type": "application/json" });
+    response.end(JSON.stringify(healthMode === "invalid" ? { unexpected: true } : healthFixture));
+    return;
+  }
   if (request.url === "/api/overview") {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(overview));
@@ -150,8 +172,8 @@ createServer((request, response) => {
     return;
   }
   if (request.url === "/api/freshness") {
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(freshness));
+    response.writeHead(freshnessUnavailable ? 500 : 200, { "content-type": "application/json" });
+    response.end(JSON.stringify(freshnessUnavailable ? { detail: "Fixture freshness failure" } : freshness));
     return;
   }
   const fixtures = {
@@ -167,4 +189,4 @@ createServer((request, response) => {
   }
   response.writeHead(404, { "content-type": "application/json" });
   response.end(JSON.stringify({ detail: "not found" }));
-}).listen(3101, "127.0.0.1");
+}).listen(Number(process.env.PLAYWRIGHT_API_PORT ?? 3101), "127.0.0.1");
