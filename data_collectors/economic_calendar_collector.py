@@ -199,10 +199,14 @@ class EconomicCalendarCollector:
         current = data[0]['value']  # Most recent
         previous = data[1]['value']  # Prior reading
 
-        # Calculate YoY change if we have 12+ months of data
+        # Calculate YoY change. Monthly series need 12+ monthly observations
+        # (data[12] is one year back); the quarterly GDP series uses four
+        # observation intervals (data[4] is one year back).
         yoy_change = None
-        if len(data) >= 13:
-            year_ago = data[12]['value']
+        intervals = 4 if series_id == FRED_SERIES['GDP'] else 12
+        minimum = intervals + 1
+        if len(data) >= minimum:
+            year_ago = data[intervals]['value']
             if year_ago and year_ago != 0:
                 yoy_change = ((current - year_ago) / year_ago) * 100
 
