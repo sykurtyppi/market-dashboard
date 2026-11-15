@@ -1,6 +1,6 @@
 """Smoke tests for the FastAPI layer (api/main.py).
 
-Uses the DB as-is (read-only endpoints); asserts the endpoints respond with the
+Uses an isolated temporary DB; asserts the endpoints respond with the
 expected shape. No network — the overview endpoint reads cached SQLite data.
 """
 import sys

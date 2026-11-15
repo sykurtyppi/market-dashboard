@@ -7,7 +7,7 @@ from statistics import mean, pstdev
 from typing import Any, Dict, List
 
 from api.deps import get_db
-from api.overview_service import _credit_state, _num, _series
+from api.overview_service import _credit_state, _num, _series, _credit_observation, _credit_warnings, _liquidity_observations
 from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, load_constituents
 
 
@@ -264,19 +264,26 @@ def _latest_val(df) -> float | None:
 
 def build_credit_liquidity() -> dict:
     db = get_db()
-    hy_hist = db.get_indicator_history("credit_spread_hy", days=365)
-    ig_hist = db.get_indicator_history("credit_spread_ig", days=365)
+    hy_hist = _asc(db.get_indicator_history("credit_spread_hy", days=365))
+    ig_hist = _asc(db.get_indicator_history("credit_spread_ig", days=365))
     fed = _asc(db.get_fed_balance_sheet_history(days=365))  # method returns DESC
     snapshot = db.get_latest_snapshot() or {}
 
     # The headline value and attribution must come from the same persisted
     # observation. History remains the chart source, while the daily snapshot
     # carries observation-level provenance for the current metric.
-    hy = _num(snapshot.get("credit_spread_hy"))
-    if hy is None:
-        hy = _latest_val(hy_hist)
-    hy_source = snapshot.get("credit_spread_hy_source") or "Unavailable"
-    ig = _latest_val(ig_hist)
+    credit = {key: _credit_observation(snapshot, key) for key in ('hy', 'ig')}
+    for key, hist, series_id in (
+        ('hy', hy_hist, 'BAMLH0A0HYM2'), ('ig', ig_hist, 'BAMLC0A0CM')
+    ):
+        if credit[key]['value'] is None:
+            # DatabaseManager filters credit history to the exact OAS series.
+            # Never attach a snapshot's proxy source/date to this history value.
+            points = _series(hist, value_col='value')
+            if points:
+                credit[key] = {'value': points[-1]['value'], 'as_of': points[-1]['date'],
+                               'source': f'FRED ({series_id})'}
+    hy, ig = credit['hy']['value'], credit['ig']['value']
 
     total_assets = qt_cum = qt_pace = reserves = None
     fed_date = None
@@ -294,9 +301,9 @@ def build_credit_liquidity() -> dict:
 
     metrics = [
         {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
-         "state": _credit_state(hy), "source": hy_source},
+         "state": _credit_state(hy), "source": credit['hy']['source'], "as_of": credit['hy']['as_of']},
         {"key": "ig", "label": "IG Credit Spread", "value": ig, "unit": "%",
-         "state": "neutral", "source": "FRED (BAMLC0A0CM)"},
+         "state": "neutral", "source": credit['ig']['source'], "as_of": credit['ig']['as_of']},
         {"key": "fed_assets", "label": "Fed Total Assets", "value": to_t(total_assets), "unit": "T",
          "state": "neutral", "source": "FRED (WALCL)"},
         {"key": "reserves", "label": "Reserve Balances", "value": to_t(reserves), "unit": "T",
@@ -307,6 +314,8 @@ def build_credit_liquidity() -> dict:
          "state": "neutral", "source": "Derived (Fed balance sheet)"},
     ]
 
+    liquidity_metrics, liquidity_warnings = _liquidity_observations(db)
+    metrics.extend(liquidity_metrics)
     fed_assets_series = [
         {"date": p["date"], "value": round(p["value"] / 1_000_000, 3)}
         for p in _series(fed, value_col="total_assets")
@@ -319,7 +328,7 @@ def build_credit_liquidity() -> dict:
     return {
         "as_of": fed_date,
         "metrics": metrics,
-        "warnings": [],
+        "warnings": _credit_warnings(credit) + liquidity_warnings,
         "charts": {
             "credit_spreads": {
                 "hy": _series(hy_hist),
@@ -330,8 +339,8 @@ def build_credit_liquidity() -> dict:
         },
         "notes": {
             "net_liquidity": (
-                "Net liquidity (Fed BS − TGA − RRP) needs the liquidity pipeline, "
-                "which isn't currently populated."
+                liquidity_warnings[0] if liquidity_metrics else
+                "Net liquidity unavailable: no stored aligned-date components."
             ),
         },
     }

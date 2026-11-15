@@ -108,9 +108,11 @@ def test_older_liquidity_table_gains_the_columns_the_refresh_writes(tmp_path):
         assert con.execute("SELECT COUNT(*) FROM liquidity_history").fetchone() == (2,)
 
 
-def test_database_manager_has_no_indicators_table_liquidity_readers():
-    # get_liquidity_history / get_latest_liquidity read liquidity_* names from
-    # the indicators table, which nothing writes — the wrong-table pattern the
-    # health check had. They had no callers. Keep them gone.
-    assert not hasattr(DatabaseManager, "get_liquidity_history")
-    assert not hasattr(DatabaseManager, "get_latest_liquidity")
+def test_liquidity_reader_uses_populated_history_not_indicators(tmp_path):
+    db = DatabaseManager(str(tmp_path / 'reader.db'))
+    db.save_liquidity_history(frame(('2026-09-23', 0.432, 883.335, 3.64, 6740.619)))
+    history = db.get_liquidity_history(days=100000)
+    assert len(history) == 1
+    assert history.iloc[0]['rrp_on'] == 0.432
+    # Do not resurrect the old indicators-table getter.
+    assert not hasattr(DatabaseManager, 'get_latest_liquidity')

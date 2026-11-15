@@ -164,11 +164,20 @@ class HealthCheckSystem:
                 # still empty (liquidity_history carries staggered nulls while
                 # each series catches up), so the latest row is not the latest
                 # observation.
+                observation_column = 'date'
+                if table == 'daily_snapshots' and column_name in ('credit_spread_hy', 'credit_spread_ig'):
+                    observation_column = f'{column_name}_date'
+                    columns = {row[1] for row in cursor.execute('PRAGMA table_info(daily_snapshots)')}
+                    if observation_column not in columns:
+                        return DataSourceHealth(
+                            name=source_name, status=HealthStatus.UNKNOWN,
+                            last_update=None, message='Credit observation date unavailable',
+                        )
                 query = f"""
-                    SELECT date, {column_name}
+                    SELECT {observation_column}, {column_name}
                     FROM {table}
-                    WHERE {column_name} IS NOT NULL
-                    ORDER BY date DESC
+                    WHERE {column_name} IS NOT NULL AND {observation_column} IS NOT NULL
+                    ORDER BY {observation_column} DESC
                     LIMIT 1
                 """
 

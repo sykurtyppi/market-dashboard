@@ -19,6 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.retry_utils import exponential_backoff_retry
 from utils.secrets_helper import get_secret
 from config import cfg
+from data_collectors.fred_public_csv import fetch_public_fred_csv, public_csv_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +29,9 @@ class FREDCollector:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or get_secret('FRED_API_KEY')
         self.base_url = "https://api.stlouisfed.org/fred/series/observations"
+        self._use_public_csv = public_csv_enabled(self.api_key)
 
-        if not self.api_key:
+        if not self.api_key and not self._use_public_csv:
             raise ValueError(
                 "FRED API key not found. Get one at https://fred.stlouisfed.org/docs/api/api_key.html"
             )
@@ -61,6 +63,11 @@ class FREDCollector:
         err_log = logger.debug if optional else logger.error
         if not start_date:
             start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+
+        if self._use_public_csv:
+            return fetch_public_fred_csv(
+                series_id, start_date, limit=limit, optional=optional
+            ).rename(columns={'value': series_id})
         
         params = {
             'series_id': series_id,

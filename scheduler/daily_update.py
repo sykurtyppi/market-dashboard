@@ -595,18 +595,12 @@ class MarketDataUpdater:
                 treasury_10y_final = yahoo_treasury
                 logger.info(f"Using Yahoo fallback for 10Y Treasury: {treasury_10y_final:.2f}%")
 
-        if hy_spread_final is None:
-            yahoo_hy = yahoo_data.get("hy_spread_proxy")
-            if yahoo_hy is not None:
-                hy_spread_final = yahoo_hy
-                logger.info(f"Using Yahoo fallback for HY Spread: {hy_spread_final:.2f}%")
-
+        # Keep ETF-yield proxies out of the genuine OAS field. Missing FRED
+        # observations remain unavailable rather than changing the metric basis.
         hy_spread_source = None
         if fred_hy_spread is not None:
             series_id = fred_data["credit_spread_hy"].columns[1]
             hy_spread_source = f"FRED ({series_id})"
-        elif hy_spread_final is not None:
-            hy_spread_source = "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
 
         snapshot = {
             # Core identifiers
@@ -614,7 +608,16 @@ class MarketDataUpdater:
             # Phase 1: Credit & Rates (with Yahoo fallbacks)
             "credit_spread_hy": hy_spread_final,
             "credit_spread_hy_source": hy_spread_source,
+            # Snapshot refresh day is not the credit series' observation day.
+            "credit_spread_hy_date": (
+                pd.Timestamp(fred_data["credit_spread_hy"].iloc[-1]["date"]).date().isoformat()
+                if fred_hy_spread is not None else None
+            ),
             "credit_spread_ig": self._safe_get_latest_fred(fred_data, "credit_spread_ig"),
+            "credit_spread_ig_date": (
+                pd.Timestamp(fred_data["credit_spread_ig"].iloc[-1]["date"]).date().isoformat()
+                if self._safe_get_latest_fred(fred_data, "credit_spread_ig") is not None else None
+            ),
             "treasury_10y": treasury_10y_final,
             "fed_funds": self._safe_get_latest_fred(fred_data, "fed_funds"),
             # Phase 1: Volatility
@@ -731,8 +734,8 @@ class MarketDataUpdater:
             if "rrp_on" in liq_df.columns:
                 liq_df["rrp_on"] = self._to_billions(liq_df["rrp_on"], "rrp_on")
 
-            # Merge Fed balance sheet from the table populated earlier this run
-            # (weekly WALCL, stored in $ millions), forward-filled to daily.
+            # Join actual WALCL observation dates only. The resulting net is an
+            # aligned-date proxy (WTREGEN is weekly-average), not a daily balance.
             import sqlite3
             with sqlite3.connect(self.db.db_path) as conn:
                 fed_df = pd.read_sql_query(
@@ -742,20 +745,11 @@ class MarketDataUpdater:
             if not fed_df.empty:
                 fed_df["date"] = pd.to_datetime(fed_df["date"]).dt.normalize()
                 fed_df["fed_bs"] = self._to_billions(fed_df["total_assets"], "fed_bs")
-                fed_df = (
-                    fed_df[["date", "fed_bs"]]
-                    .set_index("date")
-                    .resample("D")
-                    .ffill()
-                    .reset_index()
-                )
                 liq_df["date"] = pd.to_datetime(liq_df["date"]).dt.normalize()
-                liq_df = liq_df.merge(fed_df, on="date", how="left")
-                # Forward-fill the weekly series across the daily grid edges
-                liq_df["fed_bs"] = liq_df["fed_bs"].ffill()
+                liq_df = liq_df.merge(fed_df[["date", "fed_bs"]], on="date", how="left")
             else:
                 logger.warning(
-                    "fed_balance_sheet table empty; net liquidity will use fallback formula"
+                    "fed_balance_sheet table empty; net liquidity will remain unavailable"
                 )
 
             # Drop leading rows where nothing is known yet
@@ -778,9 +772,11 @@ class MarketDataUpdater:
                 logger.info(f"  TGA: ${tga_val:,.0f}B")
                 if pd.notna(rrp_val):
                     logger.info(f"  RRP: ${rrp_val:,.1f}B")
-                if pd.notna(fed_bs_val):
-                    net = fed_bs_val - tga_val - (rrp_val if pd.notna(rrp_val) else 0.0)
-                    logger.info(f"  Fed BS: ${fed_bs_val:,.0f}B -> Net Liquidity: ${net:,.0f}B")
+                if all(pd.notna(value) for value in (fed_bs_val, tga_val, rrp_val)):
+                    net = fed_bs_val - tga_val - rrp_val
+                    logger.info(f"  Fed BS: ${fed_bs_val:,.0f}B -> Aligned-date Net Liquidity: ${net:,.0f}B")
+                else:
+                    logger.info("  Net liquidity unavailable: no complete aligned-date components")
         except Exception as e:
             self._phase_failed("liquidity_history", e)
             import traceback

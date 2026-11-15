@@ -216,10 +216,8 @@ def test_optional_collector_exception_does_not_abort_unrelated_phases():
 
     assert "fear_greed" in failed
     assert yahoo_calls == [True]
-    assert db.snapshots[0]["credit_spread_hy"] == 4.2
-    assert db.snapshots[0]["credit_spread_hy_source"] == (
-        "Yahoo Finance (HYG yield − 10Y Treasury proxy)"
-    )
+    assert db.snapshots[0]["credit_spread_hy"] is None
+    assert db.snapshots[0]["credit_spread_hy_source"] is None
 
 
 def test_refresh_uses_one_new_york_market_date_across_utc_midnight():
@@ -249,7 +247,12 @@ def test_fred_credit_observation_keeps_its_series_provenance():
     })
     db = WorkflowDB()
     updater = workflow_updater(
-        fred=SimpleNamespace(get_all_indicators=lambda: {"credit_spread_hy": credit}),
+        fred=SimpleNamespace(get_all_indicators=lambda: {
+            "credit_spread_hy": credit,
+            "credit_spread_ig": pd.DataFrame({
+                "date": [pd.Timestamp("2026-10-25")], "BAMLC0A0CM": [0.9],
+            }),
+        }),
         yahoo=SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
         db=db,
     )
@@ -258,6 +261,8 @@ def test_fred_credit_observation_keeps_its_series_provenance():
 
     assert db.snapshots[0]["credit_spread_hy"] == 3.0
     assert db.snapshots[0]["credit_spread_hy_source"] == "FRED (BAMLH0A0HYM2)"
+    assert db.snapshots[0]["credit_spread_hy_date"] == "2026-10-26"
+    assert db.snapshots[0]["credit_spread_ig_date"] == "2026-10-25"
 
 
 @pytest.mark.parametrize(
@@ -277,8 +282,8 @@ def test_fred_credit_observation_keeps_its_series_provenance():
         (
             None,
             SimpleNamespace(get_all_data=lambda: {"hy_spread_proxy": 4.2}),
-            4.2,
-            "Yahoo Finance (HYG yield − 10Y Treasury proxy)",
+            None,
+            None,
         ),
     ],
 )
@@ -301,7 +306,7 @@ def test_credit_provenance_survives_selection_persistence_and_api(
     body = overview_service.build_overview()
     credit = next(metric for metric in body["metrics"] if metric["key"] == "hy")
     assert credit["value"] == expected_value
-    assert credit["source"] == expected_source
+    assert credit["source"] == (expected_source or "Unavailable")
 
 
 def test_tuple_save_failures_degrade_their_refresh_phases():

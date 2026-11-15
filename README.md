@@ -32,10 +32,26 @@ Notice: Not financial advice.
 ```bash
 pip install -r requirements.txt
 ```
-2. Add keys. The FRED key powers the credit, liquidity and Fed pages (without it those collectors are disabled with a warning); the Nasdaq Data Link key speeds up COT data. If you kept keys in `.streamlit/secrets.toml` before, move them into `.env`: the app no longer reads that file.
+2. Add keys. The FRED key powers the credit, liquidity and Fed pages; the Nasdaq Data Link key speeds up COT data. If you kept keys in `.streamlit/secrets.toml` before, move them into `.env`: the app no longer reads that file.
 ```bash
 cp sample.env .env
 ```
+   If no FRED API key is available, explicitly set `FRED_USE_PUBLIC_CSV=1`
+   in the backend environment (or local `.env`) to let the FRED, Fed balance
+   sheet and liquidity collectors use the official public FRED graph CSV export.
+   With neither a key nor this opt-in, they remain unavailable. A configured
+   API key always retains the existing JSON API path; CSV is not a fallback for
+   failed authenticated requests. No credentials are generated or assumed.
+   CSV requests use a 10-second timeout, validate the exact requested series,
+   dates and finite values, and retain original units and observation dates
+   (weekly TGA is not filled into daily observations in either transport).
+   Net liquidity is calculated only for shared actual component dates, never
+   carried forward. It is an **aligned-date proxy**, not a simultaneous daily
+   balance: WTREGEN is a weekly average whereas WALCL has a different basis.
+   A newer RRP date does not advance the latest available net-liquidity date.
+   Missing (`.` or blank CSV fields), restricted/licensed, failed or malformed series stay missing;
+   partial series availability does not imply a complete or current dataset.
+   FRED documents CSV under [graph export options](https://fred.stlouisfed.org/help/graphs/share-my-fred-graph/export-options).
 3. Fill the database (several minutes; hits the upstream sources):
 ```bash
 python scheduler/daily_update.py
