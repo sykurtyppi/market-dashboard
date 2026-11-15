@@ -32,7 +32,14 @@ export function MetricCard({ m }: { m: Metric }) {
         {fmt(m.value, m.unit, m.key)}
         {m.unit && m.value !== null ? <span className="u">{m.unit}</span> : null}
       </div>
-      <div className="caption"><span className={`dot ${m.state}`} />{m.source}</div>
+      <div className="caption" title={m.as_of ? `Observation: ${fmtAsOf(m.as_of)}` : "Observation date unknown"}>
+        <span className={`dot ${m.state}`} />{m.source}
+      </div>
+      {/* Older APIs omit this field. Keep their cards compact; the source tooltip
+          still explicitly states that observation timing is unknown. */}
+      {m.as_of !== undefined ? (
+        <div className="metric-observation">{m.as_of ? `Observation: ${fmtAsOf(m.as_of)}` : "Observation date unknown"}</div>
+      ) : null}
     </div>
   );
 }

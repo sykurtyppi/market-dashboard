@@ -17,7 +17,7 @@ test("VIX page presents a full, source-labeled index curve", async ({ page }) =>
 });
 
 test("VIX chart preserves a visible gap when an interior tenor is unavailable", async ({ page, request }) => {
-  await request.get("http://127.0.0.1:3101/__test/sectors-partial");
+  await request.get(`http://127.0.0.1:${process.env.E2E_BACKEND_PORT ?? 3101}/__test/sectors-partial`);
   try {
     await page.goto("/sectors");
 
@@ -26,7 +26,7 @@ test("VIX chart preserves a visible gap when an interior tenor is unavailable", 
     const sixMonthRow = page.getByRole("row").filter({ hasText: "VIX6M" });
     await expect(sixMonthRow).toContainText("—");
   } finally {
-    await request.get("http://127.0.0.1:3101/__test/sectors-full");
+    await request.get(`http://127.0.0.1:${process.env.E2E_BACKEND_PORT ?? 3101}/__test/sectors-full`);
   }
 });
 

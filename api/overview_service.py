@@ -13,6 +13,7 @@ import pandas as pd
 
 from api.deps import get_db
 from processors.composite_risk import calculate_composite_risk_score, put_call_observation
+from processors.liquidity_evidence import build_liquidity_evidence
 
 
 def _num(value: Any) -> Optional[float]:
@@ -196,9 +197,10 @@ def _credit_warnings(observations: Dict) -> List[str]:
     return warnings
 
 
-def _liquidity_observations(db) -> Tuple[List[Dict[str, Any]], List[str]]:
-    getter = getattr(db, 'get_liquidity_history', None)
-    history = getter(days=120) if getter else None
+def _liquidity_observations(db, *, history=None) -> Tuple[List[Dict[str, Any]], List[str]]:
+    if history is None:
+        getter = getattr(db, 'get_liquidity_history', None)
+        history = getter(days=120) if getter else None
     if history is None or history.empty:
         return [], []
     history = history.sort_values('date')
@@ -208,7 +210,7 @@ def _liquidity_observations(db) -> Tuple[List[Dict[str, Any]], List[str]]:
         ('rrp_on', 'ON RRP', 'FRED (RRPONTSYD)'),
         ('tga', 'Treasury General Account (weekly average)', 'FRED (WTREGEN)'),
     ):
-        observations = history.dropna(subset=[column])
+        observations = history.dropna(subset=[column]) if column in history.columns else history.iloc[:0]
         row = observations.iloc[-1] if not observations.empty else None
         metrics.append({
             'key': column, 'label': label,
@@ -265,7 +267,12 @@ def build_overview() -> Dict[str, Any]:
          "state": _contango_state(contango), "source": "VIX / VIX3M"},
     ]
 
-    liquidity_metrics, liquidity_warnings = _liquidity_observations(db)
+    liquidity_getter = getattr(db, 'get_liquidity_history', None)
+    liquidity_history = liquidity_getter(days=120) if liquidity_getter else None
+    liquidity = build_liquidity_evidence(liquidity_history, today=date.today())
+    liquidity_metrics, liquidity_warnings = _liquidity_observations(
+        db, history=liquidity_history if liquidity_history is not None else pd.DataFrame(),
+    )
     metrics.extend(liquidity_metrics)
     regime = {
         "composite_risk": composite,
@@ -315,6 +322,7 @@ def build_overview() -> Dict[str, Any]:
         "left_signal": snapshot.get("left_signal"),
         "regime": regime,
         "metrics": metrics,
+        "liquidity": liquidity,
         "warnings": _credit_warnings(credit) + liquidity_warnings,
         "charts": {
             "vrp_history": vrp_hist,
