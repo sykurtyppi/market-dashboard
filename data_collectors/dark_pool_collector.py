@@ -90,8 +90,8 @@ class DarkPoolCollector:
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         }
-        if api_key:
-            self.headers['Authorization'] = f'Bearer {api_key}'
+        if self.api_key:
+            self.headers['Authorization'] = f'Bearer {self.api_key}'
 
         # Cache for rate limiting
         self._cache = {}

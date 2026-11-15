@@ -47,7 +47,7 @@ function Content({ data, freshness }: { data: OptionsFlow; freshness: Freshness 
 
         <Section title="Nearest-Expiry Flow" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
           {data.etfs.length > 0 ? (
-            <div className="metrics" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+            <div className="metrics metrics-3">
               {data.etfs.map((e) => <EtfCard key={e.ticker} e={e} />)}
             </div>
           ) : (

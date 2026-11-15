@@ -116,7 +116,7 @@ class EconomicCalendarCollector:
         self._cache_time = None
         self._cache_ttl = 3600  # 1 hour cache
         self._fred_data_cache = {}
-        self._fred_cache_time = None
+        self._fred_cache_time = {}
         self._fred_cache_ttl = 1800  # 30 min cache for FRED data
 
     def _fetch_fred_series(self, series_id: str, observations: int = 15) -> Optional[List[Dict]]:
@@ -134,9 +134,16 @@ class EconomicCalendarCollector:
             logger.debug("No FRED API key configured, skipping data fetch")
             return None
 
-        # Check cache
+        # Check cache. Measure the complete elapsed age with total_seconds();
+        # timedelta.seconds discards whole days, so a cache entry older than a
+        # day would otherwise look fresh.
         cache_key = f"{series_id}_{observations}"
-        if self._fred_cache_time and (datetime.now() - self._fred_cache_time).seconds < self._fred_cache_ttl:
+        # On a cold cache the key has no timestamp; guard the subtraction so a
+        # first fetch proceeds instead of raising a TypeError on None.
+        age_seconds = None
+        if cache_key in self._fred_cache_time:
+            age_seconds = (datetime.now() - self._fred_cache_time[cache_key]).total_seconds()
+        if age_seconds is not None and age_seconds < self._fred_cache_ttl:
             if cache_key in self._fred_data_cache:
                 return self._fred_data_cache[cache_key]
 
@@ -169,7 +176,7 @@ class EconomicCalendarCollector:
 
             # Cache results
             self._fred_data_cache[cache_key] = result
-            self._fred_cache_time = datetime.now()
+            self._fred_cache_time[cache_key] = datetime.now()
 
             return result
 
@@ -192,17 +199,21 @@ class EconomicCalendarCollector:
         current = data[0]['value']  # Most recent
         previous = data[1]['value']  # Prior reading
 
-        # Calculate YoY change if we have 12+ months of data
+        # Calculate YoY change. Monthly series need 12+ monthly observations
+        # (data[12] is one year back); the quarterly GDP series uses four
+        # observation intervals (data[4] is one year back).
         yoy_change = None
-        if len(data) >= 13:
-            year_ago = data[12]['value']
+        intervals = 4 if series_id == FRED_SERIES['GDP'] else 12
+        minimum = intervals + 1
+        if len(data) >= minimum:
+            year_ago = data[intervals]['value']
             if year_ago and year_ago != 0:
                 yoy_change = ((current - year_ago) / year_ago) * 100
 
         return {
             'current': current,
             'previous': previous,
-            'yoy_change': round(yoy_change, 2) if yoy_change else None,
+            'yoy_change': round(yoy_change, 2) if yoy_change is not None else None,
             'current_date': data[0]['date'],
             'previous_date': data[1]['date']
         }

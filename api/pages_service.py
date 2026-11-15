@@ -7,7 +7,10 @@ from statistics import mean, pstdev
 from typing import Any, Dict, List
 
 from api.deps import get_db
-from api.overview_service import _credit_state, _num, _series, _credit_observation, _credit_warnings, _liquidity_observations
+from api.overview_service import (
+    _credit_state, _num, _sample_indices, _series,
+    _credit_observation, _credit_warnings, _liquidity_observations,
+)
 from utils.sp500_constituents import BREADTH_SAMPLE_SIZE, load_constituents
 
 
@@ -17,8 +20,8 @@ def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, L
     Charts that compare columns (VIX vs realized vs VRP) zip the series by index
     on the frontend, so they must stay aligned. Dropping NaNs and downsampling
     each column independently (as _series does) can desync them when the columns
-    have different NaN patterns — so keep only rows where *all* requested columns
-    are present, then downsample once on a shared index.
+    have different NaN patterns — so keep only rows where *all* requested
+    present columns are valid, then downsample once on a shared index.
     """
     empty = {c: [] for c in cols}
     if hist is None or getattr(hist, "empty", True):
@@ -27,21 +30,24 @@ def _aligned_series(hist, cols: List[str], max_points: int = 180) -> Dict[str, L
     present = [c for c in cols if c in hist.columns]
     if not present:
         return empty
-    clean = hist[[date_col, *present]].dropna().reset_index(drop=True)
-    if clean.empty:
+    # Collect valid rows as (original date, converted values) tuples and drop any
+    # row that is NaN, non-convertible or non-finite in ANY present column, all
+    # before downsampling. Keeping the original date alongside the values (rather
+    # than rebuilding a value-only frame) preserves the date on the emitted
+    # arrays. Absent columns are kept empty. Inputs are not mutated.
+    valid = []
+    for _, row in hist.dropna(subset=[date_col]).iterrows():
+        vals = [_num(row[c]) for c in present]
+        if all(v is not None for v in vals):
+            d = row[date_col]
+            d_str = str(d.date()) if hasattr(d, "date") else str(d)
+            valid.append((d_str, vals))
+    if not valid:
         return empty
-    if len(clean) > max_points:
-        step = len(clean) / max_points
-        idx = sorted({int(i * step) for i in range(max_points)} | {len(clean) - 1})
-        clean = clean.iloc[idx]
     out: Dict[str, List[Dict[str, Any]]] = {c: [] for c in cols}
-    for _, row in clean.iterrows():
-        d = row[date_col]
-        d_str = str(d.date()) if hasattr(d, "date") else str(d)
-        for c in present:
-            v = _num(row[c])
-            if v is not None:
-                out[c].append({"date": d_str, "value": v})
+    for d_str, vals in (valid[i] for i in _sample_indices(len(valid), max_points)):
+        for c, v in zip(present, vals):
+            out[c].append({"date": d_str, "value": v})
     return out
 
 
@@ -166,6 +172,18 @@ def _mcclellan_state(m: float | None) -> str:
     return "warn"
 
 
+def _breadth_percentage(stored, advancing, total) -> float | None:
+    percentage = _num(stored)
+    if percentage is None or not 0 <= percentage <= 100:
+        return None
+    advancing, total = _num(advancing), _num(total)
+    if (advancing is not None and total is not None
+            and 0 <= advancing <= total and total > 0
+            and advancing.is_integer() and total.is_integer()):
+        return (advancing / total) * 100
+    return percentage
+
+
 def build_breadth() -> Dict[str, Any]:
     db = get_db()
     hist = db.get_breadth_history(days=120)
@@ -216,9 +234,12 @@ def build_breadth() -> Dict[str, Any]:
             f"{constituents.as_of}); run scripts/update_sp500_constituents.py."
         )
 
-    # breadth_pct may be stored 0–1 or 0–100; normalize to a percentage
-    raw_pct = _num(latest.get("breadth_pct"))
-    pct = (raw_pct * 100) if (raw_pct is not None and raw_pct <= 1.0) else raw_pct
+    # SQLite stores percentages. Valid counts also resolve older ratio readings.
+    percentages = [
+        _breadth_percentage(row.get("breadth_pct"), row.get("advancing"), row.get("total"))
+        for row in hist.to_dict("records")
+    ]
+    pct = percentages[-1]
     advancing = _num(latest.get("advancing"))
     declining = _num(latest.get("declining"))
     mcclellan = _num(latest.get("mcclellan"))
@@ -237,10 +258,7 @@ def build_breadth() -> Dict[str, Any]:
          "state": _mcclellan_state(mcclellan), "source": "EMA(19)−EMA(39) of A/D"},
     ]
 
-    # Normalize the breadth_pct series the same way for the chart
-    pct_series = _series(hist, value_col="breadth_pct")
-    if pct_series and all(p["value"] <= 1.0 for p in pct_series):
-        pct_series = [{"date": p["date"], "value": p["value"] * 100} for p in pct_series]
+    pct_series = _series(hist.assign(breadth_pct=percentages), value_col="breadth_pct")
 
     return {
         "as_of": str(latest.get("date")),
@@ -422,6 +440,11 @@ def build_repo() -> dict:
     rrp = _num(latest.get("rrp_on"))
     zscore = _num(latest.get("sofr_z_score"))
     stress = latest.get("stress_level")
+    # A missing/latest stress_level can be NaN (or another non-string), which is
+    # not valid JSON (allow_nan=False) and has no meaningful regime. Treat any
+    # non-string regime as absent; preserve valid string regimes.
+    if not isinstance(stress, str):
+        stress = None
 
     metrics = [
         {"key": "sofr", "label": "SOFR", "value": sofr, "unit": "%",

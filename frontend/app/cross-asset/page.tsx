@@ -57,7 +57,7 @@ function Content({ data, freshness }: { data: CrossAsset; freshness: Freshness }
         ) : null}
 
         <Section title="Market Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
-          <div className="regime" style={{ gridTemplateColumns: "1fr 2fr" }}>
+          <div className="regime regime-summary">
             <div className="regime-cell lead">
               <span className="k">Regime</span>
               <span className="v" style={{ fontSize: 20, marginTop: 4 }}>

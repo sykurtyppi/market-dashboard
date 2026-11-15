@@ -15,7 +15,7 @@ function Content({ data, freshness }: { data: Volatility; freshness: Freshness }
         ) : null}
 
         <Section title="VRP Regime" aside={<span className="mono">{fmtAsOf(data.as_of)}</span>}>
-          <div className="regime" style={{ gridTemplateColumns: "1.4fr repeat(4, 1fr)" }}>
+          <div className="regime regime-volatility">
             <div className="regime-cell lead">
               <span className="k">Regime</span>
               <span className="regime-score" style={{ fontSize: 22 }}>{data.regime ?? "—"}</span>

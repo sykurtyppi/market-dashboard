@@ -98,9 +98,9 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
 
   return (
     <div className="panel">
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+      <div className="volatility-panel-head">
         <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-.01em" }}>VIX vs Realized Vol &amp; VRP Spread</span>
-        <div style={{ display: "inline-flex", gap: 2, padding: 2, background: "var(--ground)", border: "1px solid var(--line)", borderRadius: 8 }} role="group" aria-label="Chart time range">
+        <div className="range-select" role="group" aria-label="Chart time range">
           {RANGES.map((r) => {
             const disabled = (rangeCounts.get(r.key) ?? 0) < 2;
             const active = range === r.key;
@@ -112,14 +112,7 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
                 disabled={disabled}
                 title={disabled ? "Not enough history in this window" : undefined}
                 onClick={() => setRange(r.key)}
-                style={{
-                  fontSize: 11.5, padding: "3px 10px", borderRadius: 6, border: "none",
-                  background: active ? "var(--surface)" : "transparent",
-                  color: disabled ? "var(--line-strong)" : active ? "var(--accent-ink)" : "var(--ink-muted)",
-                  fontWeight: 550, cursor: disabled ? "not-allowed" : "pointer",
-                  fontVariantNumeric: "tabular-nums",
-                  boxShadow: active ? "0 1px 2px rgba(22,24,29,.08)" : "none",
-                }}
+                className={`range-btn${active ? " active" : ""}`}
               >
                 {r.label}
               </button>
@@ -144,7 +137,7 @@ export default function VolatilityPanel({ vix, realizedVol, vrp }: VolatilityPan
         <span style={{ color: "var(--ink-faint)" }}>{stats.count} obs</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 14 }}>
+      <div className="stat-grid">
         <StatCard label="Avg VRP" value={fmt(stats.avg)} note="Mean over plotted range" />
         <StatCard label="VRP Std Dev" value={fmt(stats.std)} note="Dispersion of the spread" />
         <StatCard label="Current Percentile" value={fmt(stats.percentile, "%")} note="Low = realized vol is rich" />

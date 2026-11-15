@@ -1,5 +1,6 @@
 import { Freshness } from "@/lib/api";
 import RefreshButton from "@/components/RefreshButton";
+import MobileNavigation from "@/components/MobileNavigation";
 
 function stateFromFreshness(f: Freshness): "good" | "warn" | "crit" {
   if (f.is_fresh) return "good";
@@ -18,7 +19,8 @@ export default function Topbar({ title, subtitle, freshness }: TopbarProps) {
   const label = freshness.is_fresh ? "Fresh" : freshness.status === "stale" ? "Stale" : "Outdated";
   return (
     <header className="topbar">
-      <div>
+      <MobileNavigation />
+      <div className="topbar-title">
         <h1>{title}</h1>
         <div className="crumb">{subtitle}</div>
       </div>
@@ -35,7 +37,7 @@ export default function Topbar({ title, subtitle, freshness }: TopbarProps) {
           {label} · snapshot {freshness.age}
         </span>
         <RefreshButton />
-        <button className="btn" type="button" disabled title="Coming in a later phase">
+        <button className="btn export-btn" type="button" disabled title="Coming in a later phase">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12M8 11l4 4 4-4M5 21h14" /></svg>
           Export PDF
         </button>
