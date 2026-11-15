@@ -13,7 +13,7 @@ import pandas as pd
 
 from api.deps import get_db
 from processors.composite_risk import calculate_composite_risk_score, put_call_observation
-from processors.liquidity_evidence import build_liquidity_evidence
+from processors.liquidity_evidence import _observation_date, build_liquidity_evidence
 
 
 def _num(value: Any) -> Optional[float]:
@@ -197,13 +197,22 @@ def _credit_warnings(observations: Dict) -> List[str]:
     return warnings
 
 
-def _liquidity_observations(db, *, history=None) -> Tuple[List[Dict[str, Any]], List[str]]:
+def _liquidity_observations(db, *, history=None, today: Optional[date] = None) -> Tuple[List[Dict[str, Any]], List[str]]:
     if history is None:
         getter = getattr(db, 'get_liquidity_history', None)
         history = getter(days=120) if getter else None
     if history is None or history.empty:
         return [], []
-    history = history.sort_values('date')
+    cutoff = today if today is not None else date.today()
+    # Share the evidence parser and cutoff before choosing each series' latest
+    # row. Normalize only this copy, never stored data. Keep legacy duplicates
+    # (last non-null row wins), not the evidence view's conflict policy.
+    observed = history['date'].map(_observation_date) if 'date' in history else None
+    if observed is None:
+        history = history.iloc[:0]
+    else:
+        eligible = observed.map(lambda d: d is not None and d <= cutoff)
+        history = history.assign(date=observed).loc[eligible].sort_values('date', kind='stable')
     metrics = []
     for column, label, source in (
         ('net_liquidity', 'Net Liquidity (aligned-date proxy)', 'Derived: WALCL − WTREGEN − RRPONTSYD'),
@@ -269,9 +278,11 @@ def build_overview() -> Dict[str, Any]:
 
     liquidity_getter = getattr(db, 'get_liquidity_history', None)
     liquidity_history = liquidity_getter(days=120) if liquidity_getter else None
-    liquidity = build_liquidity_evidence(liquidity_history, today=date.today())
+    liquidity_today = date.today()
+    liquidity = build_liquidity_evidence(liquidity_history, today=liquidity_today)
     liquidity_metrics, liquidity_warnings = _liquidity_observations(
         db, history=liquidity_history if liquidity_history is not None else pd.DataFrame(),
+        today=liquidity_today,
     )
     metrics.extend(liquidity_metrics)
     regime = {
