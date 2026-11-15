@@ -20,11 +20,13 @@ def _restore_state():
     yield
 
 
-def test_nan_stress_level_becomes_none(monkeypatch):
+@pytest.mark.parametrize("stress", [float("nan"), 123])
+def test_invalid_move_regime_preserves_both_chart_series(monkeypatch, stress):
     history = pd.DataFrame({
-        "date": ["2026-11-13"],
-        "move": [95.0],
-        "stress_level": [float("nan")],
+        "date": ["2026-11-13", "2026-11-12"],
+        "move": [95.0, 65.0],
+        "percentile": [72.0, 25.0],
+        "stress_level": [stress, "LOW"],
     })
     db = SimpleNamespace(get_move_history=lambda **kwargs: history)
     monkeypatch.setattr(pages_service, "get_db", lambda: db)
@@ -35,6 +37,10 @@ def test_nan_stress_level_becomes_none(monkeypatch):
     assert result["state"] == "neutral"
     assert result["regime_note"] == "Treasury volatility regime"
     assert result["metrics"][0]["value"] == 95.0
+    assert result["charts"] == {
+        "move_history": [{"date": "2026-11-12", "value": 65.0}, {"date": "2026-11-13", "value": 95.0}],
+        "percentile_history": [{"date": "2026-11-12", "value": 25.0}, {"date": "2026-11-13", "value": 72.0}],
+    }
     json.dumps(result, allow_nan=False)
 
 
