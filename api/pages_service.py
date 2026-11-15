@@ -428,6 +428,11 @@ def build_repo() -> dict:
     rrp = _num(latest.get("rrp_on"))
     zscore = _num(latest.get("sofr_z_score"))
     stress = latest.get("stress_level")
+    # A missing/latest stress_level can be NaN (or another non-string), which is
+    # not valid JSON (allow_nan=False) and has no meaningful regime. Treat any
+    # non-string regime as absent; preserve valid string regimes.
+    if not isinstance(stress, str):
+        stress = None
 
     metrics = [
         {"key": "sofr", "label": "SOFR", "value": sofr, "unit": "%",
