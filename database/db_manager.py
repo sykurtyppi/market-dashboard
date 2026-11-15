@@ -20,11 +20,15 @@ logger = logging.getLogger(__name__)
 class DatabaseManager:
     """Manages SQLite database for market data"""
     
-    def __init__(self, db_path: str = "data/market_data.db"):
-        self.db_path = db_path
-        
-        # Create data directory if it doesn't exist
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path: Optional[str] = None):
+        # Defaults follow the application, not the service's launch directory.
+        # Resolve once: API instances are cached and reconnect for each request;
+        # relative paths must not drift if a background operation changes cwd.
+        path = Path(db_path) if db_path is not None else Path(__file__).resolve().parents[1] / "data/market_data.db"
+        self.db_path = str(path.expanduser().resolve())
+
+        # Resolution also pins deployments with app/data -> ../data.
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         
         self._create_tables()
     
@@ -235,6 +239,8 @@ class DatabaseManager:
         'spy_put_oi': 'INTEGER',   # SPY put open interest
         'spy_call_oi': 'INTEGER',  # SPY call open interest
         'credit_spread_hy_source': 'TEXT',
+        'credit_spread_ig_source': 'TEXT',
+        'treasury_10y_source': 'TEXT',
     }
     # liquidity_history data columns the refresh writes. CREATE TABLE IF NOT
     # EXISTS is a no-op on a database that already has the table in an older
@@ -414,17 +420,20 @@ class DatabaseManager:
 
             cursor.execute("""
                 INSERT OR REPLACE INTO daily_snapshots
-                (date, credit_spread_hy, credit_spread_hy_source, credit_spread_ig, treasury_10y, fed_funds,
+                (date, credit_spread_hy, credit_spread_hy_source, credit_spread_ig, credit_spread_ig_source,
+                 treasury_10y, treasury_10y_source, fed_funds,
                  vix_spot, vix9d, vvix, vvix_signal, skew, vrp, vix_contango, put_call_ratio,
                  cboe_equity_pc, spy_put_call, spy_put_oi, spy_call_oi,
                  fear_greed_score, market_breadth, left_signal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 validated.get('date'),
                 validated.get('credit_spread_hy'),
                 validated.get('credit_spread_hy_source'),
                 validated.get('credit_spread_ig'),
+                validated.get('credit_spread_ig_source'),
                 validated.get('treasury_10y'),
+                validated.get('treasury_10y_source'),
                 validated.get('fed_funds'),
                 validated.get('vix_spot'),
                 validated.get('vix9d'),
@@ -449,14 +458,18 @@ class DatabaseManager:
         return True, result
     
     def get_indicator_history(self, indicator_name: str, days: int = 365) -> pd.DataFrame:
-        """Get historical data for an indicator"""
+        """Get history, excluding yield/unknown rows from IG spread consumers.
+
+        Raw rows are retained for audit. Magnitude cannot distinguish a yield
+        from a spread, so only the exact OAS series identifier is accepted.
+        """
+        series_filter = " AND series_id = 'BAMLC0A0CM'" if indicator_name == "credit_spread_ig" else ""
         query = """
             SELECT date, value
             FROM indicators
             WHERE indicator_name = ?
             AND date >= date('now', '-{} days')
-            ORDER BY date
-        """.format(days)
+        """.format(days) + series_filter + " ORDER BY date"
         
         with sqlite3.connect(self.db_path) as conn:
             df = pd.read_sql_query(query, conn, params=(indicator_name,))
@@ -494,7 +507,7 @@ class DatabaseManager:
                 return None
 
             columns = [description[0] for description in cursor.description]
-            result = dict(zip(columns, row))
+            result = self._safe_snapshot(dict(zip(columns, row)))
 
             if include_age:
                 # Calculate data age
@@ -1301,6 +1314,14 @@ class DatabaseManager:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    @staticmethod
+    def _safe_snapshot(snapshot: Dict) -> Dict:
+        # Legacy snapshots did not persist IG provenance. Do not guess using
+        # today's collector mapping or value size; leave the raw DB untouched.
+        if snapshot.get("credit_spread_ig_source") != "FRED (BAMLC0A0CM)":
+            snapshot["credit_spread_ig"] = None
+        return snapshot
+
     def get_recent_snapshots(self, limit: int = 2) -> List[Dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -1308,7 +1329,7 @@ class DatabaseManager:
                 "SELECT * FROM daily_snapshots ORDER BY date DESC LIMIT ?",
                 (max(1, min(int(limit), 30)),),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._safe_snapshot(dict(row)) for row in rows]
 
     def get_vrp_for_date(self, date: str) -> Optional[Dict]:
         with sqlite3.connect(self.db_path) as conn:

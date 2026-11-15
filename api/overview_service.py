@@ -200,7 +200,9 @@ def build_overview() -> Dict[str, Any]:
          "state": _credit_state(hy),
          "source": snapshot.get("credit_spread_hy_source") or "Unavailable"},
         {"key": "ten_y", "label": "10Y Treasury", "value": ten_y, "unit": "%",
-         "state": "neutral", "source": "FRED (DGS10)"},
+         "state": "neutral", "source": (
+             snapshot.get("treasury_10y_source") or "Unknown (legacy snapshot)"
+             if ten_y is not None else "Unavailable")},
         {"key": "fear_greed", "label": "Fear & Greed", "value": fg, "unit": "",
          "state": _sentiment_state(fg), "source": "CNN Fear & Greed (snapshot)"},
         {"key": "vrp", "label": "VRP (21d)", "value": vrp, "unit": "",

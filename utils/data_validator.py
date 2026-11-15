@@ -254,9 +254,13 @@ class DataValidator:
             if warn:
                 result.add_warning(warn)
 
-        # Preserve observation-level provenance for the HY value. It is
+        # Preserve observation-level provenance alongside each value. It is
         # metadata rather than a second measurement, so invalid text is
         # dropped without rejecting otherwise valid market data.
+        for source_field in ('credit_spread_ig_source', 'treasury_10y_source'):
+            source = snapshot.get(source_field)
+            if isinstance(source, str) and source.strip():
+                result.data[source_field] = source.strip()
         credit_source = snapshot.get('credit_spread_hy_source')
         if credit_source is not None:
             if isinstance(credit_source, str) and credit_source.strip():
