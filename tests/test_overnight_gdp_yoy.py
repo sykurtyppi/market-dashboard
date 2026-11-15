@@ -66,3 +66,27 @@ def test_gdp_zero_denominator_yoy_stays_none():
                       return_value=_gdp_quarter_history(120.0, 0.0)):
         result = collector._get_indicator_data("GDP")
     assert result["yoy_change"] is None
+
+
+def test_gdp_release_serializes_usd_billions_unit():
+    import datetime as _dt
+    from api.macro_service import _build_economic_calendar
+
+    collector = EconomicCalendarCollector(fred_api_key="dummy")
+    with patch.object(collector, "_get_indicator_data", return_value={
+        "current": 120.0,
+        "previous": 110.0,
+        "yoy_change": 20.0,
+    }):
+        gdp_event = collector._get_gdp_events(
+            _dt.datetime(2026, 4, 1), _dt.datetime(2026, 4, 30)
+        )[0]
+
+    with patch("data_collectors.economic_calendar_collector.EconomicCalendarCollector") as factory:
+        factory.return_value.get_upcoming_events.return_value = [gdp_event]
+        result = _build_economic_calendar()
+    event = result["events"][0]
+    assert event["unit"] == "USD billions"
+    assert event["actual"] == 120.0
+    assert event["previous"] == 110.0
+    assert event["yoy_change"] == 20.0

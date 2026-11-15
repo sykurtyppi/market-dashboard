@@ -383,7 +383,7 @@ class EconomicCalendarCollector:
                         actual=gdp_data.get('current'),
                         previous=gdp_data.get('previous'),
                         yoy_change=gdp_data.get('yoy_change'),
-                        unit="% QoQ",
+                        unit="USD billions",
                         fred_series=FRED_SERIES['GDP']
                     ))
 
