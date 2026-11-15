@@ -99,7 +99,7 @@ def snapshot_response(
     result = dict(snapshot["payload"])
     refreshed_at = snapshot.get("refreshed_at")
     age = None
-    if refreshed_at:
+    if isinstance(refreshed_at, str):
         try:
             parsed = datetime.fromisoformat(refreshed_at.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
