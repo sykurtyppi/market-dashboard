@@ -47,6 +47,35 @@ npm run dev          # http://localhost:3000
 | `npm start` | Serve the production build |
 | `npx tsc --noEmit` | Type-check |
 
+## Source health
+
+The topbar **Sources** button and `/system-health` read `/api/source-health`, a
+same-origin, GET-only proxy for the backend's public `/api/health`. Status follows
+the backend's per-source calendar/cadence rules, not the age of the latest daily
+snapshot. Healthy Friday data therefore stays healthy over a weekend or holiday
+when the backend says it is current; stale/down/unknown sources remain visible.
+Snapshot age is shown separately as context, not used as a health verdict.
+
+Expand the badge to filter by status (including **Needs attention**), search names
+or backend reasons, inspect last-update dates and elapsed ages, or recheck health.
+Rechecking is read-only: no collectors, admin calls or snapshot writes. Checks
+refresh every minute while the page is active. Failed checks show **Unavailable**;
+previous results, when present, are explicitly last-known rather than current.
+System Health remains usable when the snapshot freshness endpoint fails.
+
+Verification:
+
+```bash
+npm test
+npm run lint
+npm run typecheck
+npm run build
+# Uses a deterministic mock API, never production write endpoints.
+PLAYWRIGHT_PORT=3180 PLAYWRIGHT_API_PORT=3181 npm run test:e2e
+```
+
+Both Playwright ports are optional (defaults: frontend 3100, mock API 3101).
+
 ## Notes
 
 - **Fonts** are self-hosted via the `geist` package (`geist/font/*`), so
