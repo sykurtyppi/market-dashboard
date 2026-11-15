@@ -13,7 +13,7 @@ def _gdp_quarter_history(current, year_ago):
     values = [current] * 4 + [year_ago] + [100.0] * 8
     observations = []
     for offset, value in enumerate(values):
-        total = 2026 * 4 + 2 - offset  # 2026-Q3 down to 2023-Q1
+        total = 2026 * 4 + 2 - offset  # 2026-Q3 down to 2023-Q3
         year = total // 4
         quarter = total % 4 + 1
         month = (quarter - 1) * 3 + 1
