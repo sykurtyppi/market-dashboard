@@ -235,6 +235,8 @@ class DatabaseManager:
         'spy_put_oi': 'INTEGER',   # SPY put open interest
         'spy_call_oi': 'INTEGER',  # SPY call open interest
         'credit_spread_hy_source': 'TEXT',
+        'credit_spread_hy_date': 'TEXT',
+        'credit_spread_ig_date': 'TEXT',
     }
     # liquidity_history data columns the refresh writes. CREATE TABLE IF NOT
     # EXISTS is a no-op on a database that already has the table in an older
@@ -304,6 +306,32 @@ class DatabaseManager:
                     except sqlite3.OperationalError as e:
                         # Column might already exist or other error
                         logger.debug(f"Migration note for {table}.{col_name}: {e}")
+
+        # Separate effective yield from OAS before generic deduplication can
+        # discard either observation. Preserve original ids, series and values.
+        credit_migration = 'credit_ig_effective_yield_identity_v1'
+        if not cursor.execute(
+            "SELECT 1 FROM schema_migrations WHERE name = ?", (credit_migration,)
+        ).fetchone():
+            legacy = cursor.execute(
+                "SELECT id, date FROM indicators WHERE indicator_name = 'credit_spread_ig' "
+                "AND series_id = 'BAMLC0A0CMEY' ORDER BY id"
+            ).fetchall()
+            for row_id, observation_date in legacy:
+                target = 'corporate_ig_yield'
+                # A deterministic id suffix retains both occupied name/date
+                # rows, even when the two values happen to agree.
+                suffix = 0
+                while cursor.execute(
+                    "SELECT 1 FROM indicators WHERE indicator_name = ? AND date = ?",
+                    (target, observation_date),
+                ).fetchone():
+                    suffix += 1
+                    target = f'corporate_ig_yield_legacy_{row_id}_{suffix}'
+                cursor.execute(
+                    "UPDATE indicators SET indicator_name = ? WHERE id = ?", (target, row_id)
+                )
+            cursor.execute("INSERT INTO schema_migrations (name) VALUES (?)", (credit_migration,))
 
         # Enforce indicator uniqueness. Databases created before the
         # UNIQUE(indicator_name, date) constraint was added to `indicators` let
@@ -409,21 +437,35 @@ class DatabaseManager:
 
         # Save validated data
         validated = result.data
+        # These optional observation dates must never default to snapshot date.
+        for field in ('credit_spread_hy_date', 'credit_spread_ig_date'):
+            raw = snapshot.get(field)
+            if raw is not None:
+                try:
+                    parsed = datetime.strptime(raw, '%Y-%m-%d').strftime('%Y-%m-%d')
+                    if parsed != raw:
+                        raise ValueError('date must be ISO YYYY-MM-DD')
+                    validated[field] = parsed
+                except (ValueError, TypeError):
+                    result.add_warning(f'Invalid {field}; dropped')
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
 
             cursor.execute("""
                 INSERT OR REPLACE INTO daily_snapshots
-                (date, credit_spread_hy, credit_spread_hy_source, credit_spread_ig, treasury_10y, fed_funds,
+                (date, credit_spread_hy, credit_spread_hy_source, credit_spread_hy_date,
+                 credit_spread_ig, credit_spread_ig_date, treasury_10y, fed_funds,
                  vix_spot, vix9d, vvix, vvix_signal, skew, vrp, vix_contango, put_call_ratio,
                  cboe_equity_pc, spy_put_call, spy_put_oi, spy_call_oi,
                  fear_greed_score, market_breadth, left_signal)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 validated.get('date'),
                 validated.get('credit_spread_hy'),
                 validated.get('credit_spread_hy_source'),
+                validated.get('credit_spread_hy_date'),
                 validated.get('credit_spread_ig'),
+                validated.get('credit_spread_ig_date'),
                 validated.get('treasury_10y'),
                 validated.get('fed_funds'),
                 validated.get('vix_spot'),
@@ -454,6 +496,9 @@ class DatabaseManager:
             SELECT date, value
             FROM indicators
             WHERE indicator_name = ?
+            AND (indicator_name NOT IN ('credit_spread_ig', 'credit_spread_hy')
+                 OR (indicator_name = 'credit_spread_ig' AND series_id = 'BAMLC0A0CM')
+                 OR (indicator_name = 'credit_spread_hy' AND series_id = 'BAMLH0A0HYM2'))
             AND date >= date('now', '-{} days')
             ORDER BY date
         """.format(days)
@@ -672,6 +717,14 @@ class DatabaseManager:
     # LIQUIDITY DATA METHODS (Phase 1)
     # ========================================
     
+    def get_liquidity_history(self, days: int = 120) -> pd.DataFrame:
+        """Read sparse, actual-date components and aligned-date net proxy."""
+        with sqlite3.connect(self.db_path) as conn:
+            return pd.read_sql_query(
+                "SELECT * FROM liquidity_history WHERE date >= date('now', ?) ORDER BY date ASC",
+                conn, params=(f'-{int(days)} days',),
+            )
+
     def save_liquidity_history(self, df: pd.DataFrame) -> bool:
         """
         Save liquidity history to liquidity_history table.
@@ -716,10 +769,6 @@ class DatabaseManager:
                     if pd.notna(fed_bs) and pd.notna(rrp) and pd.notna(tga):
                         # Correct institutional formula: Net Liquidity = Fed BS - TGA - RRP
                         net_liq = float(fed_bs) - float(tga) - float(rrp)
-                    elif pd.notna(rrp) and pd.notna(tga):
-                        # Fallback: store negative drain components (less accurate)
-                        # This at least shows the drain direction correctly
-                        net_liq = -(float(rrp) + float(tga))
                     
                     cursor.execute("""
                         INSERT OR REPLACE INTO liquidity_history

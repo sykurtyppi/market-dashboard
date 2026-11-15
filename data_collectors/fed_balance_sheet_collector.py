@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.retry_utils import exponential_backoff_retry
+from data_collectors.fred_public_csv import fetch_public_fred_csv, public_csv_enabled
 class FedBalanceSheetCollector:
     """
     Collects Federal Reserve balance sheet data from FRED.
@@ -74,9 +75,10 @@ class FedBalanceSheetCollector:
             api_key: FRED API key (falls back to env FRED_API_KEY)
         """
         self.api_key = api_key or os.getenv("FRED_API_KEY")
+        self._use_public_csv = public_csv_enabled(self.api_key)
         self.logger = logging.getLogger(__name__)
         self._disabled = False
-        if not self.api_key:
+        if not self.api_key and not self._use_public_csv:
             self.logger.warning(
                 "FRED_API_KEY not found. Fed balance sheet data will be unavailable. "
                 "Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
@@ -100,6 +102,9 @@ class FedBalanceSheetCollector:
             # Default: 3 years of history
             start = datetime.today() - timedelta(days=365*3)
             start_date = start.strftime("%Y-%m-%d")
+
+        if self._use_public_csv:
+            return fetch_public_fred_csv(series_id, start_date)
 
         params = {
             "api_key": self.api_key,
@@ -192,7 +197,7 @@ class FedBalanceSheetCollector:
         # Forward fill any gaps
         df = df.sort_values("date")
         for col in ["total_assets", "reserve_balances", "loans"]:
-            if col in df.columns:
+            if col in df.columns and not self._use_public_csv:
                 df[col] = df[col].ffill()
 
         logger.info(f"Fed balance sheet: {len(df)} rows")
@@ -292,7 +297,7 @@ class FedBalanceSheetCollector:
         total_assets_millions = latest["total_assets"]
         total_assets_billions = total_assets_millions / 1000.0 if pd.notna(total_assets_millions) else None
         
-        reserve_balances_millions = latest.get("reserve_balances", 0)
+        reserve_balances_millions = latest.get("reserve_balances", float('nan'))
         reserve_balances_billions = reserve_balances_millions / 1000.0 if pd.notna(reserve_balances_millions) else None
         
         qt_cumulative_millions = latest.get("qt_cumulative", 0)

@@ -28,6 +28,8 @@ class Metric(BaseModel):
     unit: str = ""
     state: State
     source: str
+    # Actual observation date when known; never inferred from refresh time.
+    as_of: Optional[str] = None
 
 
 class RegimeComponent(BaseModel):

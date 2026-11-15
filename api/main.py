@@ -100,7 +100,7 @@ def freshness():
     }
 
 
-@app.get("/api/overview", response_model=OverviewResponse)
+@app.get("/api/overview", response_model=OverviewResponse, response_model_exclude_unset=True)
 def overview():
     return build_overview()
 
@@ -125,7 +125,7 @@ def sectors():
     return build_sectors()
 
 
-@app.get("/api/credit-liquidity", response_model=CreditLiquidityResponse)
+@app.get("/api/credit-liquidity", response_model=CreditLiquidityResponse, response_model_exclude_unset=True)
 def credit_liquidity():
     return build_credit_liquidity()
 

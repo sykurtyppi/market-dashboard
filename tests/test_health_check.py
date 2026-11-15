@@ -27,7 +27,7 @@ def days_ago(n: int) -> str:
 def db(tmp_path):
     path = tmp_path / "health.db"
     with sqlite3.connect(path) as con:
-        con.execute(f"CREATE TABLE daily_snapshots (date TEXT, {', '.join(c + ' REAL' for c in SNAPSHOT_COLS)})")
+        con.execute(f"CREATE TABLE daily_snapshots (date TEXT, credit_spread_hy_date TEXT, {', '.join(c + ' REAL' for c in SNAPSHOT_COLS)})")
         con.execute(f"CREATE TABLE liquidity_history (date TEXT, {', '.join(c + ' REAL' for c in LIQUIDITY_COLS)})")
     return str(path)
 
@@ -40,7 +40,7 @@ def insert(db_path: str, table: str, **row) -> None:
 
 
 def full_snapshot(db_path: str, date: str) -> None:
-    insert(db_path, "daily_snapshots", date=date, **{c: 1.0 for c in SNAPSHOT_COLS})
+    insert(db_path, "daily_snapshots", date=date, credit_spread_hy_date=date, **{c: 1.0 for c in SNAPSHOT_COLS})
 
 
 class TestLiquiditySources:
@@ -207,7 +207,7 @@ def test_missing_liquidity_table_is_unknown_not_down(tmp_path):
     with sqlite3.connect(path):
         pass
     with sqlite3.connect(path) as con:
-        con.execute(f"CREATE TABLE daily_snapshots (date TEXT, {', '.join(c + ' REAL' for c in SNAPSHOT_COLS)})")
+        con.execute(f"CREATE TABLE daily_snapshots (date TEXT, credit_spread_hy_date TEXT, {', '.join(c + ' REAL' for c in SNAPSHOT_COLS)})")
     h = HealthCheckSystem(str(path))
     checks = h.get_all_health_checks()
     assert checks["liquidity_rrp"].status is HealthStatus.UNKNOWN

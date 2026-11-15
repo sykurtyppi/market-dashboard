@@ -22,7 +22,7 @@ def test_expected_secrets_only_consumed_primary_keys_in_order():
 
 
 def test_sample_env_lists_only_consumed_primary_keys():
-    text = Path('sample.env').read_text()
+    text = (Path(__file__).resolve().parents[1] / 'sample.env').read_text()
     names = [line.split('=', 1)[0].strip() for line in text.splitlines()
              if line.strip() and not line.lstrip().startswith('#') and '=' in line]
     assert names == list(EXPECTED)
@@ -31,14 +31,14 @@ def test_sample_env_lists_only_consumed_primary_keys():
 
 
 def test_sample_env_documents_quandl_alias():
-    text = Path('sample.env').read_text()
+    text = (Path(__file__).resolve().parents[1] / 'sample.env').read_text()
     assert 'QUANDL_API_KEY' in text
     assert 'alias' in text.lower()
     assert 'QUANDL_API_KEY=' not in re.sub(r'#.*', '', text)
 
 
 def test_sample_env_finra_note_not_unverified():
-    text = Path('sample.env').read_text()
+    text = (Path(__file__).resolve().parents[1] / 'sample.env').read_text()
     assert 'Not yet used' not in text
     assert 'live FINRA authentication has not been verified' in text
 

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.retry_utils import exponential_backoff_retry
+from data_collectors.fred_public_csv import fetch_public_fred_csv, public_csv_enabled
 class LiquidityCollector:
     """
     Collects macro liquidity data from FRED.
@@ -40,7 +41,7 @@ class LiquidityCollector:
 
     Notes
     -----
-    - Requires FRED_API_KEY to be set in your .env file
+    - Requires FRED_API_KEY, or explicit FRED_USE_PUBLIC_CSV=1 without a key
     - Returns tidy DataFrames with a `date` column and one value column
     """
 
@@ -63,9 +64,10 @@ class LiquidityCollector:
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("FRED_API_KEY")
+        self._use_public_csv = public_csv_enabled(self.api_key)
         self.logger = logging.getLogger(__name__)
         self._disabled = False
-        if not self.api_key:
+        if not self.api_key and not self._use_public_csv:
             self.logger.warning(
                 "FRED_API_KEY not found. Liquidity data will be unavailable. "
                 "Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html"
@@ -101,6 +103,9 @@ class LiquidityCollector:
         if start_date is None:
             start_dt = datetime.today() - timedelta(days=365 * 2)
             start_date = start_dt.strftime("%Y-%m-%d")
+
+        if self._use_public_csv:
+            return fetch_public_fred_csv(series_id, start_date, end_date)
 
         params = {
             "series_id": series_id,
@@ -146,22 +151,14 @@ class LiquidityCollector:
         """
         Treasury General Account balance (WTREGEN).
 
-        This is weekly data; we forward-fill to daily so it lines up
-        with other series on the dashboard.
+        Preserve actual weekly observation dates in both transports.
+        A weekly average must not become a fabricated daily observation.
         """
         series_id = self.SERIES["tga"]["id"]
         df = self._fetch_series(series_id, start_date=start_date)
         if df.empty:
             return pd.DataFrame(columns=["date", "tga"])
-        df = df.rename(columns={"value": "tga"})
-        # Resample to daily and forward fill for smooth charts
-        df = (
-            df.set_index("date")
-            .resample("D")
-            .ffill()
-            .reset_index()
-        )
-        return df
+        return df.rename(columns={"value": "tga"})
 
     def get_sofr(self, start_date: Optional[str] = None) -> pd.DataFrame:
         """Secured Overnight Financing Rate (SOFR)."""

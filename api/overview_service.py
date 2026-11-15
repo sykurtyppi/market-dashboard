@@ -5,6 +5,7 @@ shapes them into a single JSON-friendly dict the frontend renders directly.
 Everything is defensive: missing fields degrade to null/neutral rather than
 raising, so a partial database still yields a usable page.
 """
+from datetime import date
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -169,6 +170,58 @@ def _composite(snapshot: Dict, vrp_data: Optional[Dict], move: Optional[float]) 
     return (int(round(score)) if score is not None else None), breakdown
 
 
+def _credit_observation(snapshot: Dict, key: str) -> Dict[str, Any]:
+    """Pair each snapshot value with its own date; never infer from write time."""
+    raw = snapshot.get(f'credit_spread_{key}_date')
+    try:
+        as_of = date.fromisoformat(raw).isoformat() if isinstance(raw, str) else None
+    except ValueError:
+        as_of = None
+    if key == 'hy':
+        source = snapshot.get('credit_spread_hy_source') or 'Unavailable'
+    else:
+        source = 'FRED (BAMLC0A0CM)' if as_of else 'Unverified legacy snapshot (series unknown)'
+    return {'value': _num(snapshot.get(f'credit_spread_{key}')), 'as_of': as_of, 'source': source}
+
+
+def _credit_warnings(observations: Dict) -> List[str]:
+    warnings = [
+        f'{key.upper()} credit observation date unavailable; snapshot date is not a validated observation date.'
+        for key, observation in observations.items()
+        if not observation.get('as_of')
+    ]
+    hy = observations.get('hy', {})
+    if hy.get('value') is not None and 'proxy' in hy.get('source', '').lower():
+        warnings.append('HY credit value is a yield-spread proxy, not OAS; do not compare it directly with FRED OAS history.')
+    return warnings
+
+
+def _liquidity_observations(db) -> Tuple[List[Dict[str, Any]], List[str]]:
+    getter = getattr(db, 'get_liquidity_history', None)
+    history = getter(days=120) if getter else None
+    if history is None or history.empty:
+        return [], []
+    history = history.sort_values('date')
+    metrics = []
+    for column, label, source in (
+        ('net_liquidity', 'Net Liquidity (aligned-date proxy)', 'Derived: WALCL − WTREGEN − RRPONTSYD'),
+        ('rrp_on', 'ON RRP', 'FRED (RRPONTSYD)'),
+        ('tga', 'Treasury General Account (weekly average)', 'FRED (WTREGEN)'),
+    ):
+        observations = history.dropna(subset=[column])
+        row = observations.iloc[-1] if not observations.empty else None
+        metrics.append({
+            'key': column, 'label': label,
+            'value': _num(row[column]) if row is not None else None,
+            'unit': 'B', 'state': 'neutral', 'source': source,
+            'as_of': str(row['date'])[:10] if row is not None else None,
+        })
+    return metrics, [
+        'Net liquidity is an aligned-date proxy, not simultaneous daily balances: '
+        'WTREGEN is a weekly average. Newer component dates do not advance the net observation date.'
+    ]
+
+
 def build_overview() -> Dict[str, Any]:
     db = get_db()
     snapshot = db.get_latest_snapshot(include_age=True) or {}
@@ -178,6 +231,7 @@ def build_overview() -> Dict[str, Any]:
 
     hy = _num(snapshot.get("credit_spread_hy"))
     ig = _num(snapshot.get("credit_spread_ig"))
+    credit = {key: _credit_observation(snapshot, key) for key in ('hy', 'ig')}
     vix = _num(snapshot.get("vix_spot"))
     contango = _num(snapshot.get("vix_contango"))
     fg = _num(snapshot.get("fear_greed_score"))
@@ -198,7 +252,9 @@ def build_overview() -> Dict[str, Any]:
          "state": _vix_state(vix), "source": "Yahoo Finance (^VIX)"},
         {"key": "hy", "label": "HY Credit Spread", "value": hy, "unit": "%",
          "state": _credit_state(hy),
-         "source": snapshot.get("credit_spread_hy_source") or "Unavailable"},
+         "source": credit['hy']['source'], "as_of": credit['hy']['as_of']},
+        {"key": "ig", "label": "IG Credit Spread", "value": ig, "unit": "%",
+         "state": "neutral", "source": credit['ig']['source'], "as_of": credit['ig']['as_of']},
         {"key": "ten_y", "label": "10Y Treasury", "value": ten_y, "unit": "%",
          "state": "neutral", "source": "FRED (DGS10)"},
         {"key": "fear_greed", "label": "Fear & Greed", "value": fg, "unit": "",
@@ -209,6 +265,8 @@ def build_overview() -> Dict[str, Any]:
          "state": _contango_state(contango), "source": "VIX / VIX3M"},
     ]
 
+    liquidity_metrics, liquidity_warnings = _liquidity_observations(db)
+    metrics.extend(liquidity_metrics)
     regime = {
         "composite_risk": composite,
         "breakdown": breakdown,
@@ -257,7 +315,7 @@ def build_overview() -> Dict[str, Any]:
         "left_signal": snapshot.get("left_signal"),
         "regime": regime,
         "metrics": metrics,
-        "warnings": [],
+        "warnings": _credit_warnings(credit) + liquidity_warnings,
         "charts": {
             "vrp_history": vrp_hist,
             "credit_spreads": {"hy": hy_hist, "ig": ig_hist},
