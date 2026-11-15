@@ -33,7 +33,8 @@ def _monthly_history(current, year_ago):
 
 def test_gdp_uses_four_quarters_for_yoy():
     collector = EconomicCalendarCollector(fred_api_key="dummy")
-    history = _gdp_quarter_history(120.0, 80.0)
+    history = _gdp_quarter_history(120.0, 100.0)
+    history[12]["value"] = 80.0
     with patch.object(collector, "_fetch_fred_series",
                       return_value=history) as fetch:
         result = collector._get_indicator_data("GDP")
