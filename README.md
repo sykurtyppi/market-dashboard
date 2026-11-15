@@ -50,7 +50,9 @@ cd frontend && npm install && npm run dev
 ```
 
 ## Deploy
-See [docs/cutover-plan.md](docs/cutover-plan.md): Render backend from `render.yaml`, Vercel frontend, and the GitHub Actions refresh job (`.github/workflows/refresh.yml`) gated by the `REFRESH_ENABLED` repository variable.
+The primary deployment runs on the Mac mini with loopback services, persistent SQLite storage and tailnet-only access. See [Mac mini operations](docs/mac-mini-operations.md) for ownership, scheduling, safe preflight checks, verified online backups and recovery guidance. The GitHub Actions refresh job remains disabled (`REFRESH_ENABLED=false`) because the hosted runner cannot reach the private backend.
+
+The [Render/Vercel cutover plan](docs/cutover-plan.md) is retained as historical context, not the current deployment procedure.
 
 ## Tests
 ```bash
