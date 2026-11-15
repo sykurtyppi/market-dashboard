@@ -43,3 +43,15 @@ def test_estimated_warnings_distinguish_named_and_unknown_fields():
     expected = ["CBOE: volume, vix3m estimated", "FRED: some fields estimated"]
     actual = tracker.get_summary()["warnings"]
     assert sorted(actual) == expected
+
+
+def test_summary_reports_error_and_unavailable_warnings():
+    tracker = DataStatusTracker()
+    tracker.update("API", DataStatus.ERROR, errors=["timeout", "retry exhausted"])
+    tracker.update("FEED", DataStatus.ERROR)
+    tracker.update("CACHE", DataStatus.UNAVAILABLE)
+    tracker.update("HEALTHY", DataStatus.OK)
+
+    expected = ["API: timeout", "CACHE: Data unavailable", "FEED: Unknown error"]
+    warnings = tracker.get_summary()["warnings"]
+    assert sorted(warnings) == expected
