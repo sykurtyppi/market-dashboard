@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getDailyBriefing, getOverview, DailyBriefingRecord, RegimeComponent, DetailRow, Overview } from "@/lib/api";
 import { loadOverviewPageData } from "@/lib/overviewPageData.mjs";
 import Topbar from "@/components/Topbar";
+import LiquidityEvidence from "@/components/LiquidityEvidence";
 import GapNotice from "@/components/GapNotice";
 import { AreaChart, MultiLineChart } from "@/components/Charts";
 import { MetricCard, Section, Panel, fmtAsOf } from "@/components/ui";
@@ -187,6 +188,7 @@ function OverviewContent({ data, briefing, history }: { data: Overview; briefing
     <>
       <Topbar title="Daily Risk Briefing" subtitle="What changed, why it matters, and what to inspect next" freshness={data.freshness} />
       <div className="content">
+        <p className="data-trust-note">Snapshot refresh does not establish underlying observation completeness. Source observations can be older or missing; dates below refer to observations, not refresh time.</p>
         {data.warnings.length > 0 ? (
           <div className="notice"><span className="dot warn" />{data.warnings.join(" ")}</div>
         ) : null}
@@ -209,6 +211,8 @@ function OverviewContent({ data, briefing, history }: { data: Overview; briefing
             {data.regime.components.map((c) => <RegimeCell key={c.key} c={c} />)}
           </div>
         </Section>
+
+        <LiquidityEvidence data={data.liquidity} />
 
         <Section title="Key Indicators" aside="delayed · sourced">
           <div className="metrics">

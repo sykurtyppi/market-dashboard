@@ -25,6 +25,7 @@ export interface Metric {
   unit: string;
   state: State;
   source: string;
+  as_of?: string | null;
 }
 
 export interface RegimeComponent {
@@ -93,7 +94,33 @@ export interface DailyBriefing {
   warning: string | null;
 }
 
+export interface LiquidityComponent {
+  key: "fed_balance" | "tga" | "rrp_on";
+  series: string;
+  label: string;
+  value: number | null;
+  as_of: string | null;
+  age_days: number | null;
+}
+
+export interface LiquidityData {
+  status: "available" | "partial" | "unavailable";
+  unit: "USD billions";
+  strict: { value: number | null; as_of: string | null };
+  proxy: {
+    value: number | null;
+    as_of: string | null;
+    status: "exact" | "backward_matched" | "unavailable";
+    max_rrp_age_days: 4;
+    reason: string | null;
+    components: LiquidityComponent[];
+  };
+  latest_components: LiquidityComponent[];
+  notes: string[];
+}
+
 export interface Overview {
+  liquidity?: LiquidityData | null;
   as_of: string | null;
   freshness: Freshness;
   warnings: string[];

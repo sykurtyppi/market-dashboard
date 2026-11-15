@@ -121,10 +121,59 @@ const volatility = {
   charts: { vix: history, realized_vol: history.map((point) => ({ ...point, value: point.value - 2 })), vrp_history: history.map((point) => ({ ...point, value: 2 })) },
 };
 
+let liquidityMode = "missing";
+const component = (key, series, label, value, as_of, age_days = 0) => ({ key, series, label, value, as_of, age_days });
+const liquidityFixture = (mode) => {
+  const components = [
+    component("fed_balance", "WALCL", "Fed balance sheet", 6600, "2026-10-28"),
+    component("tga", "WTREGEN", "Treasury General Account", 800, "2026-10-28"),
+    component("rrp_on", "RRPONTSYD", "Overnight reverse repo", 100, mode === "exact" ? "2026-10-28" : "2026-10-27", mode === "exact" ? 0 : 1),
+  ];
+  const data = {
+    status: "available", unit: "USD billions",
+    strict: { value: 5600, as_of: "2026-10-21" },
+    proxy: { value: 5700, as_of: "2026-10-28", status: mode === "exact" ? "exact" : "backward_matched", max_rrp_age_days: 4, reason: null, components },
+    latest_components: components.map((c) => ({ ...c, value: c.key === "tga" ? c.value : c.value + 10, as_of: c.key === "tga" ? c.as_of : "2026-10-29", age_days: null })), notes: ["Source-specific backend note."],
+  };
+  if (mode === "unavailable") {
+    data.status = "partial";
+    data.strict = { value: null, as_of: null };
+    data.proxy = { ...data.proxy, value: null, status: "unavailable", reason: "No RRP observation within tolerance.", components: components.map((c) => c.key === "rrp_on" ? { ...c, value: null, as_of: null, age_days: null } : c) };
+    data.latest_components = data.latest_components.map((c) => c.key === "rrp_on" ? { ...c, value: null, as_of: null, age_days: null } : c);
+  }
+  if (mode === "zero") {
+    data.strict.value = 0;
+    data.proxy.value = 0;
+    data.proxy.components[0].value = 800;
+    data.proxy.components[2].value = 0;
+    data.latest_components[0].value = 810;
+    data.latest_components[2].value = 0;
+  }
+  if (mode === "partial") {
+    data.status = "partial";
+    data.proxy = { ...data.proxy, value: null, status: "unavailable", reason: "RRP is outside tolerance.", components: components.map((c) => c.key === "rrp_on" ? { ...c, as_of: "2026-10-21", age_days: 7 } : c) };
+    data.latest_components = data.latest_components.map((c) => c.key === "rrp_on" ? { ...c, value: 100, as_of: "2026-10-21" } : c);
+  }
+  return data;
+};
+
 createServer((request, response) => {
+  if (request.url.startsWith("/__test/liquidity/")) {
+    liquidityMode = request.url.split("/").at(-1);
+    response.writeHead(204);
+    response.end();
+    return;
+  }
   if (request.url === "/api/overview") {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(overview));
+    response.end(JSON.stringify({
+      ...overview,
+      metrics: liquidityMode === "missing" ? [] : [
+        { key: "net_liquidity", label: "Net Liquidity", value: 5600, unit: "B", state: "neutral", source: "FRED", as_of: "2026-10-21" },
+        { key: "unknown_date", label: "Unknown date metric", value: 0, unit: "B", state: "neutral", source: "Test", as_of: null },
+      ],
+      ...(liquidityMode === "missing" ? {} : { liquidity: liquidityFixture(liquidityMode) }),
+    }));
     return;
   }
   if (request.url === "/api/repo") {
@@ -167,4 +216,4 @@ createServer((request, response) => {
   }
   response.writeHead(404, { "content-type": "application/json" });
   response.end(JSON.stringify({ detail: "not found" }));
-}).listen(3101, "127.0.0.1");
+}).listen(Number(process.env.E2E_BACKEND_PORT ?? 3101), "127.0.0.1");

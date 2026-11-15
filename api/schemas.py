@@ -77,6 +77,38 @@ class DetailRow(BaseModel):
     source: str
 
 
+class LiquidityComponent(BaseModel):
+    key: Literal['fed_balance', 'tga', 'rrp_on']
+    series: str
+    label: str
+    value: Optional[float]
+    as_of: Optional[str]
+    age_days: Optional[int]
+
+
+class LiquidityStrict(BaseModel):
+    value: Optional[float]
+    as_of: Optional[str]
+
+
+class LiquidityProxy(BaseModel):
+    value: Optional[float]
+    as_of: Optional[str]
+    status: Literal['exact', 'backward_matched', 'unavailable']
+    max_rrp_age_days: Literal[4]
+    reason: Optional[str]
+    components: List[LiquidityComponent] = Field(min_length=3, max_length=3)
+
+
+class LiquidityEvidence(BaseModel):
+    status: Literal['available', 'partial', 'unavailable']
+    unit: Literal['USD billions']
+    strict: LiquidityStrict
+    proxy: LiquidityProxy
+    latest_components: List[LiquidityComponent] = Field(min_length=3, max_length=3)
+    notes: List[str]
+
+
 class OverviewResponse(BaseModel):
     as_of: Optional[str] = None
     freshness: Freshness
@@ -86,6 +118,7 @@ class OverviewResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
     charts: Charts
     detail: List[DetailRow]
+    liquidity: Optional[LiquidityEvidence] = None
 
 
 class HealthResponse(BaseModel):
