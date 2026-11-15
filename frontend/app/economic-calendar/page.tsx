@@ -13,15 +13,21 @@ function importanceDot(importance: string | null): string {
 }
 
 // The backend's actual/previous fields are raw *levels* from the prior release
-// (CPI index ~334, GDP in $B) — not the % change the event's canonical unit
-// ("% YoY", "% QoQ") describes. Labeling 333.98 as "% YoY" was flatly wrong,
-// and "Actual" for a future release is a contradiction. Show levels as levels
-// ("Latest"/"Prior"), and the % change in its own column (yoy_change is always
-// year-over-year, whatever the event's headline cadence).
+// (CPI index ~334, GDP in USD billions) — not the % change the event's canonical
+// unit ("% YoY", "% QoQ") describes. Labeling 333.98 as "% YoY" was flatly
+// wrong, and "Actual" for a future release is a contradiction. Show levels as
+// levels ("Latest"/"Prior"): locale-format the number, append " USD billions"
+// when the unit is exactly "USD billions", and render a "%" rate as a
+// two-decimal percentage; the % change stays in its own column (yoy_change is
+// always year-over-year, whatever the event's headline cadence).
 function level(v: number | null, unit: string | null): string {
   if (v === null) return "—";
   // A unit of exactly "%" means the value itself is a rate (e.g. FOMC 3.63%).
-  return unit === "%" ? `${v.toFixed(2)}%` : v.toLocaleString();
+  if (unit === "%") return `${v.toFixed(2)}%`;
+  // GDP and other level units are locale-formatted numbers; append the exact
+  // unit suffix when the unit is exactly "USD billions".
+  const n = v.toLocaleString();
+  return unit === "USD billions" ? `${n} USD billions` : n;
 }
 
 function yoy(v: number | null): string {
